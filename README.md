@@ -13,6 +13,7 @@ ones.
 | --- | --- |
 | [`autologger-mcp`](plugins/autologger-mcp/README.md) | Read and write autologger session data (studios, shows, sessions, events, transcripts, topics, wiki pages, dashboards) through autologger's MCP endpoint, signed in with autologger's OAuth; checks wiki bodies for broken links. |
 | [`autologger-specs`](plugins/autologger-specs/README.md) | Keeps an autologger checkout's `docs/specs/` in step with code: which specs cover a file, which specs the `specs-with-code` gate would fail on, scaffolding and linting specs, and running the repo's own spec gates. |
+| [`plugin-builder`](plugins/plugin-builder/README.md) | Builds plugins for this marketplace: scaffolds one from the template, checks it against the CLI convention with a fix for each finding, and runs its full verification gate. |
 
 ## Add the marketplace
 
@@ -48,6 +49,7 @@ npm ci                                      # once: dev tooling (TypeScript, Nod
 npm run new-plugin -- my-plugin --description "What it does."
 npm run typecheck && npm test
 claude plugin validate plugins/my-plugin && claude plugin validate .
+node plugins/plugin-builder/src/cli.ts verify my-plugin   # or all of the above, plus the convention check
 ```
 
 `new-plugin` copies `templates/plugin/` to `plugins/my-plugin/`, renames the template's plugin,
