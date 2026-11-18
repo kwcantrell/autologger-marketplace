@@ -11,6 +11,7 @@ ones.
 
 | Plugin | What it does |
 | --- | --- |
+| [`autologger-mcp`](plugins/autologger-mcp/README.md) | Read and write autologger session data (studios, shows, sessions, events, transcripts, topics, wiki pages, dashboards) through autologger's MCP endpoint, signed in with autologger's OAuth; checks wiki bodies for broken links. |
 | [`autologger-specs`](plugins/autologger-specs/README.md) | Keeps an autologger checkout's `docs/specs/` in step with code: which specs cover a file, which specs the `specs-with-code` gate would fail on, scaffolding and linting specs, and running the repo's own spec gates. |
 
 ## Add the marketplace
