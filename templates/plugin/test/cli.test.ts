@@ -1,8 +1,10 @@
 // End to end: runs the exact npx command lines from the skill, the way Claude Code would after
 // installing the plugin (a fresh copy, unrelated cwd, no npm install or build step).
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -10,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 const CLI_NAME = 'plugin-template';
 const SKILL = 'skills/plugin-template/SKILL.md';
-const INVOCATION = `npx --yes --loglevel=error --package="\${CLAUDE_PLUGIN_ROOT}" -- ${CLI_NAME}`;
+const INVOCATION = `npx --yes --offline --loglevel=error --package="\${CLAUDE_PLUGIN_ROOT}" -- ${CLI_NAME}`;
 
 const source = fileURLToPath(new URL('..', import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), `${CLI_NAME}-e2e-`));
@@ -68,4 +70,38 @@ test('an unknown command through npx exits 2 with the message on stderr', () => 
   assert.equal(status, 2);
   assert.equal(stdout, '');
   assert.match(stderr, /unknown command 'no-such-command'/);
+});
+
+// Guard against `--package=""`: npm reads an empty spec as the registry package `undefined` (owned by a
+// third party), and `--yes` would install and run it unprompted. `--offline` in the invocation must
+// stop that before any request, even when npm itself is allowed online.
+test('with CLAUDE_PLUGIN_ROOT empty, the invocation fails without contacting a registry', async () => {
+  const requests: string[] = [];
+  const registry = createServer((req, res) => {
+    requests.push(req.url ?? '');
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((resolve) => registry.listen(0, '127.0.0.1', resolve));
+  try {
+    const { port } = registry.address() as AddressInfo;
+    const onlineEnv: NodeJS.ProcessEnv = {
+      ...env,
+      CLAUDE_PLUGIN_ROOT: '',
+      npm_config_cache: join(scratch, 'npm-cache-empty-root'),
+      npm_config_registry: `http://127.0.0.1:${port}/`,
+      // npm's own version check also uses the registry; it is not what this test is about.
+      npm_config_update_notifier: 'false',
+    };
+    delete onlineEnv.npm_config_offline;
+    const child = spawn('sh', ['-c', `${INVOCATION} --help`], { cwd, env: onlineEnv });
+    let stdout = '';
+    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr.resume();
+    const status = await new Promise<number | null>((resolve) => child.on('close', resolve));
+    assert.notEqual(status, 0);
+    assert.equal(stdout, '');
+    assert.deepEqual(requests, [], 'npx contacted the registry');
+  } finally {
+    registry.close();
+  }
 });

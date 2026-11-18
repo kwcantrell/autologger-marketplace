@@ -59,7 +59,7 @@ plugins/<name>/
 no `cd`, install or build step:
 
 ```sh
-npx --yes --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name> <command> [args] --json
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name> <command> [args] --json
 ```
 
 - `--package="${CLAUDE_PLUGIN_ROOT}"` makes npx resolve the `bin` from the plugin's own installed
@@ -68,11 +68,16 @@ npx --yes --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name> <command>
   npm package. Keep the quotes: the path may contain spaces.
 - `--yes` skips npx's install prompt; `--loglevel=error` keeps npm notices off stderr so stderr holds
   only the CLI's own messages.
+- `--offline` is a safety guard and is required. If `${CLAUDE_PLUGIN_ROOT}` ever reaches the shell
+  empty, `--package=""` is resolved by npm as the registry package `undefined`, owned by a third
+  party; with `--yes` and a pre-approved `allowed-tools` rule, npx would download and run it with no
+  prompt. `--offline` makes that case fail with `ENOTCACHED` instead, and costs nothing in the normal
+  case because a local-folder package needs no network. The end-to-end test checks both.
 - Put the exact command lines in ` ```sh ` blocks in the SKILL.md, starting with `npx `. The template's
   end-to-end test (`test/cli.test.ts`) extracts and runs every such line, so a skill whose command
   does not work fails `npm test`.
-- `allowed-tools` in the skill frontmatter allows that prefix (`Bash(npx --yes --loglevel=error
-  --package="${CLAUDE_PLUGIN_ROOT}" -- <name>:*)`).
+- `allowed-tools` in the skill frontmatter allows that prefix (`Bash(npx --yes --offline
+  --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>:*)`).
 
 **Output.** Every command accepts `--json` and then prints exactly one JSON value on stdout; skills use
 `--json`. Without it, output is short human-readable text. `--help` prints usage on stdout and exits 0.
@@ -88,9 +93,10 @@ and covers every plugin; there are no per-plugin tsconfigs.
 
 **Dependencies.** Prefer none: Node's standard library (`node:util` `parseArgs`, `node:fs`,
 `fetch`, `node:test`) covers most CLIs. Type-only dev dependencies belong in the root `package.json`.
-A runtime dependency in a plugin's `package.json` makes npx install it into the plugin cache folder
-on first run, which needs the network, and Node will not type-strip `.ts` inside `node_modules`.
-Pin any such version exactly.
+A runtime dependency in a plugin's `package.json` would have to be installed into the plugin cache
+folder on first run, which needs the network, so with `--offline` it fails unless it is already in
+the npm cache; Node will also not type-strip `.ts` inside `node_modules`. Do not add one without
+revisiting the invocation, and pin any such version exactly.
 
 **Tests.** `plugins/<name>/test/*.test.ts`, run by the root `npm test` with `node --test`. Keep the
 template's two kinds: unit tests that call `run()` with a fake `Io`, and the end-to-end test that
@@ -106,5 +112,7 @@ with an empty npm cache and `npm_config_offline=true`.
   an unknown `.ts` extension error. Pulling in a TS runner such as `tsx` would support older Node but
   costs a registry download on the first run after every plugin update (the cache path changes, so
   the npx cache key changes), and fails offline. If that is ever needed, pin the runner exactly, e.g.
-  `npx --yes --package=tsx@<exact> --package="${CLAUDE_PLUGIN_ROOT}" -- <name> ...`.
+  `npx --yes --package=tsx@<exact> --package="${CLAUDE_PLUGIN_ROOT}" -- <name> ...`. That form needs
+  the network, so it has to drop `--offline`; guard against an empty root another way first (for
+  example `--package="${CLAUDE_PLUGIN_ROOT:?}"`, after confirming Claude Code still substitutes it).
 - Each plugin version leaves a small entry in `~/.npm/_npx/` (a symlink and a lockfile).
