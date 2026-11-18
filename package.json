@@ -1,0 +1,19 @@
+{
+  "name": "autologger-marketplace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Claude Code plugin marketplace for autologger: dev tooling (typecheck, tests, plugin scaffold).",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test 'templates/*/test/**/*.test.ts' 'plugins/*/test/**/*.test.ts' 'scripts/test/**/*.test.ts'",
+    "new-plugin": "node scripts/new-plugin.ts"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2"
+  }
+}
