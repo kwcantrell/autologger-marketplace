@@ -1,28 +1,45 @@
-// End to end: runs the exact npx command lines from the skill, the way Claude Code would after
-// installing the plugin (a fresh copy, unrelated cwd, no npm install or build step).
+// End to end: runs the exact npx command lines from every skill, the way Claude Code would after
+// installing the plugin (a fresh copy, unrelated cwd, no npm install or build step), against the
+// fake autologger. Commands run asynchronously so the fake server (in this process) can answer.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { after, test } from 'node:test';
+import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { FakeAutologger } from './fakeServer.ts';
 
 const CLI_NAME = 'autologger-mcp';
-const SKILL = 'skills/autologger-mcp/SKILL.md';
 const INVOCATION = `npx --yes --offline --loglevel=error --package="\${CLAUDE_PLUGIN_ROOT}" -- ${CLI_NAME}`;
+/** Skills in the order their commands run: reads, then writes, then sign-in (which ends with logout). */
+const SKILL_ORDER = ['query-session-data', 'write-session-data', 'sign-in'];
 
 const source = fileURLToPath(new URL('..', import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), `${CLI_NAME}-e2e-`));
-after(() => rmSync(scratch, { recursive: true, force: true }));
+const server = new FakeAutologger();
+const printed: string[] = [];
 
 // Simulate the plugin cache: Claude Code installs a plugin by copying its folder.
 const pluginRoot = join(scratch, 'plugin-cache', CLI_NAME);
 cpSync(source, pluginRoot, { recursive: true, filter: (path) => !path.includes('node_modules') });
 const cwd = join(scratch, 'unrelated-cwd');
 mkdirSync(cwd);
+
+// Plays the user's browser: follows the authorization URL to the CLI's loopback callback.
+const browser = join(scratch, 'bin', 'fake-browser');
+mkdirSync(join(scratch, 'bin'));
+writeFileSync(
+  browser,
+  `#!/usr/bin/env node
+const answer = await fetch(process.argv[2], { redirect: 'manual' });
+await (await fetch(answer.headers.get('location'))).text();
+`,
+);
+chmodSync(browser, 0o755);
+
 const env: NodeJS.ProcessEnv = Object.fromEntries(
   Object.entries(process.env).filter(([key]) => !key.toLowerCase().startsWith('npm_')),
 );
@@ -30,46 +47,108 @@ env.CLAUDE_PLUGIN_ROOT = pluginRoot;
 // Empty npx cache, and offline: proves nothing is fetched from the registry.
 env.npm_config_cache = join(scratch, 'npm-cache');
 env.npm_config_offline = 'true';
+env.AUTOLOGGER_MCP_CONFIG_DIR = join(scratch, 'config');
+env.BROWSER = browser;
+delete env.AUTOLOGGER_URL;
 
-function skillCommands(): string[] {
-  const text = readFileSync(join(pluginRoot, SKILL), 'utf8');
+before(async () => {
+  await server.start();
+  env.AUTOLOGGER_URL = server.base;
+});
+after(async () => {
+  await server.close();
+  rmSync(scratch, { recursive: true, force: true });
+});
+
+function skillCommands(skill: string): string[] {
+  const text = readFileSync(join(pluginRoot, 'skills', skill, 'SKILL.md'), 'utf8');
   const blocks = [...text.matchAll(/```sh\n([\s\S]*?)```/g)].map((m) => m[1] ?? '');
   return blocks.flatMap((b) => b.split('\n')).filter((line) => line.startsWith('npx '));
 }
 
-function sh(command: string): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync('sh', ['-c', command], { cwd, env, encoding: 'utf8', timeout: 60_000 });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+/** Fills a skill's `<placeholder>` values with ids the fake server accepts. */
+function fill(command: string): string {
+  return command.replace(/<([a-z_]+)>/g, (_, name: string) => `${name.toUpperCase()}-1`);
 }
 
-test('the skill calls the CLI only through the shared npx invocation', () => {
-  const commands = skillCommands();
-  assert.ok(commands.length >= 2, `expected npx command lines in ${SKILL}`);
-  for (const command of commands) assert.ok(command.startsWith(`${INVOCATION} `), command);
+async function sh(command: string, extraEnv: NodeJS.ProcessEnv = env): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const child = spawn('sh', ['-c', command], { cwd, env: extraEnv });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+  child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+  const timer = setTimeout(() => child.kill(), 60_000);
+  const status = await new Promise<number | null>((resolve) => child.on('close', resolve));
+  clearTimeout(timer);
+  printed.push(stdout, stderr);
+  return { status, stdout, stderr };
+}
+
+test('every skill calls the CLI only through the shared npx invocation', () => {
+  assert.deepEqual(readdirSync(join(pluginRoot, 'skills')).sort(), [...SKILL_ORDER].sort());
+  for (const skill of SKILL_ORDER) {
+    const commands = skillCommands(skill);
+    assert.ok(commands.length >= 2, `expected npx command lines in ${skill}`);
+    for (const command of commands) assert.ok(command.startsWith(`${INVOCATION} `), command);
+    const frontmatter = readFileSync(join(pluginRoot, 'skills', skill, 'SKILL.md'), 'utf8');
+    assert.ok(frontmatter.includes(`allowed-tools: Bash(${INVOCATION}:*)`), skill);
+  }
   assert.equal(existsSync(join(pluginRoot, 'node_modules')), false);
 });
 
-test('every skill command line runs from a fresh copy and exits 0', () => {
-  for (const command of skillCommands()) {
-    const { status, stdout, stderr } = sh(command);
-    assert.equal(status, 0, `${command}\nstderr: ${stderr}`);
-    assert.notEqual(stdout, '', command);
-    if (command.endsWith(' --help')) assert.match(stdout, new RegExp(`^Usage: ${CLI_NAME} `));
-    if (command.includes(' --json')) JSON.parse(stdout);
+test('before sign-in, tools and call through npx exit 1 with "not signed in"', async () => {
+  for (const command of [`${INVOCATION} tools --json`, `${INVOCATION} call list_studios --json`]) {
+    const { status, stdout, stderr } = await sh(command);
+    assert.equal(status, 1, stderr);
+    assert.equal(stdout, '');
+    assert.match(stderr, /^autologger-mcp: not signed in to http:\/\/127\.0\.0\.1:\d+; run 'autologger-mcp login'/);
   }
 });
 
-test('hello --json through npx prints the greeting as JSON', () => {
-  const { status, stdout } = sh(`${INVOCATION} hello --json "Ada Lovelace"`);
-  assert.equal(status, 0);
-  assert.deepEqual(JSON.parse(stdout), { greeting: 'Hello, Ada Lovelace!' });
+test('login --write through npx: browser sign-in via $BROWSER and the loopback redirect', async () => {
+  const { status, stdout, stderr } = await sh(`${INVOCATION} login --write --json`);
+  assert.equal(status, 0, stderr);
+  const report = JSON.parse(stdout);
+  assert.equal(report.scope, 'dashboards session-data:write');
+  assert.match(stderr, /Open this URL in a browser to sign in/);
 });
 
-test('an unknown command through npx exits 2 with the message on stderr', () => {
-  const { status, stdout, stderr } = sh(`${INVOCATION} no-such-command`);
+test('every skill command line runs from a fresh copy and exits 0', async () => {
+  // Files the write skill's commands name, as Claude would have written them.
+  writeFileSync(join(cwd, 'wiki-page.md'), 'See [Jane](wiki:p_1) and [the joke](cite:S1@125.5).\n');
+  writeFileSync(join(cwd, 'wiki-page.json'), JSON.stringify({ show_id: 'SHOW-1', kind: 'topic', title: 'Jokes', body_md: 'x' }));
+  for (const skill of SKILL_ORDER) {
+    for (const command of skillCommands(skill).map(fill)) {
+      const { status, stdout, stderr } = await sh(command);
+      assert.equal(status, 0, `${command}\nstderr: ${stderr}`);
+      assert.notEqual(stdout, '', command);
+      if (command.includes(' --json')) JSON.parse(stdout);
+    }
+  }
+  const called = server.calls.filter((c) => c.tool !== undefined).map((c) => c.tool);
+  assert.ok(called.includes('create_wiki_page') && called.includes('list_studios'), called.join(','));
+  assert.equal(server.counts.revocations, 1, 'the sign-in skill ends with logout');
+});
+
+test('check-links through npx exits 1 on a [[...]] link', async () => {
+  writeFileSync(join(cwd, 'bad.md'), 'See [[Jane]].\n');
+  const { status, stdout, stderr } = await sh(`${INVOCATION} check-links bad.md --json`);
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+  assert.match(stderr, /bad\.md:1:5: '\[\[Jane\]\]' is not a link/);
+});
+
+test('an unknown command through npx exits 2 with the message on stderr', async () => {
+  const { status, stdout, stderr } = await sh(`${INVOCATION} no-such-command`);
   assert.equal(status, 2);
   assert.equal(stdout, '');
   assert.match(stderr, /unknown command 'no-such-command'/);
+});
+
+test('no token appeared in any output', () => {
+  assert.ok(server.issued.length > 0);
+  const all = printed.join('\n');
+  for (const t of server.issued) assert.ok(!all.includes(t), 'a token was printed');
 });
 
 // Guard against `--package=""`: npm reads an empty spec as the registry package `undefined` (owned by a
@@ -93,11 +172,7 @@ test('with CLAUDE_PLUGIN_ROOT empty, the invocation fails without contacting a r
       npm_config_update_notifier: 'false',
     };
     delete onlineEnv.npm_config_offline;
-    const child = spawn('sh', ['-c', `${INVOCATION} --help`], { cwd, env: onlineEnv });
-    let stdout = '';
-    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
-    child.stderr.resume();
-    const status = await new Promise<number | null>((resolve) => child.on('close', resolve));
+    const { status, stdout } = await sh(`${INVOCATION} --help`, onlineEnv);
     assert.notEqual(status, 0);
     assert.equal(stdout, '');
     assert.deepEqual(requests, [], 'npx contacted the registry');

@@ -2,7 +2,7 @@
   "name": "autologger-mcp",
   "version": "0.1.0",
   "private": true,
-  "description": "CLI for the autologger-mcp Claude Code plugin; run by its skills via npx.",
+  "description": "CLI for the autologger-mcp Claude Code plugin (autologger OAuth sign-in and MCP tool calls); run by its skills via npx.",
   "type": "module",
   "engines": {
     "node": ">=22.18.0"
