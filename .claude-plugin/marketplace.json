@@ -1,0 +1,10 @@
+{
+  "name": "autologger-marketplace",
+  "owner": {
+    "name": "Kalen Cantrell"
+  },
+  "metadata": {
+    "description": "Claude Code plugins for working on and with autologger. Every plugin ships a TypeScript CLI run via npx, and its skills call that CLI."
+  },
+  "plugins": []
+}
