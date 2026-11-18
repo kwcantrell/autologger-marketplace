@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { hello } from './hello.ts';
+import { check, formatFinding } from './check.ts';
+import { NAME_PATTERN, NotACheckoutError, findCheckout } from './repo.ts';
+import { SCAFFOLD_SCRIPT, created, runScaffold } from './scaffold.ts';
+import { formatStep, verify } from './verify.ts';
 
 export const CLI_NAME = 'plugin-builder';
 
@@ -10,29 +13,59 @@ export const EXIT = { ok: 0, failure: 1, usage: 2 } as const;
 export interface Io {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
+  /** The directory the CLI was run from; the checkout is found from it unless --repo is given. */
+  cwd: string;
+  /** Environment for the commands `new` and `verify` run (PATH decides whether `claude` is found). */
+  env: NodeJS.ProcessEnv;
 }
 
 export const USAGE = `Usage: ${CLI_NAME} <command> [options]
 
+Builds plugins for the autologger-marketplace checkout that contains the current directory, following
+the CLI convention in its CLAUDE.md.
+
 Commands:
-  hello [name]   Greet someone (default: world)
+  new <name> [--description <text>]
+                    Create plugins/<name>/ by running the checkout's own ${SCAFFOLD_SCRIPT}
+                    (the same as npm run new-plugin); exits with its status
+  check <name>... | --all
+                    Check plugins against the convention; each finding names the file, line,
+                    rule and fix; exit 1 on any finding
+  verify <name>     Run check, claude plugin validate (plugin and marketplace), npm run typecheck
+                    and the plugin's tests; exit 1 if any step fails (claude missing: skipped)
 
 Options:
-  --json         Print machine-readable JSON on stdout
-  -h, --help     Show this help
-  --version      Print the CLI version
+  --repo <path>     The marketplace checkout (default: the one containing the current directory)
+  --all             check: every plugin under plugins/ and every marketplace entry
+  --description <text>
+                    new: the plugin description for plugin.json and marketplace.json
+  --json            Print machine-readable JSON on stdout
+  -h, --help        Show this help
+  --version         Print the CLI version
 
-Exit codes: 0 success, 1 command failed, 2 usage error (message on stderr).
+Exit codes: 0 success, 1 command failed (or findings / a failing step), 2 usage error or not inside
+an autologger-marketplace checkout (message on stderr).
 `;
 
 class UsageError extends Error {}
+
+const COMMAND_OPTIONS: Record<string, readonly string[]> = {
+  new: ['description'],
+  check: ['all'],
+  verify: [],
+};
 
 function version(): string {
   const pkg: unknown = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   return typeof pkg === 'object' && pkg !== null && 'version' in pkg ? String(pkg.version) : 'unknown';
 }
 
-export function run(argv: readonly string[], io: Io): number {
+function pluginName(name: string | undefined): string {
+  if (name === undefined || !NAME_PATTERN.test(name)) throw new UsageError(`invalid plugin name '${name ?? ''}': use kebab-case`);
+  return name;
+}
+
+export async function run(argv: readonly string[], io: Io): Promise<number> {
   let parsed;
   try {
     parsed = parseArgs({
@@ -43,6 +76,9 @@ export function run(argv: readonly string[], io: Io): number {
         json: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
         version: { type: 'boolean', default: false },
+        repo: { type: 'string' },
+        all: { type: 'boolean', default: false },
+        description: { type: 'string' },
       },
     });
   } catch (error) {
@@ -60,21 +96,65 @@ export function run(argv: readonly string[], io: Io): number {
   }
 
   const [command, ...rest] = positionals;
+  if (command === undefined) return usageError(io, 'missing command');
+  const allowed = COMMAND_OPTIONS[command];
+  if (!allowed) return usageError(io, `unknown command '${command}'`);
+  if (values.description !== undefined && !allowed.includes('description')) return usageError(io, `${command} does not take --description`);
+  if (values.all && !allowed.includes('all')) return usageError(io, `${command} does not take --all`);
+  const json = values.json;
+  const print = (value: unknown, text: string) => io.stdout(json ? `${JSON.stringify(value)}\n` : text);
+
   try {
     switch (command) {
-      case 'hello': {
-        if (rest.length > 1) throw new UsageError(`hello takes at most one name, got ${rest.length}`);
-        const result = hello(rest[0] ?? 'world');
-        io.stdout(values.json ? `${JSON.stringify(result)}\n` : `${result.greeting}\n`);
+      case 'new': {
+        // The name is the scaffold's to validate: it exits 2 for a bad one, and that passes through.
+        if (rest.length !== 1) throw new UsageError(`new takes exactly one plugin name, got ${rest.length}`);
+        const name = rest[0] ?? '';
+        const root = findCheckout(io.cwd, values.repo);
+        const r = runScaffold(root, name, values.description, io.env);
+        if (r.exitCode !== 0) {
+          io.stderr(`${CLI_NAME}: ${r.stderr.trim() || `${SCAFFOLD_SCRIPT} exited ${r.exitCode}`}\n`);
+          return r.exitCode;
+        }
+        print(created(name), r.stdout);
         return EXIT.ok;
       }
-      case undefined:
-        return usageError(io, 'missing command');
+      case 'check': {
+        if (values.all && rest.length > 0) throw new UsageError('check takes plugin names or --all, not both');
+        if (!values.all && rest.length === 0) throw new UsageError('check needs a plugin name or --all');
+        const names = values.all ? null : rest.map(pluginName);
+        const root = findCheckout(io.cwd, values.repo);
+        const result = check(root, names);
+        if (result.findings.length > 0) {
+          io.stderr(`${CLI_NAME}: ${result.findings.length} convention finding(s):\n${result.findings.map(formatFinding).join('\n')}\n`);
+          return EXIT.failure;
+        }
+        print(result, `${result.plugins.length} plugin(s) follow the convention: ${result.plugins.join(', ')}\n`);
+        return EXIT.ok;
+      }
+      case 'verify': {
+        if (rest.length !== 1) throw new UsageError(`verify takes exactly one plugin name, got ${rest.length}`);
+        const name = pluginName(rest[0]);
+        const root = findCheckout(io.cwd, values.repo);
+        const result = await verify(root, name, io.env, io.stderr);
+        const summary = result.steps.map(formatStep).join('\n');
+        if (!result.ok) {
+          const failed = result.steps.filter((s) => s.status === 'fail').map((s) => s.name);
+          io.stderr(`${CLI_NAME}: verify ${name} failed: ${failed.join(', ')}\n${summary}\n`);
+          return EXIT.failure;
+        }
+        print(result, `${summary}\nverify ${name}: every step passed or was skipped\n`);
+        return EXIT.ok;
+      }
       default:
         return usageError(io, `unknown command '${command}'`);
     }
   } catch (error) {
     if (error instanceof UsageError) return usageError(io, error.message);
+    if (error instanceof NotACheckoutError) {
+      io.stderr(`${CLI_NAME}: ${error.message}\n`);
+      return EXIT.usage;
+    }
     io.stderr(`${CLI_NAME}: ${error instanceof Error ? error.message : String(error)}\n`);
     return EXIT.failure;
   }

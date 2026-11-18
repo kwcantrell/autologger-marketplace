@@ -27,6 +27,7 @@ does the work and is tested like ordinary code.
 | --- | --- |
 | `autologger-mcp` | CLI + skills for autologger's MCP endpoint: OAuth sign-in (`login`, `status`, `logout`), MCP tool calls (`tools`, `call`) and a wiki-link checker (`check-links`). See its `README.md`. |
 | `autologger-specs` | Spec coverage for an autologger checkout: `which`, `stale` (the `specs-with-code` rule), `lint`, `new`, `gate`. Its `test/verify-autologger.ts` checks it against autologger's own Python gates. |
+| `plugin-builder` | Builds plugins for this marketplace: `new` (runs `scripts/new-plugin.ts`), `check` (this file's convention, statically, with a fix per finding), `verify` (the full gate for one plugin). Its `build-plugin` skill is the workflow. See its `README.md`. |
 
 ## Commands
 
@@ -37,7 +38,13 @@ npm test                                 # node --test over templates/*/test, pl
 npm run new-plugin -- <name> [--description "<text>"]
 claude plugin validate .                 # marketplace manifest
 claude plugin validate plugins/<name>    # one plugin (also templates/plugin)
+node plugins/plugin-builder/src/cli.ts check <name>|--all   # the convention below, checked statically
+node plugins/plugin-builder/src/cli.ts verify <name>        # check + validate + typecheck + the plugin's tests
 ```
+
+`plugin-builder check` reports each break of the convention below with its file, line, rule and fix;
+`plugin-builder verify` runs every gate for one plugin and exits non-zero if any fails (a missing
+`claude` binary shows as skipped). Run both before finishing a plugin.
 
 `new-plugin` takes a kebab-case name (`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`, max 64 chars). It copies
 `templates/plugin` to `plugins/<name>/`, replaces the token `plugin-template` (plugin name, skill

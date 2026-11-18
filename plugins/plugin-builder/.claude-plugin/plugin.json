@@ -7,6 +7,8 @@
   },
   "keywords": [
     "autologger",
-    "template"
+    "plugins",
+    "scaffold",
+    "conventions"
   ]
 }
