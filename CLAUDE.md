@@ -15,11 +15,17 @@ does the work and is tested like ordinary code.
 | Path | What it is |
 | --- | --- |
 | `.claude-plugin/marketplace.json` | The marketplace manifest. A plugin loads only if it has an entry here (`source: ./plugins/<name>`). |
-| `plugins/<name>/` | One plugin per folder (none yet). Created by `npm run new-plugin`. |
+| `plugins/<name>/` | One plugin per folder, listed below. Created by `npm run new-plugin`. |
 | `templates/plugin/` | The plugin template, itself a valid plugin (`plugin-template`), not listed in the marketplace. |
 | `scripts/new-plugin.ts` | The scaffold behind `npm run new-plugin`; its tests are in `scripts/test/`. |
 | `package.json`, `tsconfig.json` | Dev tooling only (typecheck, tests, scaffold). Plugins never depend on the root. |
 | `factory/` | Software-factory runtime state; ignored by its own `.gitignore`. Never commit it. |
+
+## Plugins
+
+| Plugin | What it does |
+| --- | --- |
+| `autologger-specs` | Spec coverage for an autologger checkout: `which`, `stale` (the `specs-with-code` rule), `lint`, `new`, `gate`. Its `test/verify-autologger.ts` checks it against autologger's own Python gates. |
 
 ## Commands
 

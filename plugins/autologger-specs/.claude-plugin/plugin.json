@@ -1,0 +1,14 @@
+{
+  "name": "autologger-specs",
+  "version": "0.1.0",
+  "description": "Keeps autologger's docs/specs in step with code: which specs cover a file, which are stale against the specs-with-code gate, spec scaffolding and lint, and the repo's own spec gates.",
+  "author": {
+    "name": "Kalen Cantrell"
+  },
+  "keywords": [
+    "autologger",
+    "specs",
+    "spec-driven",
+    "gates"
+  ]
+}

@@ -4,8 +4,14 @@ Claude Code plugins for developers and agents working on, or with,
 [autologger](https://github.com/kwcantrell/autologger-2), published as one plugin marketplace.
 
 Every plugin ships its own TypeScript CLI, and the plugin's skills call that CLI through `npx`
-instead of carrying the logic in their prompts. There are no plugins yet; `templates/plugin/` is the
-starting point for new ones.
+instead of carrying the logic in their prompts. `templates/plugin/` is the starting point for new
+ones.
+
+## Plugins
+
+| Plugin | What it does |
+| --- | --- |
+| [`autologger-specs`](plugins/autologger-specs/README.md) | Keeps an autologger checkout's `docs/specs/` in step with code: which specs cover a file, which specs the `specs-with-code` gate would fail on, scaffolding and linting specs, and running the repo's own spec gates. |
 
 ## Add the marketplace
 
