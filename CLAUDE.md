@@ -28,6 +28,7 @@ does the work and is tested like ordinary code.
 | `autologger-dev` | Local dev stack setup for autologger and its MCP connection: `doctor`, `up` (only `dev-bao`, `dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1`, `DEV_HTTPS=1 dev-up`), `ca`, `status`, `connect`. Never prints OpenBao state values. See its `README.md`. |
 | `autologger-mcp` | CLI + skills for autologger's MCP endpoint: OAuth sign-in (`login`, `status`, `logout`, and `import-tokens` for a dev stack's `make dev-mcp-token`), MCP tool calls (`tools`, `call`) and a wiki-link checker (`check-links`). See its `README.md`. |
 | `autologger-specs` | Spec coverage for an autologger checkout: `which`, `stale` (the `specs-with-code` rule), `lint`, `new`, `gate`. Its `test/verify-autologger.ts` checks it against autologger's own Python gates. |
+| `plugin-advisor` | Tracks recurring friction with the marketplace plugins: `record`, `list`, `show`, `suggest` (drafts a plugin change and a `/factory:run` line at a threshold), `dismiss`, `file` (dry run unless `--confirm`; `gh issue create` on the public marketplace repo). Ships a `PostToolUseFailure` hook on `Bash` that records failed marketplace CLI calls. Log in `~/.config/plugin-advisor/`. See its `README.md`. |
 | `plugin-builder` | Builds plugins for this marketplace: `new` (runs `scripts/new-plugin.ts`), `check` (this file's convention, statically, with a fix per finding), `verify` (the full gate for one plugin). Its `build-plugin` skill is the workflow. See its `README.md`. |
 
 ## Commands
