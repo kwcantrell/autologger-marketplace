@@ -1,0 +1,17 @@
+{
+  "description": "plugin-discover: when a prompt or its working directory is about autologger (an autologger-2 or autologger-marketplace checkout, or autologger words in the prompt), adds one line of context telling Claude to run plugin-discover's match first. At most once per session; otherwise prints nothing. It never blocks a prompt.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts", "hook"],
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -36,6 +36,11 @@
       "name": "autologger-browser",
       "source": "./plugins/autologger-browser",
       "description": "A Chromium profile for agent-browser that trusts a local autologger dev stack's private CA in its own NSS database only, optionally signed in with make dev-login: doctor, setup, signin and reset, in a TypeScript CLI."
+    },
+    {
+      "name": "plugin-discover",
+      "source": "./plugins/plugin-discover",
+      "description": "Finds the installed plugin or skill that fits an autologger task, offers to install a fitting autologger-marketplace plugin that is not installed yet, and points at plugin-advisor when nothing fits: a local, deterministic catalog and matcher, a mode setting and a guarded install, plus a prompt hook that hints at it."
     }
   ]
 }

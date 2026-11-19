@@ -1,0 +1,97 @@
+---
+name: plugin-discover
+description: Finds which installed plugin or skill fits a piece of autologger work before it starts, and offers to install a fitting autologger-marketplace plugin when none is installed. Use at the start of any autologger task - querying or writing autologger data through its MCP tools (sessions, events, transcripts, topics, wiki pages, dashboards), working in an autologger-2 or autologger-marketplace checkout, running or fixing the local dev stack, specs, or building marketplace plugins - and when a plugin-discover hint says to run match first.
+allowed-tools: Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- plugin-discover match:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- plugin-discover catalog:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- plugin-discover --help:*)
+---
+
+# plugin-discover
+
+Before autologger work, find the plugin or skill made for it and use it, instead of doing by hand
+what a plugin already does. Every action goes through this plugin's CLI, run exactly as written
+below from any directory. It reads Claude Code's own plugin records; nothing goes over the network.
+
+## 1. Match the task
+
+Summarise the task in one line, in general words (what, not whose data), and run:
+
+```sh
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- plugin-discover match "<one-line task summary>" --json
+```
+
+It prints `{"task","threshold","mode","installed":[...],"available":[...],"none_applicable"}`:
+
+- `installed`: installed plugins and user skills, best first. Each has `name`, `skill` (the best
+  skill in it), `description`, `enabled`, `score` and `reason` (the task terms it matched).
+- `available`: autologger-marketplace plugins that are not installed, each with `installCommand`.
+- `none_applicable`: true when nothing scored at least `threshold`; then `advisor` may hold the
+  plugin-advisor commands (see step 4).
+
+**The list is a shortlist, not a verdict.** The score only counts shared words. Read each entry's
+`description` and decide yourself whether it really fits the task; skip a high scorer that does not,
+and when no entry fits, treat it as `none_applicable` even if scores are above the threshold.
+
+## 2. Use the installed plugin or skill that fits
+
+Say which one you are using and why, in one line (for example: "Using autologger-mcp's
+query-session-data skill to read the session's events."), then follow that skill. If the fitting
+plugin has `enabled: false`, tell the user it is installed but disabled (they can enable it with
+`/plugin`); do not enable it yourself.
+
+## 3. If none fits but a marketplace plugin does, follow the mode
+
+`mode` in the match output says what to do with an `available` plugin that fits:
+
+- **`ask`** (the default): tell the user which plugin and why in one or two lines, and ask whether
+  to install it. Only after a clear yes, install it with `--confirmed` (first line below). Never pass
+  `--confirmed` without that yes.
+- **`notify`**: tell the user which plugin fits and give them its `installCommand`; install nothing.
+- **`auto-install`**: install it without asking (second line below), then tell the user what you
+  installed and why.
+- **`off`**: suggest nothing (match lists no `available` plugins then); carry on without it.
+
+```sh
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- plugin-discover install <name> --confirmed --json
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- plugin-discover install <name> --json
+```
+
+`install` runs `claude plugin install <name>@autologger-marketplace` and prints
+`{"plugin","command","installed":true,"reload",...}`. The CLI refuses (exit 1, reason on stderr)
+when the plugin is not in the marketplace, is already installed, or the mode does not allow it;
+show that reason. After an install, tell the user to run `/reload-plugins` (or restart Claude Code)
+so the plugin loads, and carry on with the task the best way you can until they have.
+
+## 4. If nothing fits, record the gap
+
+When nothing fits (`none_applicable`, or your own judgement in step 1) and the match output has
+`advisor`, plugin-advisor is installed: record the gap by running the `advisor.record` command from
+the output exactly as printed. It logs a `missing-guidance` issue for plugin `none`. If the task
+summary in it holds anything private, replace that summary with a general one first. Then, at the
+end of the task, run `advisor.suggest`, and follow plugin-advisor's own skill for what it prints: a
+suggestion there drafts a new plugin and a `/factory:run` request the user can paste to build it.
+Without `advisor`, just carry on.
+
+## Settings
+
+The mode is a per-user setting (`~/.config/plugin-discover/config.json`, owner-only). Change it only
+when the user asks: `ask`, `notify`, `auto-install` or `off`.
+
+```sh
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- plugin-discover settings --json
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- plugin-discover settings set mode <mode> --json
+```
+
+## Everything installed
+
+To see every installed plugin with its skills (disabled ones marked), the user's own skills, and the
+autologger-marketplace plugins that are not installed:
+
+```sh
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- plugin-discover catalog --json
+```
+
+Exit codes: 0 success, 1 the command failed, 2 usage error. On a non-zero exit the reason is on
+stderr; show it to the user instead of guessing. Every command and option:
+
+```sh
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- plugin-discover --help
+```

@@ -1,0 +1,38 @@
+{
+  "name": "autologger-marketplace",
+  "owner": {
+    "name": "Fixture"
+  },
+  "plugins": [
+    {
+      "name": "autologger-mcp",
+      "source": "./plugins/autologger-mcp",
+      "description": "Read and write autologger session data (studios, shows, sessions, events, transcripts, topics, wiki pages, dashboards) through autologger's MCP endpoint: OAuth sign-in, token refresh, MCP tool calls and a wiki-link checker, all in a TypeScript CLI."
+    },
+    {
+      "name": "autologger-dev",
+      "source": "./plugins/autologger-dev",
+      "description": "Brings up a local autologger dev stack (local OpenBao, HTTPS mode, the dev CA) and connects Claude to its MCP server: a doctor that diagnoses what is missing, a guarded up, the CA export, status and connect steps, all in a TypeScript CLI."
+    },
+    {
+      "name": "autologger-browser",
+      "source": "./plugins/autologger-browser",
+      "description": "A Chromium profile for agent-browser that trusts a local autologger dev stack's private CA in its own NSS database only, optionally signed in with make dev-login: doctor, setup, signin and reset, in a TypeScript CLI."
+    },
+    {
+      "name": "autologger-specs",
+      "source": "./plugins/autologger-specs",
+      "description": "Keeps autologger's docs/specs in step with code: which specs cover a file, which are stale against the specs-with-code gate, spec scaffolding and lint, and the repo's own spec gates."
+    },
+    {
+      "name": "plugin-advisor",
+      "source": "./plugins/plugin-advisor",
+      "description": "Tracks recurring friction with the marketplace plugins (CLI failures, workarounds, manual steps, missing guidance) in a local redacted log, and drafts a suggested plugin change with a paste-ready /factory:run request once an issue recurs."
+    },
+    {
+      "name": "plugin-discover",
+      "source": "./plugins/plugin-discover",
+      "description": "Finds the installed plugin or skill that fits an autologger task, offers to install a fitting autologger-marketplace plugin that is not installed yet, and points at plugin-advisor when nothing fits: a local, deterministic catalog and matcher, a mode setting and a guarded install, plus a prompt hook that hints at it."
+    }
+  ]
+}
