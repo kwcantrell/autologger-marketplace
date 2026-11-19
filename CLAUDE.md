@@ -66,10 +66,11 @@ There is no build step and nothing compiled is committed: Node runs the `.ts` fi
 pull request (0 approvals; stale reviews dismissed on push) with the CI check `ci` passing (the job
 id in `.github/workflows/ci.yml`; renaming it breaks the required check). The required `ci` check is
 pinned to GitHub Actions (app id 15368), so a status named `ci` from any other app does not satisfy it.
-CI cancels in-progress runs only for pull requests, never for pushes to `main`. The repository admin role
-may bypass it, so the maintainer's local `/factory:ship` plus `git push` still works. Every `uses:` in
-a workflow is pinned to a full 40-hex commit SHA with the tag in a comment (`scripts/test/` checks
-this; Dependabot keeps them current). Report vulnerabilities as `SECURITY.md` says.
+The repository admin role may bypass the ruleset, so the maintainer's local `/factory:ship` plus
+`git push` still works. Every `uses:` in a workflow is pinned to a full 40-hex commit SHA with the tag
+in a comment (`scripts/test/` checks this; Dependabot keeps them current). CI cancels a superseded run
+only for pull requests; each push to `main` runs in a concurrency group of its own, so no push is
+cancelled or skipped and each gets its version check. Report vulnerabilities as `SECURITY.md` says.
 
 The settings live in `scripts/harden-repo.ts`, not in the GitHub UI. It defaults to a dry run
 (`node scripts/harden-repo.ts [--json] [--repo <owner/name>]`, current → desired per setting);
