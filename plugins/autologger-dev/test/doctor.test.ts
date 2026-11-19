@@ -1,0 +1,216 @@
+// doctor: every check's ok and not-ok case, with a fake runner, fake fetch and a temp home.
+import assert from 'node:assert/strict';
+import { chmodSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import type { Check } from '../src/doctor.ts';
+import { EXIT } from '../src/run.ts';
+import { answering, cli, type CliOptions, fakeRunner, fixture, GOOD_OVERRIDES, NOT_FOUND, untrusted } from './helpers.ts';
+
+const NAMES = [
+  'checkout',
+  'docker',
+  'make',
+  'node',
+  'openbao',
+  'openbao_credentials',
+  'google_client',
+  'custom_dashboards',
+  'node_extra_ca_certs',
+  'dev_server',
+];
+
+/** A fully set-up machine: every check ok. */
+function healthy(): CliOptions & { repo: string; stateDir: string } {
+  const f = fixture({ overrides: GOOD_OVERRIDES });
+  const ca = join(f.home, 'ca.crt');
+  writeFileSync(ca, 'cert');
+  return { env: { ...f.env, NODE_EXTRA_CA_CERTS: ca }, runner: fakeRunner(), fetch: answering(401), repo: f.repo, stateDir: f.stateDir };
+}
+
+async function doctorChecks(opts: CliOptions, ...extra: string[]): Promise<{ checks: Map<string, Check>; ok: boolean; repo: string }> {
+  const { code, stdout, stderr } = await cli(opts, 'doctor', '--json', ...extra);
+  assert.equal(code, EXIT.ok, stderr);
+  const report = JSON.parse(stdout) as { checks: Check[]; ok: boolean; repo: string };
+  assert.deepEqual(
+    report.checks.map((c) => c.name),
+    NAMES,
+  );
+  for (const c of report.checks) {
+    assert.ok(['ok', 'missing', 'fail'].includes(c.status), c.name);
+    assert.equal(c.fix === null, c.status === 'ok', `${c.name}: a fix exactly when not ok`);
+    if (c.fix !== null) assert.doesNotMatch(c.fix, /\n/);
+    assert.doesNotMatch(c.detail, /\n/);
+  }
+  return { checks: new Map(report.checks.map((c) => [c.name, c])), ok: report.ok, repo: report.repo };
+}
+
+test('doctor: everything in place is all ok, exit 0', async () => {
+  const h = healthy();
+  const { checks, ok, repo } = await doctorChecks(h, '--repo', h.repo);
+  assert.equal(repo, h.repo);
+  assert.equal(ok, true);
+  for (const c of checks.values()) assert.equal(c.status, 'ok', `${c.name}: ${c.detail}`);
+});
+
+test('doctor: human output lists each check with its status and fix', async () => {
+  const h = healthy();
+  const { code, stdout } = await cli({ ...h, fetch: untrusted }, 'doctor', '--repo', h.repo);
+  assert.equal(code, EXIT.ok);
+  assert.match(stdout, /^\[ok\] checkout: /m);
+  assert.match(stdout, /^\[fail\] dev_server: the TLS certificate of https:\/\/localhost:8787 is not trusted/m);
+  assert.match(stdout, /^ {4}fix: run autologger-dev ca/m);
+  assert.match(stdout, /1 of 10 checks need attention/);
+});
+
+test('doctor checkout: --repo, then AUTOLOGGER_REPO, then the current directory', async () => {
+  const h = healthy();
+  const other = fixture({ checkout: false });
+  assert.equal((await doctorChecks({ ...h, env: { ...h.env, AUTOLOGGER_REPO: h.repo }, cwd: other.repo })).checks.get('checkout')?.status, 'ok');
+  assert.equal((await doctorChecks({ ...h, cwd: h.repo })).checks.get('checkout')?.status, 'ok');
+  const { checks } = await doctorChecks({ ...h, env: { ...h.env, AUTOLOGGER_REPO: h.repo } }, '--repo', other.repo);
+  const c = checks.get('checkout');
+  assert.equal(c?.status, 'missing');
+  assert.match(c?.detail ?? '', /from --repo\) is not an autologger-2 checkout: no Makefile, docker\/scripts\/compose-run\.mjs, docker\/scripts\/local-bao\.mjs/);
+  assert.match(c?.fix ?? '', /--repo/);
+  assert.equal(checks.get('openbao_credentials')?.status, 'missing');
+});
+
+test('doctor docker: not on PATH is missing, daemon down is fail', async () => {
+  const h = healthy();
+  let c = (await doctorChecks({ ...h, runner: fakeRunner({ 'docker info': NOT_FOUND }) }, '--repo', h.repo)).checks.get('docker');
+  assert.equal(c?.status, 'missing');
+  assert.match(c?.detail ?? '', /not on PATH/);
+  c = (await doctorChecks({ ...h, runner: fakeRunner({ 'docker info': { code: 1, stderr: 'Cannot connect to the Docker daemon' } }) }, '--repo', h.repo)).checks.get('docker');
+  assert.equal(c?.status, 'fail');
+  assert.match(c?.fix ?? '', /start the Docker daemon/);
+});
+
+test('doctor make: missing when not on PATH', async () => {
+  const h = healthy();
+  const c = (await doctorChecks({ ...h, runner: fakeRunner({ 'make --version': NOT_FOUND }) }, '--repo', h.repo)).checks.get('make');
+  assert.equal(c?.status, 'missing');
+  assert.match(c?.fix ?? '', /install make/);
+});
+
+test('doctor node: 22.12 is enough, 22.11 is fail, absent is missing', async () => {
+  const h = healthy();
+  const node = async (r: Parameters<typeof fakeRunner>[0]) => (await doctorChecks({ ...h, runner: fakeRunner(r) }, '--repo', h.repo)).checks.get('node');
+  assert.equal((await node({ 'node --version': { stdout: 'v22.12.0\n' } }))?.status, 'ok');
+  assert.equal((await node({ 'node --version': { stdout: 'v24.1.0\n' } }))?.status, 'ok');
+  const old = await node({ 'node --version': { stdout: 'v22.11.9\n' } });
+  assert.equal(old?.status, 'fail');
+  assert.match(old?.detail ?? '', /older than 22\.12/);
+  assert.equal((await node({ 'node --version': NOT_FOUND }))?.status, 'missing');
+});
+
+test('doctor openbao: running ok; stopped or absent missing with make dev-bao; docker gone fail', async () => {
+  const h = healthy();
+  const bao = async (r: Parameters<typeof fakeRunner>[0], env = h.env) =>
+    (await doctorChecks({ ...h, env, runner: fakeRunner(r) }, '--repo', h.repo)).checks.get('openbao');
+  const runner = fakeRunner();
+  await doctorChecks({ ...h, runner }, '--repo', h.repo);
+  assert.deepEqual(
+    runner.calls.find((c) => c.args[0] === 'container')?.args,
+    ['container', 'inspect', '--format', '{{.State.Running}}', 'autologger-local-openbao'],
+  );
+  const stopped = await bao({ 'docker container': { stdout: 'false\n' } });
+  assert.equal(stopped?.status, 'missing');
+  assert.match(stopped?.detail ?? '', /not running/);
+  assert.match(stopped?.fix ?? '', /make dev-bao/);
+  const absent = await bao({ 'docker container': { code: 1, stderr: 'Error: No such container: autologger-local-openbao' } });
+  assert.equal(absent?.status, 'missing');
+  assert.equal((await bao({ 'docker container': NOT_FOUND }))?.status, 'fail');
+  // LOCAL_BAO_NAME, as make dev-bao reads it.
+  const named = fakeRunner();
+  await doctorChecks({ ...h, env: { ...h.env, LOCAL_BAO_NAME: 'bao-test' }, runner: named }, '--repo', h.repo);
+  assert.equal(named.calls.find((c) => c.args[0] === 'container')?.args.at(-1), 'bao-test');
+});
+
+test('doctor openbao_credentials: missing without .env.openbao.dev', async () => {
+  const f = fixture({ credentials: false, overrides: GOOD_OVERRIDES });
+  const c = (await doctorChecks({ env: f.env, fetch: answering() }, '--repo', f.repo)).checks.get('openbao_credentials');
+  assert.equal(c?.status, 'missing');
+  assert.match(c?.fix ?? '', /make dev-bao/);
+});
+
+test('doctor google_client and custom_dashboards: placeholders, absent file, unreadable file', async () => {
+  const placeholders = fixture({ overrides: 'GOOGLE_CLIENT_ID=REPLACE_ME.apps.googleusercontent.com\nGOOGLE_CLIENT_SECRET=REPLACE_ME\nCUSTOM_DASHBOARDS_ENABLED=0\n' });
+  let { checks } = await doctorChecks({ env: placeholders.env }, '--repo', placeholders.repo);
+  assert.equal(checks.get('google_client')?.status, 'missing');
+  assert.match(checks.get('google_client')?.detail ?? '', /GOOGLE_CLIENT_ID is placeholder, GOOGLE_CLIENT_SECRET is placeholder/);
+  assert.match(checks.get('google_client')?.fix ?? '', /https:\/\/localhost:8787\/auth\/google\/callback/);
+  assert.equal(checks.get('custom_dashboards')?.status, 'missing');
+  assert.match(checks.get('custom_dashboards')?.fix ?? '', /CUSTOM_DASHBOARDS_ENABLED=1/);
+
+  const partial = fixture({ overrides: `GOOGLE_CLIENT_ID=real-id-1234.apps.googleusercontent.com\n` });
+  ({ checks } = await doctorChecks({ env: partial.env }, '--repo', partial.repo));
+  assert.match(checks.get('google_client')?.detail ?? '', /GOOGLE_CLIENT_ID is set, GOOGLE_CLIENT_SECRET is not set/);
+  assert.equal(checks.get('google_client')?.status, 'missing');
+
+  const absent = fixture();
+  ({ checks } = await doctorChecks({ env: absent.env }, '--repo', absent.repo));
+  assert.match(checks.get('google_client')?.detail ?? '', /overrides\.env does not exist/);
+  assert.equal(checks.get('custom_dashboards')?.status, 'missing');
+
+  if (process.getuid?.() !== 0) {
+    const locked = fixture({ overrides: GOOD_OVERRIDES });
+    chmodSync(join(locked.stateDir, 'overrides.env'), 0o000);
+    ({ checks } = await doctorChecks({ env: locked.env }, '--repo', locked.repo));
+    assert.equal(checks.get('google_client')?.status, 'fail');
+    assert.equal(checks.get('custom_dashboards')?.status, 'fail');
+  }
+
+  // LOCAL_BAO_DIR, as make dev-bao reads it.
+  const elsewhere = fixture({ overrides: GOOD_OVERRIDES });
+  const empty = fixture();
+  ({ checks } = await doctorChecks({ env: { ...empty.env, LOCAL_BAO_DIR: elsewhere.stateDir } }, '--repo', empty.repo));
+  assert.equal(checks.get('google_client')?.status, 'ok');
+  assert.equal(checks.get('custom_dashboards')?.status, 'ok');
+});
+
+test('doctor node_extra_ca_certs: unset is missing, unreadable is fail', async () => {
+  const h = healthy();
+  const env = { ...h.env } as Record<string, string>;
+  delete env.NODE_EXTRA_CA_CERTS;
+  let c = (await doctorChecks({ ...h, env }, '--repo', h.repo)).checks.get('node_extra_ca_certs');
+  assert.equal(c?.status, 'missing');
+  assert.match(c?.fix ?? '', /autologger-dev ca .*export NODE_EXTRA_CA_CERTS=.*\.autologger-dev\/autologger-dev-ca\.crt/);
+  c = (await doctorChecks({ ...h, env: { ...env, NODE_EXTRA_CA_CERTS: '/no/such/ca.crt' } }, '--repo', h.repo)).checks.get('node_extra_ca_certs');
+  assert.equal(c?.status, 'fail');
+});
+
+test('doctor dev_server: refused is missing (up), untrusted TLS is fail (ca), --server is used', async () => {
+  const h = healthy();
+  let c = (await doctorChecks({ ...h, fetch: undefined }, '--repo', h.repo)).checks.get('dev_server');
+  assert.equal(c?.status, 'missing');
+  assert.match(c?.detail ?? '', /cannot reach https:\/\/localhost:8787/);
+  assert.match(c?.fix ?? '', /autologger-dev up/);
+  c = (await doctorChecks({ ...h, fetch: untrusted }, '--repo', h.repo)).checks.get('dev_server');
+  assert.equal(c?.status, 'fail');
+  const seen: string[] = [];
+  const fetchFn: typeof fetch = async (url) => {
+    seen.push(String(url));
+    return new Response('', { status: 200 });
+  };
+  c = (await doctorChecks({ ...h, fetch: fetchFn }, '--repo', h.repo, '--server', 'http://127.0.0.1:9999')).checks.get('dev_server');
+  assert.equal(c?.status, 'ok');
+  assert.deepEqual(seen, ['http://127.0.0.1:9999/']);
+});
+
+test('doctor runs only read-only commands', async () => {
+  const h = healthy();
+  const runner = fakeRunner();
+  await doctorChecks({ ...h, runner }, '--repo', h.repo);
+  assert.deepEqual(
+    runner.calls.map((c) => `${c.command} ${c.args.join(' ')}`),
+    ['docker info --format {{.ServerVersion}}', 'make --version', 'node --version', 'docker container inspect --format {{.State.Running}} autologger-local-openbao'],
+  );
+});
+
+test('doctor rejects a non-loopback http server as a usage error', async () => {
+  const { code, stdout, stderr } = await cli({}, 'doctor', '--server', 'http://example.com');
+  assert.equal(code, EXIT.usage);
+  assert.equal(stdout, '');
+  assert.match(stderr, /must be an https:\/\/ URL/);
+});

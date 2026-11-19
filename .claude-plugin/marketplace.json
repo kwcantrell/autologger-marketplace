@@ -21,6 +21,11 @@
       "name": "plugin-builder",
       "source": "./plugins/plugin-builder",
       "description": "Builds new autologger-marketplace plugins the convention's way: scaffolds a plugin from the template, checks a plugin against the CLI convention with actionable findings, and runs its full verification gate."
+    },
+    {
+      "name": "autologger-dev",
+      "source": "./plugins/autologger-dev",
+      "description": "Brings up a local autologger dev stack (local OpenBao, HTTPS mode, the dev CA) and connects Claude to its MCP server: a doctor that diagnoses what is missing, a guarded up, the CA export, status and connect steps, all in a TypeScript CLI."
     }
   ]
 }

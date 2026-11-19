@@ -237,6 +237,19 @@ test('allowed-tools: allowing a different prefix', () => {
   only(checkPlugin(f.root, NAME), 'allowed-tools');
 });
 
+test('allowed-tools: per-command rules for the plugin\'s own bin are accepted', () => {
+  const f = good();
+  const rule = (sub: string): string => `Bash(${PREFIX} ${NAME} ${sub}:*)`;
+  edit(f, SKILL, (t) => t.replace(/^allowed-tools:.*\n/m, `allowed-tools: ${rule('hello')}, ${rule('--help')}\n`));
+  assert.deepEqual(rules(checkPlugin(f.root, NAME)), []);
+});
+
+test('allowed-tools: a per-command rule for another bin is not enough', () => {
+  const f = good();
+  edit(f, SKILL, (t) => t.replace(/^allowed-tools:.*\n/m, `allowed-tools: Bash(${PREFIX} other-cli hello:*)\n`));
+  only(checkPlugin(f.root, NAME), 'allowed-tools');
+});
+
 test('tests-present: no test folder', () => {
   const f = good();
   rmSync(join(f.root, PLUGIN, 'test'), { recursive: true });

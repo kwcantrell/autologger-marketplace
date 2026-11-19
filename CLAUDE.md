@@ -25,6 +25,7 @@ does the work and is tested like ordinary code.
 
 | Plugin | What it does |
 | --- | --- |
+| `autologger-dev` | Local dev stack setup for autologger and its MCP connection: `doctor`, `up` (only `dev-bao`, `dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1`, `DEV_HTTPS=1 dev-up`), `ca`, `status`, `connect`. Never prints OpenBao state values. See its `README.md`. |
 | `autologger-mcp` | CLI + skills for autologger's MCP endpoint: OAuth sign-in (`login`, `status`, `logout`), MCP tool calls (`tools`, `call`) and a wiki-link checker (`check-links`). See its `README.md`. |
 | `autologger-specs` | Spec coverage for an autologger checkout: `which`, `stale` (the `specs-with-code` rule), `lint`, `new`, `gate`. Its `test/verify-autologger.ts` checks it against autologger's own Python gates. |
 | `plugin-builder` | Builds plugins for this marketplace: `new` (runs `scripts/new-plugin.ts`), `check` (this file's convention, statically, with a fix per finding), `verify` (the full gate for one plugin). Its `build-plugin` skill is the workflow. See its `README.md`. |
@@ -91,7 +92,9 @@ npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>
   end-to-end test (`test/cli.test.ts`) extracts and runs every such line, so a skill whose command
   does not work fails `npm test`.
 - `allowed-tools` in the skill frontmatter allows that prefix (`Bash(npx --yes --offline
-  --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>:*)`).
+  --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>:*)`). A CLI with commands that act on
+  the machine (run a Makefile, start containers) pre-approves only its read-only commands instead,
+  one rule each (`Bash(<prefix> <name> <command>:*)`, comma-separated), so the rest prompt.
 
 **Output.** Every command accepts `--json` and then prints exactly one JSON value on stdout; skills use
 `--json`. Without it, output is short human-readable text. `--help` prints usage on stdout and exits 0.

@@ -25,7 +25,7 @@ export const RULES = {
   'npx-quoted-root': 'every skill npx line passes --package="${CLAUDE_PLUGIN_ROOT}" in double quotes',
   'npx-bin-name': "every skill npx line runs the plugin's own bin",
   'npx-prefix': 'every skill npx line starts with the exact required prefix',
-  'allowed-tools': 'the skill frontmatter allowed-tools has Bash(<prefix> <bin>:*)',
+  'allowed-tools': 'the skill frontmatter allowed-tools has Bash(<prefix> <bin>:*), or Bash(<prefix> <bin> <command>:*) rules',
   'tests-present': 'test/ has at least one *.test.ts',
   'e2e-test': 'a test runs the SKILL.md command lines through npx',
   'relative-imports': 'relative imports in src/ and test/ use the .ts extension',
@@ -260,6 +260,17 @@ function frontmatter(text: string): { body: string; fields: Map<string, string> 
 
 type Add = (file: string, rule: Rule, message: string, fix: string, line?: number) => void;
 
+/**
+ * Whether a skill frontmatter pre-approves the CLI: the whole CLI (`Bash(<prefix> <bin>:*)`), or one
+ * or more of its commands (`Bash(<prefix> <bin> <command>:*)`), so a skill can leave commands that
+ * act on the machine to a permission prompt.
+ */
+function allowsCli(frontmatterBody: string, exact: string): boolean {
+  if (frontmatterBody.includes(`Bash(${exact}:*)`)) return true;
+  const escaped = exact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`Bash\\(${escaped} [^)\\s][^)]*:\\*\\)`).test(frontmatterBody);
+}
+
 function checkSkills(root: string, rel: string, bin: string, add: Add): void {
   const skillsDir = join(root, rel, 'skills');
   const skills = existsSync(skillsDir)
@@ -279,7 +290,7 @@ function checkSkills(root: string, rel: string, bin: string, add: Add): void {
     if (fmName !== skill) {
       add(file, 'skill-name', fm === null ? 'no --- frontmatter block' : `frontmatter name is ${JSON.stringify(fmName ?? null)}, but the folder is ${skill}`, `start the file with ---, name: ${skill}, description: ..., allowed-tools: ..., ---`, 1);
     }
-    if (fm === null || !fm.fields.has('allowed-tools') || !fm.body.includes(allowed)) {
+    if (fm === null || !fm.fields.has('allowed-tools') || !allowsCli(fm.body, exact)) {
       add(file, 'allowed-tools', `allowed-tools does not allow the CLI prefix, so every command line prompts for permission`, `set allowed-tools: ${allowed}`, 1);
     }
     const lines = npxLines(text);
