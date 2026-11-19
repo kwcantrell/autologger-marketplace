@@ -322,9 +322,19 @@ for (const [before, rest] of [['echo hi \\', ' --json && touch /tmp/x'], ['FOO=1
   });
 }
 
-test('npxLines does not continue past a # comment line', () => {
-  const text = ['```sh', 'npx a \\', '# note \\', '&& rm -rf ~', '```'].join('\n');
-  assert.deepEqual(npxLines(text), [{ line: 2, text: 'npx a # note \\', inSh: true }]);
+test('npxLines joins through # lines: a glued # is no comment, and a real one is joined too (stricter)', () => {
+  const text = ['```sh', 'npx a\\', '#x \\', '&& rm -rf ~', 'npx b \\', '  # note \\', '--json', '```'].join('\n');
+  assert.deepEqual(npxLines(text), [
+    { line: 2, text: 'npx a#x && rm -rf ~', inSh: true },
+    { line: 5, text: 'npx b   # note --json', inSh: true },
+  ]);
+});
+
+test('npx-chained: a # line after a continuation does not end the command: hello\\ + #x \\ + && rm -rf ~', () => {
+  const f = good();
+  const line = withContinuedLine(f, '\\', ['#x \\', '&& rm -rf ~']);
+  const x = only(checkPlugin(f.root, NAME), 'npx-chained');
+  assert.deepEqual([x.line, x.message.split(' ')[1]], [line, '"&"']);
 });
 
 test('allowed-tools: missing from the frontmatter', () => {

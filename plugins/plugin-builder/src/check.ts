@@ -249,7 +249,8 @@ function continues(trimmed: string): boolean {
  * continuation can never hide an npx line. Inside a ```sh fence, an npx line ending in `\` (trailing
  * spaces ignored) is joined with the lines that continue it the way the shell does: the `\` and the
  * newline are removed with nothing in their place, and the next line keeps its leading whitespace.
- * A line starting with `#` is a comment and continues nothing.
+ * A `#` gets no special treatment, so a comment's trailing `\` still joins: stricter than the shell,
+ * never looser (after a join, a `#` glued to the previous text is not a comment at all).
  */
 export function npxLines(text: string): SkillLine[] {
   const out: SkillLine[] = [];
@@ -265,12 +266,10 @@ export function npxLines(text: string): SkillLine[] {
     if (!trimmed.startsWith('npx ')) return;
     let command = trimmed;
     if (fence === 'sh') {
-      let physical = trimmed;
-      for (let next = index + 1; !physical.startsWith('#') && continues(command) && next < raw.length; next++) {
+      for (let next = index + 1; continues(command) && next < raw.length; next++) {
         const following = raw[next] ?? '';
         if (/^```/.test(following.trim())) break;
         command = `${command.slice(0, -1)}${following.trimEnd()}`;
-        physical = following.trim();
       }
     }
     out.push({ line: index + 1, text: command.trim(), inSh: fence === 'sh' });
