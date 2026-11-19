@@ -177,6 +177,15 @@ for (const [summary, secrets] of [
   ['Cookie: a=[redacted] x; b=realsecret', ['realsecret']],
   ['Authorization: [redacted] abc123', ['abc123']],
   ['retry with token=[redacted]realsecret', ['realsecret']],
+  // Job 024: the authorization= form, Cookie attribute names and -p in mysql.
+  ['authorization=Token abc123xyz', ['abc123xyz']],
+  ['curl -d "AUTHORIZATION=Bearer abc123xyz" then 401', ['abc123xyz']],
+  ['Cookie: a=b; path=s3cret', ['s3cret']],
+  ['mysql -u root -phunter2 db failed', ['hunter2']],
+  // Round 1.
+  ['sshpass -p hunter2 ssh host failed', ['hunter2']],
+  ['mongodump -u a -p hunter2 --db x failed', ['hunter2']],
+  ['mysql -u root \\\n  -p hunter2 db\nexited 1', ['hunter2']],
 ] as const) {
   test(`a draft with stored text next to its own text files (dry run): ${JSON.stringify(summary.slice(-40))}`, () => {
     box = withGh(`console.log(${JSON.stringify(ISSUE_URL)});`);
@@ -254,6 +263,13 @@ test('text edited into a draft is checked as it is: a typed [redacted] or a stor
     original.replace(`: ${summary}\n`, `: ${summary} token=abc123\n`),
     // The Problem line with a secret put in front of the stored summary.
     original.replace(`failed: ${summary}`, `failed: password=hunter2 ${summary}`),
+    // Job 024: pasted secrets in the newly covered forms.
+    `${original}\nauthorization=Token abc123\n`,
+    `${original}\nCookie: a=[redacted]; path=s3cret\n`,
+    `${original}\nran mysql -u root -phunter2\n`,
+    // Round 1: other -p tools.
+    `${original}\nsshpass -p hunter2 ssh host\n`,
+    `${original}\nmongosh -u admin -p hunter2\n`,
   ]) {
     assert.notEqual(edit, original);
     writeFileSync(path, edit);
@@ -261,6 +277,12 @@ test('text edited into a draft is checked as it is: a typed [redacted] or a stor
     assert.equal(r.code, EXIT.failure, edit);
     assert.match(r.stderr, /still has secret-looking text on line \d+/);
   }
+  // Round 1: a backslash-continued mysql command spans two lines, so no single line looks secret; the
+  // whole-draft check refuses it.
+  writeFileSync(path, `${original}\nmysql -u root \\\n  -p hunter2 db\n`);
+  const r = box.call(['file', sig, '--confirm']);
+  assert.equal(r.code, EXIT.failure, r.stderr);
+  assert.match(r.stderr, /still has secret-looking text; edit it out/);
   assert.deepEqual(ghCalls(box), []);
 });
 

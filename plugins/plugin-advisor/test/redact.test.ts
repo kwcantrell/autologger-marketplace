@@ -8,7 +8,8 @@ const SECRETS: Array<[string, string, string]> = [
   ['bearer token', 'Authorization header was Bearer abcDEF123456ghiJKL789', `Authorization header was Bearer ${R}`],
   ['alm_ access token', 'stored alm_Zx81kPq0rT5vW2yB in the file', `stored ${R} in the file`],
   ['alr_ refresh token', 'refresh with alr_9q8w7e6r5t4y and retry', `refresh with ${R} and retry`],
-  ['autologger_sid cookie', 'Cookie: autologger_sid=s%3Aabc.def123; Path=/', `Cookie: autologger_sid=${R}; Path=/`],
+  // A request Cookie: header has no attributes (job 024), so `Path` there is a cookie like any other.
+  ['autologger_sid cookie', 'Cookie: autologger_sid=s%3Aabc.def123; Path=/', `Cookie: autologger_sid=${R}; Path=${R}`],
   ['bare autologger_sid', 'autologger_sid: 8f3k2a9d', `autologger_sid: ${R}`],
   ['KEY=value with a secret key', 'set OPENBAO_SECRET_ID=1234-abcd and DEV_PORT=8787', `set OPENBAO_SECRET_ID=${R} and DEV_PORT=8787`],
   ['password in quotes', 'password="hello world" user=ada', `password="${R}" user=ada`],
@@ -43,6 +44,76 @@ const SECRETS: Array<[string, string, string]> = [
   // Review 2: a header that ends in `;`.
   ['Cookie ending in ;', 'login fails, Cookie: session=ab1;', `login fails, Cookie: session=${R};`],
   ['Set-Cookie ending in ;', 'Set-Cookie: a=b; Path=/;', `Set-Cookie: a=${R}; Path=/;`],
+  // Job 024 (follow-up 017 #1): -p is a password only after mysql and similar commands, in every form.
+  ['mysql -p value', 'mysql -p secret', `mysql -p ${R}`],
+  ['mysql -pvalue', 'mysql -psecret', `mysql -p${R}`],
+  ['mysqldump -p=value', 'mysqldump -p=secret', `mysqldump -p=${R}`],
+  ['mysqldump -p value', 'mysqldump -u root -p secret db', `mysqldump -u root -p ${R} db`],
+  ['mariadb -pvalue', 'mariadb -psecret', `mariadb -p${R}`],
+  ['mariadb-dump -p=value', 'mariadb-dump -p=secret', `mariadb-dump -p=${R}`],
+  ['mysqladmin -p value', 'mysqladmin -u root -p secret status', `mysqladmin -u root -p ${R} status`],
+  ['mysql by path, any case', '/usr/bin/MySQL --host db -p"a b"', `/usr/bin/MySQL --host db -p"${R}"`],
+  ['every -p in one mysql command', 'mysql -pone -p two', `mysql -p${R} -p ${R}`],
+  // Round 1: other tools whose -p takes a password.
+  ['sshpass -p', 'sshpass -p hunter2 ssh host', `sshpass -p ${R} ssh host`],
+  ['mongosh -p', 'mongosh -u admin -p hunter2', `mongosh -u admin -p ${R}`],
+  ['mongo -p', 'mongo -u admin -phunter2 db', `mongo -u admin -p${R} db`],
+  ['mongodump -p', 'mongodump -u a -p hunter2 --db x', `mongodump -u a -p ${R} --db x`],
+  ['mongorestore -p', 'mongorestore -u a -p=hunter2 dump/', `mongorestore -u a -p=${R} dump/`],
+  ['mongoexport -p', 'mongoexport -u a -p hunter2 -c c', `mongoexport -u a -p ${R} -c c`],
+  ['mongoimport -p', 'mongoimport -u a -p hunter2 -c c', `mongoimport -u a -p ${R} -c c`],
+  ['mongostat -p', 'mongostat -u a -p hunter2', `mongostat -u a -p ${R}`],
+  ['mongotop -p', 'mongotop -u a -p hunter2', `mongotop -u a -p ${R}`],
+  ['mongofiles -p', 'mongofiles -u a -p hunter2 list', `mongofiles -u a -p ${R} list`],
+  ['mysqlsh -p', 'mysqlsh -u root -phunter2', `mysqlsh -u root -p${R}`],
+  ['mysqlimport -p', 'mysqlimport -u root -phunter2 db f.txt', `mysqlimport -u root -p${R} db f.txt`],
+  ['mysqlcheck -p', 'mysqlcheck -u root -phunter2 db', `mysqlcheck -u root -p${R} db`],
+  ['mysqlshow -p', 'mysqlshow -u root -phunter2', `mysqlshow -u root -p${R}`],
+  ['mysqlslap -p', 'mysqlslap -u root -phunter2', `mysqlslap -u root -p${R}`],
+  ['mysqlpump -p', 'mysqlpump -u root -phunter2', `mysqlpump -u root -p${R}`],
+  ['mysqlbinlog -p', 'mysqlbinlog -u root -phunter2 log.1', `mysqlbinlog -u root -p${R} log.1`],
+  ['mysql_upgrade -p', 'mysql_upgrade -u root -phunter2', `mysql_upgrade -u root -p${R}`],
+  ['mysql_secure_installation -p', 'mysql_secure_installation -u root -phunter2', `mysql_secure_installation -u root -p${R}`],
+  ['mariadb-admin -p', 'mariadb-admin -u root -phunter2 status', `mariadb-admin -u root -p${R} status`],
+  ['mariadb-import -p', 'mariadb-import -u root -phunter2 db f', `mariadb-import -u root -p${R} db f`],
+  ['mariadb-check -p', 'mariadb-check -u root -phunter2 db', `mariadb-check -u root -p${R} db`],
+  ['mariadb-show -p', 'mariadb-show -u root -phunter2', `mariadb-show -u root -p${R}`],
+  ['mariadb-slap -p', 'mariadb-slap -u root -phunter2', `mariadb-slap -u root -p${R}`],
+  ['mariadb-binlog -p', 'mariadb-binlog -u root -phunter2 log.1', `mariadb-binlog -u root -p${R} log.1`],
+  ['mariadb-upgrade -p', 'mariadb-upgrade -u root -phunter2', `mariadb-upgrade -u root -p${R}`],
+  ['mariadb-secure-installation -p', 'mariadb-secure-installation -u root -phunter2', `mariadb-secure-installation -u root -p${R}`],
+  ['cqlsh -p', 'cqlsh -u cassandra -p hunter2 host', `cqlsh -u cassandra -p ${R} host`],
+  ['rabbitmqadmin -p', 'rabbitmqadmin -u admin -p hunter2 list queues', `rabbitmqadmin -u admin -p ${R} list queues`],
+  ['rdesktop -p', 'rdesktop -u ada -p hunter2 host', `rdesktop -u ada -p ${R} host`],
+  ['7z -p', '7z x -phunter2 a.7z', `7z x -p${R} a.7z`],
+  ['7za -p', '7za a -phunter2 a.7z f', `7za a -p${R} a.7z f`],
+  ['7zr -p', '7zr x -phunter2 a.7z', `7zr x -p${R} a.7z`],
+  ['rar -p', 'rar a -phunter2 a.rar f', `rar a -p${R} a.rar f`],
+  ['unrar -p', 'unrar x -phunter2 a.rar', `unrar x -p${R} a.rar`],
+  // Round 1: a command continued with a backslash is one command, also in details (newlines kept).
+  ['mysql continued with \\ onto a -p line', 'mysql -u root \\\n  -p s3cret db', `mysql -u root \\\n  -p ${R} db`],
+  ['mysql continued with \\ (CRLF)', 'mysql -u root \\\r\n  -ps3cret db', `mysql -u root \\\r\n  -p${R} db`],
+  ['sshpass continued over two lines', 'sshpass \\\n -p s3cret \\\n ssh host', `sshpass \\\n -p ${R} \\\n ssh host`],
+  ['mysql -p after a quoted ; in the same command', "mysql -e 'select 1; select 2' -psecret", `mysql -e 'select 1; select 2' -p${R}`],
+  ['mysql -p after another command on the line', 'cd /x && mysql -psecret', `cd /x && mysql -p${R}`],
+  ['--password after any command', 'psql --password secret', `psql --password ${R}`],
+  ['--password= after any command', 'ssh --password=secret', `ssh --password=${R}`],
+  // Job 024 (follow-up 017 #2): the authorization= form, any casing, to the end of the line or the closing quote.
+  ['authorization=Token', 'authorization=Token abc123', `authorization=${R}`],
+  ['AUTHORIZATION=Bearer with a short token', 'AUTHORIZATION=Bearer xyz', `AUTHORIZATION=${R}`],
+  ['Authorization=, mixed case, to the end of the line', 'sent Authorization=Digest u="a", n=1\nnext line', `sent Authorization=${R}\nnext line`],
+  ['proxy-authorization=', 'proxy-authorization=Negotiate YII', `proxy-authorization=${R}`],
+  ['PROXY-AUTHORIZATION=', 'PROXY-AUTHORIZATION=Basic Zm9v', `PROXY-AUTHORIZATION=${R}`],
+  ['authorization= with spaces around =', 'authorization = Token abc', `authorization = ${R}`],
+  ['authorization= double-quoted, to the closing quote', 'curl -d "authorization=Token abc" then 401', `curl -d "authorization=${R}" then 401`],
+  ['authorization= value in double quotes', 'authorization="Token abc" then 401', `authorization="${R}" then 401`],
+  ["authorization= value in single quotes", "authorization='Token abc' then 401", `authorization='${R}' then 401`],
+  ['authorization= single-quoted pair, to the closing quote', "curl -d 'Authorization=Token abc' x", `curl -d 'Authorization=${R}' x`],
+  ['HTTP_AUTHORIZATION=', 'env HTTP_AUTHORIZATION=Token abc', `env HTTP_AUTHORIZATION=${R}`],
+  // Job 024 (follow-up 017 #2): attribute names keep their values only in Set-Cookie.
+  ['Cookie: attribute-named cookies are cookies', 'Cookie: a=b; path=s3cret', `Cookie: a=${R}; path=${R}`],
+  ['Cookie: every attribute name', 'Cookie: Domain=s1; Expires=s2; Max-Age=s3; SameSite=s4; Secure; HttpOnly', `Cookie: Domain=${R}; Expires=${R}; Max-Age=${R}; SameSite=${R}; ${R}; ${R}`],
+  ['Set-Cookie keeps every attribute', 'Set-Cookie: id=s3cret; Path=/; Domain=x.example; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Max-Age=60; Secure; HttpOnly; SameSite=Lax', `Set-Cookie: id=${R}; Path=/; Domain=x.example; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Max-Age=60; Secure; HttpOnly; SameSite=Lax`],
 ];
 
 for (const [name, input, expected] of SECRETS) {
@@ -73,8 +144,68 @@ test('git SHAs and UUIDs: short SHAs are kept; full 40-character SHAs and UUIDs 
   assert.equal(redact('id 123e4567-e89b-12d3-a456-426614174000 missing'), `id ${R} missing`);
 });
 
+test('-p outside mysql and similar commands is left alone (job 024)', () => {
+  for (const text of [
+    'mkdir -p /x/y',
+    'ssh -p 2222 host',
+    'docker run -p 8080:80 img',
+    'psql -p 5433',
+    'gcc -pthread',
+    'find . -print',
+    'git log -p HEAD',
+    'mysql failed; ssh -p 2222 host',
+    'mysql failed\nmkdir -p /x/y',
+    // A newline without a backslash ends the command.
+    'mysql -u root\n-p 5433 is a port',
+    'redis-cli -p 6380 ping',
+    'mysql_config -p x',
+  ]) {
+    assert.equal(redact(text), text, text);
+    assert.equal(containsSecret(text), false, text);
+  }
+});
+
+test('a backslash-continued mysql command keeps no password in details (round 1)', () => {
+  for (const input of ['mysql -u root \\\n  -p s3cret db', 'mysql -u r \\\n -p s3cret', 'mysqldump \\\n  -u root \\\n  -ps3cret db', 'mongosh \\\n -u a \\\n -p s3cret']) {
+    const out = cleanDetail(input);
+    assert.ok(!out.includes('s3cret'), `${JSON.stringify(input)} -> ${JSON.stringify(out)}`);
+    assert.ok(out.includes('\n'), 'details keep their newlines');
+    assert.equal(containsSecret(input), true, input);
+    assert.equal(containsSecret(out), false, out);
+  }
+});
+
 test('a -p with no value, or followed by another flag, is left alone', () => {
   for (const text of ['ran it with -p', 'ran it with -p -v', 'a-p b']) assert.equal(redact(text), text, text);
+});
+
+test('authorization= keeps no token, whatever its length (job 024)', () => {
+  for (const [input, token] of [
+    ['authorization=Token abc123', 'abc123'],
+    ['AUTHORIZATION=Bearer xyz', 'xyz'],
+    ['Authorization=Token a', ' a'],
+    [`authorization=Token ${'k'.repeat(300)}`, 'kkk'],
+    ['aUtHoRiZaTiOn=Basic q', ' q'],
+    ['Proxy-Authorization=Bearer t0', 't0'],
+  ] as const) {
+    const out = redact(input);
+    assert.ok(!out.includes(token), `${input} -> ${out}`);
+    assert.equal(containsSecret(out), false, out);
+  }
+  for (const text of ['authorization=', 'authorization=[redacted]']) assert.equal(redact(text), text, text);
+});
+
+test('the redaction scan is linear: 20000 a= segments return in under 1 s (job 024)', () => {
+  const input = `${'a='.repeat(20000)}x`;
+  const start = performance.now();
+  const out = redact(input);
+  const ms = performance.now() - start;
+  assert.equal(typeof out, 'string');
+  assert.ok(ms < 1000, `${ms} ms`);
+  assert.doesNotThrow(() => cleanSummary(input));
+  assert.doesNotThrow(() => cleanDetail(`${'a: '.repeat(20000)}x`));
+  // A secret pair deep in a chain of ordinary pairs is still found.
+  assert.equal(redact(`${'a='.repeat(20000)}password=x`), `${'a='.repeat(20000)}password=${R}`);
 });
 
 test('the word Authorization in prose, with no colon, is left alone', () => {
@@ -207,6 +338,11 @@ const TAILS = [
   '"session": "abc"',
   'token="abc1" more',
   "password='x' more",
+  // Job 024.
+  'mysql -p hunter2',
+  'mysql -u root -phunter2 db',
+  'authorization=Token abc then more words',
+  'Cookie: a=b; path=s3cret then more',
 ];
 
 test('cleanSummary output never looks secret, for every length from 150 to 260 characters', () => {

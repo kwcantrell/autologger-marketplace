@@ -52,17 +52,28 @@ checkout, so the log can't be committed by accident.
 | `drafts/<signature>.md` | The draft suggestion: a `# title` line, then target, problem, evidence, proposed change and the `/factory:run` line. This file is what `file` sends. |
 
 **Redaction.** Before anything is stored, the summary and detail are redacted: everything after
-`Authorization:` or `Proxy-Authorization:` to the end of the line (any scheme), every cookie value
-after `Cookie:` or `Set-Cookie:` (attributes such as `Path` are kept), bearer and basic credentials,
-autologger `alm_`/`alr_` tokens, `autologger_sid` cookie values, `KEY=value`, `key: value`,
-`"key": "value"` and `--key value` where the key looks secret (token, secret, password, api key,
-cookie, credential, session, session id and similar) whatever the value's length, the value after
-`-p` or `--password`, JWTs, URL credentials, PEM private keys, common provider tokens (GitHub,
-Slack, AWS, `sk-`), and long random-looking strings (including full 40-character git SHAs and
-UUIDs; short SHAs are kept) all become `[redacted]`. Then summaries are made one line and capped at
-200 characters, details at 2000. A cut never lands inside a `[redacted]` marker or leaves a dangling
-`key=` behind. Only an exact `[redacted]` counts as already redacted: text after a typed marker
-(`Cookie: a=[redacted] x; b=secret`) is still redacted.
+`Authorization:` or `Proxy-Authorization:` to the end of the line (any scheme), and the same for the
+`authorization=` / `proxy-authorization=` form in any casing (to the closing quote when the value or
+the pair is quoted), every cookie value after `Cookie:` or `Set-Cookie:` (in `Set-Cookie:` only,
+attributes such as `Path`, `Domain`, `Expires`, `Max-Age`, `Secure`, `HttpOnly` and `SameSite` keep
+their values; in a request `Cookie:` header a `path=...` is a cookie and is redacted), bearer and
+basic credentials, autologger `alm_`/`alr_` tokens, `autologger_sid` cookie values, `KEY=value`,
+`key: value`, `"key": "value"` and `--key value` where the key looks secret (token, secret,
+password, api key, cookie, credential, session, session id and similar) whatever the value's length,
+also when the pair sits inside an ordinary value (`failed: password=x`), the value after
+`--password` in any command, the value after `-p` (`-p x`, `-p=x`, `-px`) only in commands where
+`-p` takes a password: the MySQL and MariaDB clients and tools (`mysql`, `mysqldump`, `mysqladmin`,
+`mysqlsh`, `mariadb`, `mariadb-dump` and the rest), the MongoDB shell and tools (`mongo`, `mongosh`,
+`mongodump`, `mongorestore`, `mongoexport`, `mongoimport`, ...), `sshpass`, `cqlsh`, `rabbitmqadmin`,
+`rdesktop`, `7z` and `rar`/`unrar`, up to the end of that command (a newline not continued with `\`,
+or `;`, `|`, `&`), so `mkdir -p`, `ssh -p 2222`, `docker run -p 8080:80`, `psql -p 5433` and
+`gcc -pthread` are kept, JWTs, URL credentials, PEM private keys,
+common provider tokens (GitHub, Slack, AWS, `sk-`), and long random-looking strings (including full
+40-character git SHAs and UUIDs; short SHAs are kept) all become `[redacted]`. Redaction is one
+left-to-right scan per rule, so very long lines (thousands of `a=` pairs) do not overflow the stack.
+Then summaries are made one line and capped at 200 characters, details at 2000. A cut never lands
+inside a `[redacted]` marker or leaves a dangling `key=` behind. Only an exact `[redacted]` counts as
+already redacted: text after a typed marker (`Cookie: a=[redacted] x; b=secret`) is still redacted.
 
 **Signatures.** An issue's signature is a hash of the plugin, the kind and the summary normalised:
 lower-cased, with URLs, emails, paths, UUIDs, hex, ids and numbers masked. So "call failed for
