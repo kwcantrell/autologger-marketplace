@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { CliError } from './errors.ts';
 import type { Env } from './http.ts';
 import type { Runner } from './runner.ts';
+import { cliCommand, googleRedirect, slotEnv, slotPrefix } from './slot.ts';
 import {
   type Checkout,
   childEnv,
@@ -13,7 +14,6 @@ import {
   CREDENTIALS_FILE,
   DASHBOARDS_KEY,
   dashboardsState,
-  GOOGLE_REDIRECT,
   googleClient,
   googleKeysIn,
   isFile,
@@ -37,12 +37,28 @@ interface StepSpec {
   command: string;
 }
 
-/** The only commands `up` ever runs. */
+/** The only commands `up` ever runs (slot 0's; see stepFor for a slot's command line). */
 export const STEPS: Readonly<Record<StepId, StepSpec>> = {
   'dev-bao': { args: ['dev-bao'], env: {}, command: 'make dev-bao' },
   'dev-bao-set': { args: ['dev-bao-set', `${DASHBOARDS_KEY}=1`], env: {}, command: `make dev-bao-set ${DASHBOARDS_KEY}=1` },
   'dev-up': { args: ['dev-up'], env: { DEV_HTTPS: '1' }, command: 'DEV_HTTPS=1 make dev-up' },
 };
+
+/**
+ * Steps that act on the dev slot and so get DEV_SLOT=N for slot N. dev-bao and dev-bao-set act on the
+ * local OpenBao, which every slot shares (autologger's Makefile runs them with `env -i`, dropping
+ * DEV_SLOT anyway), so they never get it.
+ */
+const SLOT_STEPS: ReadonlySet<StepId> = new Set(['dev-up']);
+
+/** The step's environment for make, and its command line as a user would type it, for the slot. */
+export function stepFor(id: StepId, slot: number): { env: Record<string, string>; command: string } {
+  const spec = STEPS[id];
+  if (!SLOT_STEPS.has(id) || slot === 0) return { env: { ...spec.env }, command: spec.command };
+  // DEV_HTTPS=1 DEV_SLOT=N make dev-up
+  const command = spec.command.replace(/(^|\s)make /, `$1${slotPrefix(slot)}make `);
+  return { env: { ...spec.env, ...slotEnv(slot) }, command };
+}
 
 export interface PlannedStep {
   id: StepId;
@@ -55,6 +71,8 @@ export interface PlannedStep {
 
 export interface UpReport {
   repo: string;
+  /** The dev slot (0 is the default stack). */
+  slot: number;
   dry_run: boolean;
   steps: PlannedStep[];
   /** 'placeholder' also covers not set, quoted and padded values (the warnings say which). */
@@ -66,6 +84,8 @@ export interface UpContext {
   env: Env;
   runner: Runner;
   checkout: Checkout;
+  /** The dev slot (0, the default stack, when left out). */
+  slot?: number;
   /** Receives the make output (and the step headers) as it arrives. */
   progress: (text: string) => void;
   /**
@@ -77,6 +97,7 @@ export interface UpContext {
 
 export async function planUp(ctx: UpContext): Promise<UpReport> {
   const { checkout, env } = ctx;
+  const slot = ctx.slot ?? 0;
   await verifyCheckout(checkout, ctx.runner, ctx.env);
   const container = containerName(env);
   const state = await openbaoContainer(ctx.runner, container, env);
@@ -111,7 +132,13 @@ export async function planUp(ctx: UpContext): Promise<UpReport> {
             : `${DASHBOARDS_KEY} is not 1 in ${overridesPath}; /mcp needs it`,
     status: 'planned',
   });
-  steps.push({ id: 'dev-up', command: STEPS['dev-up'].command, run: true, reason: 'migrate, build and start the stack in HTTPS mode', status: 'planned' });
+  steps.push({
+    id: 'dev-up',
+    command: stepFor('dev-up', slot).command,
+    run: true,
+    reason: slot === 0 ? 'migrate, build and start the stack in HTTPS mode' : `migrate, build and start dev slot ${slot} in HTTPS mode`,
+    status: 'planned',
+  });
   for (const step of steps) if (!step.run) step.status = 'skipped';
 
   const google = overrides.state === 'unreadable' ? null : googleClient(values);
@@ -129,10 +156,10 @@ export async function planUp(ctx: UpContext): Promise<UpReport> {
   const unset = google === null ? [] : [...googleKeysIn(google, 'placeholder'), ...googleKeysIn(google, 'not set')];
   if (google === null || unset.length > 0) {
     warnings.push(
-      `the Google OAuth client in ${overridesPath} is ${google === null ? 'unreadable' : 'a placeholder or not set'}: the stack will come up, but Google sign-in (and so the MCP sign-in) will not work. The user must add their own GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (authorized redirect ${GOOGLE_REDIRECT}) to that file, then run make dev-bao and up again.`,
+      `the Google OAuth client in ${overridesPath} is ${google === null ? 'unreadable' : 'a placeholder or not set'}: the stack will come up, but Google sign-in (and so the MCP sign-in) will not work. The user must add their own GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (authorized redirect ${googleRedirect(slot)}) to that file, then run make dev-bao and up again.`,
     );
   }
-  return { repo: checkout.path, dry_run: true, steps, google_client: google?.ok === true ? 'set' : 'placeholder', warnings };
+  return { repo: checkout.path, slot, dry_run: true, steps, google_client: google?.ok === true ? 'set' : 'placeholder', warnings };
 }
 
 /** Runs the planned steps in order; the first failure stops the rest and throws (exit 1). */
@@ -140,11 +167,11 @@ export async function runUp(ctx: UpContext, report: UpReport): Promise<UpReport>
   report.dry_run = false;
   for (const step of report.steps) {
     if (!step.run) continue;
-    const spec = STEPS[step.id];
+    const spec = stepFor(step.id, report.slot);
     ctx.progress(`==> ${step.command}  (${step.reason})\n`);
-    const result = await ctx.runner('make', spec.args, {
+    const result = await ctx.runner('make', STEPS[step.id].args, {
       cwd: report.repo,
-      env: childEnv(ctx.env, { ...spec.env }),
+      env: childEnv(ctx.env, spec.env),
       onOutput: ctx.progress,
     });
     ctx.endOutput();
@@ -162,12 +189,13 @@ export async function runUp(ctx: UpContext, report: UpReport): Promise<UpReport>
 }
 
 export function formatUp(report: UpReport): string {
-  const lines = [report.dry_run ? `Would run in ${report.repo}:` : `Ran in ${report.repo}:`];
+  const where = report.slot === 0 ? report.repo : `${report.repo} (dev slot ${report.slot})`;
+  const lines = [report.dry_run ? `Would run in ${where}:` : `Ran in ${where}:`];
   for (const s of report.steps) {
     const mark = s.status === 'skipped' ? 'skip' : report.dry_run ? 'run ' : s.status;
     lines.push(`  [${mark}] ${s.command}  (${s.reason})`);
   }
   for (const w of report.warnings) lines.push(`Warning: ${w}`);
-  if (!report.dry_run) lines.push('Next: autologger-dev ca, then autologger-dev connect.');
+  if (!report.dry_run) lines.push(`Next: ${cliCommand('ca', report.slot)}, then ${cliCommand('connect', report.slot)}.`);
   return `${lines.join('\n')}\n`;
 }

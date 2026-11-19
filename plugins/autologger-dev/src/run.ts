@@ -7,6 +7,7 @@ import { doctor, formatDoctor } from './doctor.ts';
 import { messageOf, UsageError } from './errors.ts';
 import { DEFAULT_SERVER, type Env, type Fetch, resolveServer } from './http.ts';
 import { type Runner, spawnRunner } from './runner.ts';
+import { parseSlot, slotServer } from './slot.ts';
 import { defaultCaFile, redactor, resolveCheckout, secretValues } from './stack.ts';
 import { formatStatus, status } from './status.ts';
 import { formatUp, planUp, runUp, STEPS } from './up.ts';
@@ -31,38 +32,43 @@ export interface Io {
 export const USAGE = `Usage: ${CLI_NAME} <command> [options]
 
 Brings up a local autologger dev stack (kwcantrell/autologger-2) in HTTPS mode and connects Claude
-to its MCP server at ${DEFAULT_SERVER}/mcp.
+to its MCP server at ${DEFAULT_SERVER}/mcp, or to dev slot N's at https://localhost:2N787/mcp.
 
 Commands:
-  doctor [--repo <path>] [--server <url>]
+  doctor [--repo <path>] [--slot <N>] [--server <url>]
                  Check what is missing: the checkout, docker, make, Node, the local OpenBao
                  container, .env.openbao.dev, the Google client and CUSTOM_DASHBOARDS_ENABLED in
                  overrides.env (set, placeholder, quoted or padded only, never values),
                  NODE_EXTRA_CA_CERTS and the dev server. Each check is ok, missing or fail, with a one-line fix. Exit 0 when it ran.
-  up --repo <path> [--dry-run]
+  up --repo <path> [--slot <N>] [--dry-run]
                  Run, in the checkout and only as needed: ${STEPS['dev-bao'].command},
                  ${STEPS['dev-bao-set'].command}, then ${STEPS['dev-up'].command}.
                  make's output goes to stderr; the first failing step stops it (exit 1).
                  --dry-run prints the steps without running them.
-  ca --repo <path> [--out <file>]
+  ca --repo <path> [--slot <N>] [--out <file>]
                  Run ${CA_COMMAND}, check the output is one PEM certificate, write it
                  (default ~/.autologger-dev/autologger-dev-ca.crt, mode 644) and print the
                  export NODE_EXTRA_CA_CERTS=<file> line. An existing file there is replaced only
                  if it is a regular file holding one PEM certificate; anything else (another
                  file, a directory, a symlink) is refused with exit 1 and left as it was.
-  status [--server <url>]
+  status [--slot <N>] [--server <url>]
                  Whether the server answers, serves /.well-known/oauth-protected-resource naming
                  its resource, and has /mcp. A TLS trust failure is reported with its fix.
-  connect [--server <url>]
+  connect [--slot <N>] [--server <url>]
                  Print (never run) what is left to connect Claude: the NODE_EXTRA_CA_CERTS export,
-                 claude mcp add --transport http autologger-dev <server>/mcp, or autologger-mcp login.
+                 claude mcp add --transport http autologger-dev <server>/mcp (autologger-dev-N for
+                 slot N), or autologger-mcp login.
 
 Options:
   --repo <path>    autologger-2 checkout (default: $AUTOLOGGER_REPO; for doctor only, else the
                    current directory). up and ca need --repo or $AUTOLOGGER_REPO, and refuse a
                    checkout whose origin remote is not github.com/kwcantrell/autologger-2.
-  --server <url>   dev server (default: $AUTOLOGGER_URL, else ${DEFAULT_SERVER}); https://, or
-                   http:// to localhost/127.0.0.1/[::1]
+  --slot <N>       autologger dev slot N, one digit 0-9 (ADR 0038; default 0, the stack on
+                   ${DEFAULT_SERVER}). Slot N's server is https://localhost:2N787; up and ca pass
+                   DEV_SLOT=N to make dev-up and make dev-ca (nothing for slot 0). The local OpenBao
+                   and the dev CA are shared by every slot.
+  --server <url>   dev server (default: --slot's server if given, else $AUTOLOGGER_URL, else
+                   ${DEFAULT_SERVER}); https://, or http:// to localhost/127.0.0.1/[::1]
   --json           Print machine-readable JSON on stdout
   -h, --help       Show this help
   --version        Print the CLI version
@@ -79,6 +85,7 @@ const OPTIONS = {
   version: { type: 'boolean', default: false },
   repo: { type: 'string' },
   server: { type: 'string' },
+  slot: { type: 'string' },
   out: { type: 'string' },
   'dry-run': { type: 'boolean', default: false },
 } as const;
@@ -88,11 +95,11 @@ type OptionName = keyof typeof OPTIONS;
 const MAKEFILE_COMMANDS = new Set(['up', 'ca']);
 const COMMON: OptionName[] = ['json', 'help', 'version'];
 const COMMAND_OPTIONS: Record<string, OptionName[]> = {
-  doctor: ['repo', 'server'],
-  up: ['repo', 'dry-run'],
-  ca: ['repo', 'out'],
-  status: ['server'],
-  connect: ['server'],
+  doctor: ['repo', 'server', 'slot'],
+  up: ['repo', 'dry-run', 'slot'],
+  ca: ['repo', 'out', 'slot'],
+  status: ['server', 'slot'],
+  connect: ['server', 'slot'],
 };
 
 function version(): string {
@@ -149,6 +156,12 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
   if (rest.length > 0) return usageError(rawIo, `${command} takes no arguments`);
   if (values.out === '') return usageError(rawIo, '--out needs a file path');
   if (values.repo === '') return usageError(rawIo, '--repo needs a path');
+  let slot: number;
+  try {
+    slot = parseSlot(values.slot);
+  } catch (error) {
+    return usageError(rawIo, messageOf(error));
+  }
 
   const env = rawIo.env ?? process.env;
   const cwd = rawIo.cwd ?? process.cwd();
@@ -181,18 +194,19 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
   const io = { stdout: (t: string) => rawIo.stdout(scrub(t)), stderr: (t: string) => rawIo.stderr(scrub(t)) };
   const json = values.json;
   const out = (value: unknown, text: string): void => io.stdout(json ? `${JSON.stringify(value)}\n` : text);
+  // --server wins; else --slot's own server; else $AUTOLOGGER_URL, else the default stack.
+  const server = (): string => (values.server === undefined && values.slot !== undefined ? slotServer(slot) : resolveServer(values.server, env));
 
   try {
     switch (command) {
       case 'doctor': {
-        const server = resolveServer(values.server, env);
-        const report = await doctor({ env, runner, fetch: fetchFn, checkout, server });
+        const report = await doctor({ env, runner, fetch: fetchFn, checkout, server: server(), slot });
         out(report, formatDoctor(report));
         return EXIT.ok;
       }
       case 'up': {
         const progress = lineWriter(io.stderr);
-        const ctx = { env, runner, checkout, progress: progress.push, endOutput: progress.flush };
+        const ctx = { env, runner, checkout, slot, progress: progress.push, endOutput: progress.flush };
         const plan = await planUp(ctx);
         for (const w of plan.warnings) io.stderr(`${CLI_NAME}: warning: ${w}\n`);
         if (values['dry-run']) {
@@ -209,17 +223,17 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
       }
       case 'ca': {
         const target = values.out !== undefined ? resolve(cwd, values.out) : defaultCaFile(env);
-        const report = await fetchCa({ env, runner, checkout, out: target, diagnostics: io.stderr });
+        const report = await fetchCa({ env, runner, checkout, slot, out: target, diagnostics: io.stderr });
         out(report, formatCa(report));
         return EXIT.ok;
       }
       case 'status': {
-        const report = await status(fetchFn, resolveServer(values.server, env));
+        const report = await status(fetchFn, server(), slot);
         out(report, formatStatus(report));
         return EXIT.ok;
       }
       case 'connect': {
-        const report = connect(env, resolveServer(values.server, env));
+        const report = connect(env, server(), slot);
         out(report, formatConnect(report));
         return EXIT.ok;
       }

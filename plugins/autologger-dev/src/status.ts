@@ -2,9 +2,13 @@
 // an /mcp endpoint. Three unauthenticated requests; TLS verification stays on, and a trust failure
 // is reported with the fix (the dev CA in NODE_EXTRA_CA_CERTS).
 import { allowedUrl, type Fetch, isObject, jsonBody, probe } from './http.ts';
+import { cliCommand } from './slot.ts';
+import { stepFor } from './up.ts';
 
 export interface StatusReport {
   server: string;
+  /** The dev slot the fixes name (0, the default stack, unless --slot was given). */
+  slot: number;
   answers: boolean;
   http_status: number | null;
   /** 'untrusted' when the TLS certificate is not trusted; null for http:// or when it never got that far. */
@@ -17,13 +21,14 @@ export interface StatusReport {
 
 export const PRM_PATH = '/.well-known/oauth-protected-resource';
 
-const TLS_FIX =
-  'run autologger-dev ca to write the dev CA, export NODE_EXTRA_CA_CERTS=<that file> where Claude Code starts, and restart it (TLS verification is never turned off)';
+const tlsFix = (slot: number): string =>
+  `run ${cliCommand('ca', slot)} to write the dev CA, export NODE_EXTRA_CA_CERTS=<that file> where Claude Code starts, and restart it (TLS verification is never turned off)`;
 
-export async function status(fetchFn: Fetch, server: string): Promise<StatusReport> {
+export async function status(fetchFn: Fetch, server: string, slot = 0): Promise<StatusReport> {
   const https = server.startsWith('https:');
   const report: StatusReport = {
     server,
+    slot,
     answers: false,
     http_status: null,
     tls: null,
@@ -38,9 +43,9 @@ export async function status(fetchFn: Fetch, server: string): Promise<StatusRepo
     report.error = root.message;
     if (root.kind === 'tls') {
       report.tls = 'untrusted';
-      report.fix = TLS_FIX;
+      report.fix = tlsFix(slot);
     } else {
-      report.fix = 'bring the stack up: autologger-dev up (DEV_HTTPS=1 make dev-up in the checkout)';
+      report.fix = `bring the stack up: ${cliCommand('up', slot)} (${stepFor('dev-up', slot).command} in the checkout)`;
     }
     return report;
   }
@@ -88,7 +93,7 @@ export async function status(fetchFn: Fetch, server: string): Promise<StatusRepo
     };
   }
   if (!report.protected_resource.ok || !report.mcp.exists) {
-    report.fix = 'run autologger-dev up (it sets CUSTOM_DASHBOARDS_ENABLED=1 and starts in HTTPS mode)';
+    report.fix = `run ${cliCommand('up', slot)} (it sets CUSTOM_DASHBOARDS_ENABLED=1 and starts in HTTPS mode)`;
   }
   return report;
 }

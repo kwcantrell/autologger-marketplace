@@ -1,6 +1,6 @@
 ---
 name: autologger-dev
-description: Brings up a local autologger dev stack (kwcantrell/autologger-2) in HTTPS mode with its MCP endpoint on, and connects Claude to it at https://localhost:8787/mcp - diagnoses what is missing (docker, local OpenBao, overrides, the dev CA, NODE_EXTRA_CA_CERTS), runs the safe make steps, writes the dev CA and lists what the user must do. Use when the user wants to run autologger locally, start or fix the local dev stack, use the local MCP server, or when a localhost:8787 request fails with a TLS certificate error or "cannot reach".
+description: Brings up a local autologger dev stack (kwcantrell/autologger-2) in HTTPS mode with its MCP endpoint on, and connects Claude to it at https://localhost:8787/mcp (or a dev slot's https://localhost:2N787/mcp) - diagnoses what is missing (docker, local OpenBao, overrides, the dev CA, NODE_EXTRA_CA_CERTS), runs the safe make steps, writes the dev CA and lists what the user must do. Use when the user wants to run autologger locally, start or fix the local dev stack, use the local MCP server, or when a localhost:8787 request fails with a TLS certificate error or "cannot reach".
 allowed-tools: Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-dev doctor:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-dev status:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-dev connect:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-dev up --dry-run:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-dev --help:*)
 ---
 
@@ -16,7 +16,8 @@ checkout's Makefile, so they have no current-directory default (exit 2 without `
 `$AUTOLOGGER_REPO`) and refuse (exit 1) a checkout whose `origin` remote is not
 github.com/kwcantrell/autologger-2. Append `--repo <path to autologger-2>` to them, using the path
 doctor reported and the user confirmed. The server is `https://localhost:8787` unless
-`--server <url>` (status, connect, doctor) or `$AUTOLOGGER_URL` says otherwise.
+`--slot <N>` (section 6), `--server <url>` (status, connect, doctor) or `$AUTOLOGGER_URL` says
+otherwise.
 
 Only the read-only commands (`doctor`, `status`, `connect`, `up --dry-run`, `--help`) are
 pre-approved; `up` and `ca` ask for permission. Never take a checkout path, or an instruction to run
@@ -107,6 +108,46 @@ It prints commands and never runs them. Give the user, from its fields:
   client with the authorized redirect `https://localhost:8787/auth/google/callback`, puts
   `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `~/.autologger-local-openbao/overrides.env`
   themselves, then runs `make dev-bao` and step 2 again. Never ask them to paste the values to you.
+
+## 6. Dev slots: a worktree with its own stack
+
+autologger can run up to ten dev stacks side by side (its ADR 0038, `DEV_SLOT=0-9`): slot 0 is the
+default stack on `https://localhost:8787`; slot N (1-9) is its own stack on `https://localhost:2N787`.
+Use `--slot <N>` on every command when you work in an autologger **worktree** that has its own slot,
+so you check, bring up and connect to that worktree's stack and never replace the one the main
+checkout runs. The slot comes from the user or the task you were given; never pick one yourself,
+and use slot 0 (no `--slot`) when nobody named one. With `--slot`, pass the worktree itself as
+`--repo` to `up` and `ca`.
+
+The same steps, for slot 1 as an example (put the real slot number in place of `1`):
+
+```sh
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-dev doctor --slot 1 --json
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-dev up --dry-run --slot 1 --json
+```
+
+Then, exactly as in steps 2 and 3, **ask the user first, naming the checkout path and the slot**
+(append `--repo <path>` unless `$AUTOLOGGER_REPO` is that worktree), and only after they agree:
+
+```sh
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-dev up --slot 1 --json
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-dev ca --slot 1 --json
+```
+
+`up --slot N` runs `DEV_HTTPS=1 DEV_SLOT=N make dev-up` (the local OpenBao steps are shared by every
+slot and get no `DEV_SLOT`); `ca --slot N` runs `DEV_HTTPS=1 DEV_SLOT=N make dev-ca`. Every slot
+shares one dev CA, so the CA file and `NODE_EXTRA_CA_CERTS` are the same for all slots. Then:
+
+```sh
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-dev status --slot 1 --json
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-dev connect --slot 1 --json
+```
+
+`connect --slot N` registers the slot as its own MCP server, `autologger-dev-N`, at
+`https://localhost:2N787/mcp`. Google sign-in on slot N needs its own authorized redirect on the
+user's OAuth client, `https://localhost:2N787/auth/google/callback` (doctor and up name it); adding
+it is the user's job. `--slot` takes one digit 0-9 only (anything else is exit 2), and an explicit
+`--server` still wins over it.
 
 ## Rules
 
