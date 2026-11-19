@@ -37,6 +37,12 @@ const SECRETS: Array<[string, string, string]> = [
   ['-p quoted value', "mysql -p'a b' x", `mysql -p'${R}' x`],
   ['--password value', 'login --password x', `login --password ${R}`],
   ['--password=value', 'login --password=x', `login --password=${R}`],
+  // A secret key=value that is itself the value of an ordinary key.
+  ['secret pair after an ordinary key', 'login failed: password=hunter2', `login failed: password=${R}`],
+  ['secret pair after an ordinary key=', 'error=token=abc', `error=token=${R}`],
+  // Review 2: a header that ends in `;`.
+  ['Cookie ending in ;', 'login fails, Cookie: session=ab1;', `login fails, Cookie: session=${R};`],
+  ['Set-Cookie ending in ;', 'Set-Cookie: a=b; Path=/;', `Set-Cookie: a=${R}; Path=/;`],
 ];
 
 for (const [name, input, expected] of SECRETS) {
@@ -75,26 +81,47 @@ test('the word Authorization in prose, with no colon, is left alone', () => {
   assert.equal(redact('see the Authorization header'), 'see the Authorization header');
 });
 
-// Review 1: a draft appends text to a redacted line (the Factory request ends `...". plugin-advisor
-// signature <sig>.`, evidence gets ` (command ..., exit 1, ...)`), and file re-checks it with redact.
-// A header value that starts with the marker must count as redacted, or file refuses a clean draft.
-const APPENDED = [' (exit 1)', '". plugin-advisor signature 0123456789ab.', ' (command curl -H a=1; ls, exit 1, recorded by the hook)', ' then 401'];
-
-test('redacted text stays clean with more text appended on the same line', () => {
-  for (const [name, input] of SECRETS) {
-    for (const suffix of APPENDED) {
-      const text = redact(input) + suffix;
-      assert.equal(containsSecret(text), false, `${name}: ${JSON.stringify(text)} -> ${JSON.stringify(redact(text))}`);
-    }
+// Review 1 and 2: a draft appends text to a redacted line, and file used to re-run redact over that
+// line. Now file checks each stored field on its own instead (file.test.ts covers drafts end to end),
+// so redact no longer treats a value that merely starts with the marker as redacted.
+test('a typed [redacted] shields nothing after it', () => {
+  for (const [input, secret] of [
+    ['Cookie: a=[redacted] x; b=realsecret', 'realsecret'],
+    ['Cookie: [redacted]; b=realsecret', 'realsecret'],
+    ['Set-Cookie: a=[redacted]; b=realsecret; Path=/', 'realsecret'],
+    ['Authorization: [redacted] abc123', 'abc123'],
+    ['Proxy-Authorization: [redacted]x', ']x'],
+    ['token=[redacted]realsecret', 'realsecret'],
+    ['password="[redacted] realsecret"', 'realsecret'],
+    ['autologger_sid=[redacted]realsecret', 'realsecret'],
+    ['--password [redacted]realsecret', 'realsecret'],
+    ['mysql -p [redacted]realsecret', 'realsecret'],
+  ] as const) {
+    assert.equal(containsSecret(input), true, input);
+    const out = redact(input);
+    assert.ok(!out.includes(secret), `${input} -> ${out}`);
+    assert.equal(containsSecret(out), false, `${input} -> ${out}`);
   }
 });
 
 test('a multi-line summary with a header is clean once joined onto one line', () => {
-  for (const input of ['a\nAuthorization: Token x\nb', 'curl failed\nAuthorization: Token abc123xyz\nstatus 401', 'Cookie: session=ab1\nthen 403', 'Set-Cookie: a=b; Secure\nthen; c=d']) {
+  for (const input of [
+    'a\nAuthorization: Token x\nb',
+    'curl failed\nAuthorization: Token abc123xyz\nstatus 401',
+    'Cookie: session=ab1\nthen 403',
+    'Set-Cookie: a=b; Secure\nthen; c=d',
+    // Review 2.
+    'Cookie: a=b;\nthen 403',
+    'Set-Cookie: a=b; Path=/;\nthen 403',
+    'Cookie: a=b\n; x',
+  ]) {
     const out = cleanSummary(input);
     assert.equal(containsSecret(out), false, `${JSON.stringify(input)} -> ${JSON.stringify(out)}`);
+    assert.equal(redact(out), out, `${JSON.stringify(input)} -> ${JSON.stringify(out)}`);
   }
-  assert.equal(cleanSummary('a\nAuthorization: Token x\nb'), `a Authorization: ${R} b`);
+  // The header's value runs to the end of the joined line, so what followed it is redacted with it.
+  assert.equal(cleanSummary('a\nAuthorization: Token x\nb'), `a Authorization: ${R}`);
+  assert.equal(cleanSummary('Cookie: a=b;\nthen 403'), `Cookie: a=${R}; ${R}`);
 });
 
 test('a cookie part that only starts with an attribute name is still redacted', () => {
@@ -175,6 +202,11 @@ const TAILS = [
   'Authorization: Token abc123xyz then 401 again',
   'Cookie: session=ab1 then 403 again',
   'Set-Cookie: a=b; Path=/; Secure then it failed',
+  // Quoted JSON tails (review 2): a cut must not leave `"api_key": "…` either.
+  '"api_key": "k1" more',
+  '"session": "abc"',
+  'token="abc1" more',
+  "password='x' more",
 ];
 
 test('cleanSummary output never looks secret, for every length from 150 to 260 characters', () => {
@@ -186,6 +218,8 @@ test('cleanSummary output never looks secret, for every length from 150 to 260 c
         const input = `${prefix}${tail}`.slice(-length);
         const out = cleanSummary(input);
         assert.equal(containsSecret(out), false, `${JSON.stringify(input)} -> ${JSON.stringify(out)}`);
+        // A cut leaves no dangling fragment, also once quoted (as the draft's Factory request line does).
+        if (out.endsWith('…')) assert.equal(containsSecret(`"${out}"`), false, `quoted: ${JSON.stringify(out)}`);
         assert.ok([...out].length <= SUMMARY_MAX, out);
         assert.equal(/\[r[a-z]*…$/.test(out), false, `cut marker: ${out}`);
       }

@@ -18,9 +18,10 @@ export function isSecretKey(key: string): boolean {
   return SECRET_KEY.test(key);
 }
 
-/** Values left alone: empty, or already (partly) redacted, so a second pass changes nothing. */
+/** Values left alone: empty, or exactly the marker, so a second pass changes nothing. A value that only
+ * starts with the marker (`[redacted]x`) is redacted again: a typed marker must not shield a secret. */
 function keep(value: string): boolean {
-  return value === '' || value.includes('[redacted');
+  return value === '' || value === REDACTED;
 }
 
 /** A long run of token characters that looks random (mixes letters and digits) rather than a word. */
@@ -31,51 +32,22 @@ function looksRandom(text: string, needsCaseMix: boolean): boolean {
   return needsCaseMix ? digit && lower && upper : digit && (lower || upper);
 }
 
-/** Whether `value` is an already-redacted header value, possibly followed by more text on its line. */
-function redactedValue(value: string): boolean {
-  const v = value.trim();
-  return v.startsWith(REDACTED) || v.startsWith(`"${REDACTED}"`);
-}
-
 /**
- * A Cookie or Set-Cookie header value with every cookie's value redacted, attributes kept. Redacting
- * replaces a cookie's whole value (or a bare cookie) with exactly `[redacted]`, so a part that starts
- * with the marker and goes on means text was appended to an already-redacted line: a draft's evidence
- * note, or the next line of a summary joined onto this one. The same holds for an attribute with text
- * after it once a marker has been seen. The rest of such a line is left as it is, so a second pass
- * changes nothing (`file` re-checks the draft with this same function).
+ * A Cookie or Set-Cookie header value with every cookie's value redacted, attributes kept. Only an
+ * exact `[redacted]` counts as already redacted, so anything after it on the line (a cookie, or a bare
+ * word) is redacted too. `file` does not depend on this being stable once text is appended to a
+ * redacted line: it checks each stored field on its own (see `draftFields` in advisor.ts).
  */
 function redactCookies(value: string): string {
-  let seen = false;
-  let done = false;
-  const exact = (v: string): boolean => v === REDACTED || v === `"${REDACTED}"`;
   return value
     .split(';')
     .map((part) => {
-      if (done) return part;
       const eq = part.indexOf('=');
       const name = (eq === -1 ? part : part.slice(0, eq)).trim();
       const raw = eq === -1 ? '' : part.slice(eq + 1);
       const v = raw.trim();
-      if (name === '' && eq === -1) return part;
-      if (redactedValue(name)) {
-        seen = true;
-        done = eq !== -1 || !exact(name);
-        return part;
-      }
-      // After a marker, only the leading word: a flag attribute (`Secure`) may have text appended.
-      const word = name.match(/^[A-Za-z-]+/)?.[0] ?? '';
-      if (COOKIE_ATTRIBUTE.test(word) && (name === word || seen)) {
-        done = seen && (name !== word || /\s/.test(v));
-        return part;
-      }
-      if (eq === -1) return part.replace(name, REDACTED);
-      if (v === '') return part;
-      if (redactedValue(v)) {
-        seen = true;
-        done = !exact(v);
-        return part;
-      }
+      if (eq === -1) return name === '' || name === REDACTED || COOKIE_ATTRIBUTE.test(name) ? part : part.replace(name, REDACTED);
+      if (COOKIE_ATTRIBUTE.test(name) || v === '' || v === REDACTED) return part;
       return `${part.slice(0, eq + 1)}${raw.match(/^\s*/)?.[0] ?? ''}${REDACTED}`;
     })
     .join(';');
@@ -91,8 +63,7 @@ const RULES: Rule[] = [
   // Authorization and Proxy-Authorization headers: the whole value to the end of the line, any scheme.
   [
     /\b((?:Proxy-)?Authorization)([ \t]*:[ \t]*)([^\n]*)/gi,
-    // A value that starts with the marker is already redacted (text may follow it on the same line).
-    (m, name, sep, value) => (value.trim() === '' || redactedValue(value) ? m : `${name}${sep}${REDACTED}`),
+    (m, name, sep, value) => (value.trim() === '' || value.trim() === REDACTED ? m : `${name}${sep}${REDACTED}`),
   ],
   // Cookie and Set-Cookie headers: every cookie value, whatever its length.
   [/\b((?:Set-)?Cookie)([ \t]*:[ \t]*)([^\n]*)/gi, (_m, name, sep, value) => `${name}${sep}${redactCookies(value)}`],
@@ -105,11 +76,16 @@ const RULES: Rule[] = [
   [/\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g, () => REDACTED],
   // The autologger session cookie, in any form (Cookie header, Set-Cookie, a bare pair).
   [/\b(autologger_sid)(\s*[=:]\s*)("?)([^\s;,"]+)\3/g, (m, name, sep, q, value) => (keep(value) ? m : `${name}${sep}${q}${REDACTED}${q}`)],
-  // key=value / key: value / "key": "value" with a secret-looking key.
+  // key=value / key: value / "key": "value" with a secret-looking key. A bare value is a run of value
+  // characters, where a `]` ends it unless it closes a marker or more value follows; only an exact
+  // marker is kept, so `[redacted]x` is redacted again.
   [
-    /(["']?)([A-Za-z_][A-Za-z0-9_.-]*)\1(\s*[=:]\s*)(?:"([^"\n]*)"|'([^'\n]*)'|([^\s"'&;,)}\]]+))/g,
+    /(["']?)([A-Za-z_][A-Za-z0-9_.-]*)\1(\s*[=:]\s*)(?:"([^"\n]*)"|'([^'\n]*)'|((?:\[redacted\]|\](?=[^\s"'&;,)}\]])|[^\s"'&;,)}\]])+))/g,
     (m, q, key, sep, dq, sq, bare) => {
-      if (!isSecretKey(key ?? '')) return m;
+      // Not a secret key: its value may still hold one (`failed: password=x` matches as key `failed`).
+      if (!isSecretKey(key ?? '')) return `${q}${key}${q}${sep}${redactOnce(m.slice(`${q}${key}${q}${sep}`.length))}`;
+      // A `Cookie:` header on its line is the cookie rule's (above): its value is `name=[redacted]`.
+      if (q === '' && /^(set-)?cookie$/i.test(key ?? '') && /^[ \t]*:[ \t]*$/.test(sep ?? '')) return m;
       if (dq !== undefined) return keep(dq) ? m : `${q}${key}${q}${sep}"${REDACTED}"`;
       if (sq !== undefined) return keep(sq) ? m : `${q}${key}${q}${sep}'${REDACTED}'`;
       return keep(bare ?? '') ? m : `${q}${key}${q}${sep}${REDACTED}`;
@@ -134,23 +110,40 @@ const RULES: Rule[] = [
   [/[A-Za-z0-9_+=-]{32,}/g, (m) => (looksRandom(m, false) ? REDACTED : m)],
 ];
 
-/** Replaces everything that looks like a token or secret with `[redacted]`. Idempotent. */
-export function redact(text: string): string {
+function redactOnce(text: string): string {
   let out = text;
   for (const [re, replace] of RULES) out = out.replace(re, replace as (m: string, ...g: string[]) => string);
   return out;
 }
 
+/** Passes `redact` makes at most; real text settles in one or two. */
+const MAX_PASSES = 8;
+
+/**
+ * Replaces everything that looks like a token or secret with `[redacted]`, pass after pass until a
+ * pass changes nothing, so the result is idempotent (`containsSecret(redact(x)) === false`) even when
+ * one rule's output feeds another's input.
+ */
+export function redact(text: string): string {
+  let out = text;
+  for (let i = 0; i < MAX_PASSES; i++) {
+    const next = redactOnce(out);
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
 /** Whether `text` still holds anything `redact` would change. */
 export function containsSecret(text: string): boolean {
-  return redact(text) !== text;
+  return redactOnce(text) !== text;
 }
 
 /**
  * Cuts `text` to at most `max` characters, marking the cut with an ellipsis. The cut never lands
  * inside a `[redacted]` marker (it moves to before the marker), and when `text` itself holds nothing
- * secret-looking, trailing words are dropped until the result holds nothing either: a cut can leave
- * `token=…` or `Authorization: …`, which `redact` would rewrite, and `file` would then refuse the draft.
+ * secret-looking, trailing words are dropped until the result holds nothing either, also when quoted:
+ * a cut can leave a dangling `token=…`, `Authorization: …` or `"api_key": "…`.
  */
 export function cap(text: string, max: number): string {
   const chars = [...text];
@@ -160,7 +153,8 @@ export function cap(text: string, max: number): string {
     if (head.length < at + REDACTED.length) head = text.slice(0, at);
   }
   if (!containsSecret(text)) {
-    while (head !== '' && containsSecret(`${head}…`)) head = head.replace(/\s*\S*\s*$/, '');
+    const dangling = (h: string): boolean => containsSecret(`${h}…`) || containsSecret(`"${h}…"`);
+    while (head !== '' && dangling(head)) head = head.replace(/\s*\S*\s*$/, '');
   }
   return `${head}…`;
 }
@@ -175,13 +169,17 @@ function cleanMultiline(text: string): string {
   return text.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trimEnd();
 }
 
-/** The stored summary: redacted, then made one line and capped (in that order, so a cut can't expose part of a secret). */
+/**
+ * The stored summary: redacted, made one line, redacted again and capped. Redacting before the cap
+ * means a cut can't expose part of a secret; redacting again after joining lines means the stored
+ * value is clean on its own (`containsSecret` is false), which `file` relies on.
+ */
 export function cleanSummary(text: string): string {
-  return cap(oneLine(redact(text)), SUMMARY_MAX);
+  return cap(redact(oneLine(redact(text))), SUMMARY_MAX);
 }
 
 export function cleanDetail(text: string): string {
-  return cap(cleanMultiline(redact(text)), DETAIL_MAX);
+  return cap(redact(cleanMultiline(redact(text))), DETAIL_MAX);
 }
 
 /**

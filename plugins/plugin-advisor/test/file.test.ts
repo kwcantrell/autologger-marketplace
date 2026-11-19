@@ -3,13 +3,15 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
-import { MARKETPLACE_REPO } from '../src/advisor.ts';
+import { draftFields, issues, MARKETPLACE_REPO, renderDraft, targetOf, type Issue } from '../src/advisor.ts';
+import { secretLines, withoutFields } from '../src/file.ts';
 import { EXIT } from '../src/run.ts';
 import { fakeGh, sandbox, type Sandbox } from './helpers.ts';
 
 let box: Sandbox;
 afterEach(() => box?.cleanup());
 
+const R = '[redacted]';
 const ISSUE_URL = 'https://github.com/kwcantrell/autologger-marketplace/issues/42';
 
 function json(r: { code: number; stdout: string; stderr: string }): any {
@@ -149,6 +151,118 @@ for (const summary of [
     assert.deepEqual(ghCalls(box), []);
   });
 }
+
+/** Records `summary` (and `detail`) three times, suggests, and runs file as a dry run. */
+function fileDryRun(b: Sandbox, summary: string, detail?: string): { code: number; stdout: string; stderr: string } {
+  let sig = '';
+  for (let i = 1; i <= 3; i++) {
+    const extra = detail === undefined ? [] : ['--detail', detail];
+    sig = json(b.call(['record', '--plugin', 'autologger-mcp', '--kind', 'workaround', '--summary', summary, ...extra, '--json'])).signature;
+  }
+  assert.equal(json(b.call(['suggest', '--json'])).suggestions.length, 1);
+  return b.call(['file', sig, '--json']);
+}
+
+// Review 2: file re-ran redact over each rendered line, where the draft's own text follows a stored
+// value (`". plugin-advisor signature ...`, ` (exit 2, recorded by the hook)`, the next joined line),
+// and refused clean drafts. It now checks each stored field on its own and the text around it apart.
+// The last rows are a typed `[redacted]` followed by a real secret, which must still be redacted.
+for (const [summary, secrets] of [
+  ['login fails, Cookie: session=ab1;', ['ab1']],
+  ['Cookie: a=b;\nthen 403', ['a=b']],
+  ['Set-Cookie: a=b; Path=/;\nthen 403', ['a=b']],
+  ['Cookie: a=b\n; x', ['a=b']],
+  [`${'x'.repeat(177)} "api_key": "k1" more`, ['"k1"']],
+  [`${'x'.repeat(178)} token="abc1" more`, ['abc1']],
+  ['Cookie: a=[redacted] x; b=realsecret', ['realsecret']],
+  ['Authorization: [redacted] abc123', ['abc123']],
+  ['retry with token=[redacted]realsecret', ['realsecret']],
+] as const) {
+  test(`a draft with stored text next to its own text files (dry run): ${JSON.stringify(summary.slice(-40))}`, () => {
+    box = withGh(`console.log(${JSON.stringify(ISSUE_URL)});`);
+    const r = fileDryRun(box, summary, summary);
+    assert.equal(r.code, EXIT.ok, r.stderr);
+    assert.equal(JSON.parse(r.stdout).filed, false);
+    for (const secret of secrets) assert.ok(!r.stdout.includes(secret), `${secret} in ${r.stdout}`);
+    assert.deepEqual(ghCalls(box), []);
+  });
+}
+
+test('every line of a rendered draft that quotes a stored field is recognised (FIELD_LINES matches renderDraft)', () => {
+  const summary = `a ${'y'.repeat(150)} Cookie: s=${R}; ${R}`;
+  for (const [plugin, known] of [['autologger-mcp', ['autologger-mcp']], ['made-up-plugin', []], ['none', []]] as const) {
+    const occ = [1, 2, 3].map((k) => ({
+      signature: 'abcdef012345', plugin, kind: 'cli-failure', summary, detail: `one\nCookie: s=${R}; ${R}`, at: `2026-11-0${k}T10:00:00.000Z`,
+      source: k === 1 ? ('hook' as const) : ('record' as const), ...(k === 1 ? { subcommand: 'call', exitCode: 2 } : {}),
+    }));
+    const [issue] = issues(occ, { version: 1, issues: {} });
+    const { text } = renderDraft(issue as Issue, occ, targetOf(plugin, known));
+    const rest = withoutFields(text, draftFields(plugin, occ));
+    assert.ok(!rest.includes(`s=${R}`), rest);
+    assert.ok(!rest.includes('yyyyy'), rest);
+    assert.deepEqual(secretLines(rest), []);
+  }
+});
+
+test('summaries of every length from 170 to 200 ending in a quoted secret file (dry run)', () => {
+  for (const tail of [' "api_key": "k1" more', ' token="abc1" more', ' Cookie: session=ab1; then']) {
+    for (let length = 170; length <= 200; length++) {
+      const b = withGh(`console.log(${JSON.stringify(ISSUE_URL)});`);
+      try {
+        const summary = `${'x'.repeat(length - tail.length)}${tail}`;
+        const r = fileDryRun(b, summary);
+        assert.equal(r.code, EXIT.ok, `${length} ${tail}: ${r.stderr}`);
+        assert.deepEqual(ghCalls(b), []);
+      } finally {
+        b.cleanup();
+      }
+    }
+  }
+});
+
+// Follow-up 017 #4: a hook summary ending in `-p` gets ` (exit 2, recorded by the hook)` after it on
+// its evidence line, and the -p rule read `(exit` as the password.
+test('a hook-recorded failure whose message ends in -p files (dry run)', () => {
+  box = withGh(`console.log(${JSON.stringify(ISSUE_URL)});`);
+  const payload = JSON.stringify({
+    hook_event_name: 'PostToolUseFailure',
+    tool_name: 'Bash',
+    tool_input: { command: 'npx --yes --offline --loglevel=error --package="/x" -- autologger-mcp call list_events --json' },
+    error: 'Exit code 2\nautologger-mcp: usage: mkdir -p',
+    is_interrupt: false,
+  });
+  for (let i = 0; i < 3; i++) assert.equal(box.call(['hook'], { stdin: payload }).code, EXIT.ok);
+  const [s] = json(box.call(['suggest', '--json'])).suggestions;
+  assert.equal(s.summary, 'autologger-mcp call exited 2: autologger-mcp: usage: mkdir -p');
+  const draft = readFileSync(s.draft, 'utf8');
+  assert.ok(draft.includes('usage: mkdir -p (command `call`, exit 2, recorded by the hook)'), draft);
+  const r = box.call(['file', s.signature, '--json']);
+  assert.equal(r.code, EXIT.ok, r.stderr);
+  assert.deepEqual(ghCalls(box), []);
+});
+
+test('text edited into a draft is checked as it is: a typed [redacted] or a stored value shields nothing', () => {
+  box = withGh(`console.log(${JSON.stringify(ISSUE_URL)});`);
+  const sig = suggested(box);
+  const path = join(box.config, 'drafts', `${sig}.md`);
+  const original = readFileSync(path, 'utf8');
+  const summary = 'call list_events exited 1: not signed in';
+  for (const edit of [
+    `${original}\nCookie: a=[redacted] x; b=realsecret\n`,
+    `${original}\nAuthorization: [redacted] abc123\n`,
+    // A stored summary with a secret appended on its own evidence line.
+    original.replace(`: ${summary}\n`, `: ${summary} token=abc123\n`),
+    // The Problem line with a secret put in front of the stored summary.
+    original.replace(`failed: ${summary}`, `failed: password=hunter2 ${summary}`),
+  ]) {
+    assert.notEqual(edit, original);
+    writeFileSync(path, edit);
+    const r = box.call(['file', sig, '--confirm']);
+    assert.equal(r.code, EXIT.failure, edit);
+    assert.match(r.stderr, /still has secret-looking text on line \d+/);
+  }
+  assert.deepEqual(ghCalls(box), []);
+});
 
 test('file needs a draft, refuses dismissed issues, and reports gh failures', () => {
   box = withGh(`process.stderr.write('HTTP 401: Bad credentials (token ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345)\\n'); process.exit(1);`);
