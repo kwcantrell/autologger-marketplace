@@ -5,7 +5,7 @@
 import { lstatSync } from 'node:fs';
 import { CliError, UsageError } from './errors.ts';
 import type { Runner } from './runner.ts';
-import { appOrigin, browserFlags, cliCommand, cookieName, type Env, sessionName, slotPaths } from './slot.ts';
+import { appOrigin, browserFlags, cliCommand, cookieName, type Env, sessionName, slotAppOrigin, slotPaths } from './slot.ts';
 
 /** autologger's session lifetime (SESSION_DAYS, default 14): the cookie expires with the session. */
 export const SESSION_DAYS = 14;
@@ -71,10 +71,15 @@ export async function signin(ctx: SigninContext): Promise<SigninReport> {
   const paths = slotPaths(ctx.env, slot);
   if (!isDir(paths.profile)) throw new CliError(`no profile for dev slot ${slot} at ${paths.profile}; run ${cliCommand('setup', slot)} first. Nothing was written`);
   const name = cookieName(slot);
-  const origin = appOrigin(slot);
+  // Cookies are scoped to a host, not a port (RFC 6265): the cookie set from this URL has domain
+  // `localhost` and is sent to https://localhost on every port. So the default-port URL below works
+  // for a slot 0 stack on any DEV_PORT, and the cookie written never changes with it. `origin` is
+  // only what the report names: the slot's real app origin (DEV_PORT for slot 0).
+  const cookieUrl = appOrigin(slot);
+  const origin = slotAppOrigin(ctx.env, slot);
   const expiresAt = Math.floor((ctx.now ?? Date.now()) / 1000) + SESSION_DAYS * 86_400;
   const batch = JSON.stringify([
-    ['cookies', 'set', name, token, '--url', `${origin}/`, '--path', '/', '--secure', '--http-only', '--same-site', 'Lax', '--expires', String(expiresAt)],
+    ['cookies', 'set', name, token, '--url', `${cookieUrl}/`, '--path', '/', '--secure', '--http-only', '--same-site', 'Lax', '--expires', String(expiresAt)],
   ]);
   const flags = browserFlags(paths);
   const result = await ctx.runner('agent-browser', [...flags, 'batch', '--bail', '--json', '--omit-command'], { env: ctx.env, input: batch, timeoutMs: 120_000 });

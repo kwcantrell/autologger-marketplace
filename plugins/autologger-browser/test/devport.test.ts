@@ -80,7 +80,7 @@ test('slotAppOrigin: slot 0 follows a valid DEV_PORT, an invalid or unset one is
   }
 });
 
-test('DEV_PORT moves doctor app_tls and setup app_url for slot 0 only; signin keeps its cookie origin', async () => {
+test('DEV_PORT moves doctor app_tls and setup app_url for slot 0 only; signin names the same origin', async () => {
   const t = tempHome();
   try {
     writeOverrides(t.home, 'DEV_PORT=9443\n');
@@ -94,7 +94,7 @@ test('DEV_PORT moves doctor app_tls and setup app_url for slot 0 only; signin ke
     assert.match(checks.find((c) => c.name === 'app_tls')?.detail ?? '', /^https:\/\/localhost:9443 answers/);
     const signin0 = await cli(t.env, ['signin']);
     assert.equal(signin0.code, 0, signin0.err);
-    assert.equal(signin0.json.origin, 'https://localhost:8787');
+    assert.equal(signin0.json.origin, 'https://localhost:9443');
 
     const setup4 = await cli(t.env, ['setup', '--slot', '4']);
     assert.equal(setup4.json.app_url, 'https://localhost:24787');
@@ -157,5 +157,40 @@ test('doctor and setup name autologger-dev ca with --repo in every CA fix', asyn
     assert.match((stale.json.checks as Array<{ name: string; fix: string | null }>).find((c) => c.name === 'app_tls')?.fix ?? '', repo);
   } finally {
     s.cleanup();
+  }
+});
+
+test('signin names the slot origin (DEV_PORT for slot 0) but writes the same cookie, text and --json', async () => {
+  const t = tempHome();
+  try {
+    const run0 = async (slot: string[], json: boolean) => {
+      const fake = fakeRunner();
+      const c = capture({ env: t.env, runner: fake.runner, readStdin: async () => (slot.length === 0 ? 'autologger_sid=tok\n' : 'autologger_sid_2=tok\n'), stdinIsTty: false });
+      const code = await run(['signin', ...slot, ...(json ? ['--json'] : [])], c.io);
+      const batch = fake.calls.find((call) => call.args.includes('batch'));
+      return { code, out: c.out(), err: c.err(), cookie: batch?.options?.input ?? '' };
+    };
+    for (const slot of [[], ['--slot', '2']]) {
+      assert.equal((await cli(t.env, ['setup', ...slot])).code, 0);
+    }
+    const base = await run0([], false);
+    assert.equal(base.code, 0, base.err);
+    assert.match(base.out, /for https:\/\/localhost:8787 \(/, 'no DEV_PORT');
+    const baseCookie = base.cookie;
+
+    writeOverrides(t.home, 'DEV_PORT=9443\n');
+    const text = await run0([], false);
+    assert.match(text.out, /for https:\/\/localhost:9443 \(/);
+    assert.ok(!text.out.includes('8787'));
+    const json = await run0([], true);
+    assert.equal((JSON.parse(json.out) as { origin: string }).origin, 'https://localhost:9443');
+    const stripExpiry = (input: string): string => input.replace(/"--expires","\d+"/, '');
+    assert.equal(stripExpiry(json.cookie), stripExpiry(baseCookie), 'same cookie url, name and attributes');
+    assert.ok(json.cookie.includes('https://localhost:8787/'));
+
+    const slot2 = await run0(['--slot', '2'], true);
+    assert.equal((JSON.parse(slot2.out) as { origin: string }).origin, 'https://localhost:22787');
+  } finally {
+    t.cleanup();
   }
 });
