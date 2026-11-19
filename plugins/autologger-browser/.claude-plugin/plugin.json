@@ -1,0 +1,12 @@
+{
+  "name": "autologger-browser",
+  "version": "0.1.0",
+  "description": "Dev-CA-trusting Chromium profile for agent-browser on a local autologger dev stack: doctor, setup (scoped NSS trust + launcher), signin (dev-login cookie from stdin), reset.",
+  "author": {
+    "name": "Kalen Cantrell"
+  },
+  "keywords": [
+    "autologger",
+    "template"
+  ]
+}
