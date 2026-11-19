@@ -21,6 +21,7 @@ import {
   OVERRIDES_FILE,
   QUOTES_WHY,
   readOverrides,
+  SPACES_WHY,
   stateDir,
 } from './stack.ts';
 
@@ -35,7 +36,7 @@ export interface Check {
   fix: string | null;
   /**
    * google_client and custom_dashboards only, when overrides.env could be read: each key's state
-   * (`set`, `placeholder`, `quoted`, `not set`; `enabled`, `quoted`, `not enabled`), never its value.
+   * (`set`, `placeholder`, `quoted`, `padded`, `not set`; `enabled`, `quoted`, `padded`, `not enabled`), never its value.
    */
   keys?: Record<string, string>;
 }
@@ -116,10 +117,15 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
     const where = overrides.state === 'absent' ? `${overridesPath} does not exist` : `in ${overridesPath}`;
     const detail = `GOOGLE_CLIENT_ID is ${google.keys.GOOGLE_CLIENT_ID}, GOOGLE_CLIENT_SECRET is ${google.keys.GOOGLE_CLIENT_SECRET} (${where})`;
     const quoted = googleKeysIn(google, 'quoted');
+    const padded = googleKeysIn(google, 'padded');
     const unset = [...googleKeysIn(google, 'placeholder'), ...googleKeysIn(google, 'not set')];
     const fixes: string[] = [];
+    const verbatim = [...(quoted.length > 0 ? [QUOTES_WHY] : []), ...(padded.length > 0 ? [SPACES_WHY] : [])];
     if (quoted.length > 0) {
       fixes.push(`remove the quotes around the value of ${quoted.join(' and ')} in ${overridesPath} (${QUOTES_WHY}, so Google rejects the client), then run make dev-bao and ${UP} again`);
+    }
+    if (padded.length > 0) {
+      fixes.push(`remove the spaces around the value of ${padded.join(' and ')} in ${overridesPath} (${SPACES_WHY}, so Google rejects the client), then run make dev-bao and ${UP} again`);
     }
     if (unset.length > 0) {
       fixes.push(`the user adds their own Google OAuth client (redirect ${GOOGLE_REDIRECT}) to ${overridesPath}, then runs make dev-bao and ${UP}`);
@@ -127,12 +133,14 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
     checks.push({
       ...(google.ok
         ? ok('google_client', `GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set (${where})`)
-        : quoted.length > 0
-          ? fail('google_client', `${detail}: ${QUOTES_WHY}, so Google sign-in will not work`, fixes.join('; '))
+        : verbatim.length > 0
+          ? fail('google_client', `${detail}: ${verbatim.join(' and ')}, so Google sign-in will not work`, fixes.join('; '))
           : missing('google_client', `${detail}: the stack boots but Google sign-in will not work`, fixes.join('; '))),
       keys: { ...google.keys },
     });
     const dashboards = dashboardsState(values);
+    // up runs make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1 for anything but exactly 1, which rewrites the line.
+    const rewrite = `or just run ${UP}, which rewrites it as ${DASHBOARDS_KEY}=1 (make dev-bao-set), so editing it by hand is optional`;
     checks.push({
       ...(dashboards === 'enabled'
         ? ok('custom_dashboards', `${DASHBOARDS_KEY}=1 (${where})`)
@@ -140,9 +148,15 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
           ? fail(
               'custom_dashboards',
               `${DASHBOARDS_KEY} is quoted (${where}): ${QUOTES_WHY}, so it is not 1 to autologger and /mcp is off`,
-              `remove the quotes around the value of ${DASHBOARDS_KEY} in ${overridesPath} (${QUOTES_WHY}), then run make dev-bao and ${UP} again`,
+              `remove the quotes around the value of ${DASHBOARDS_KEY} in ${overridesPath} (${QUOTES_WHY}), then run make dev-bao and ${UP} again; ${rewrite}`,
             )
-          : missing('custom_dashboards', `${DASHBOARDS_KEY} is not 1 (${where}), so /mcp is off`, `${UP} (runs make dev-bao-set ${DASHBOARDS_KEY}=1)`)),
+          : dashboards === 'padded'
+            ? fail(
+                'custom_dashboards',
+                `${DASHBOARDS_KEY} has spaces around its value (${where}): ${SPACES_WHY}, so it is not exactly 1`,
+                `remove the spaces around the value of ${DASHBOARDS_KEY} in ${overridesPath} (${SPACES_WHY}), then run make dev-bao and ${UP} again; ${rewrite}`,
+              )
+            : missing('custom_dashboards', `${DASHBOARDS_KEY} is not 1 (${where}), so /mcp is off`, `${UP} (runs make dev-bao-set ${DASHBOARDS_KEY}=1)`)),
       keys: { [DASHBOARDS_KEY]: dashboards },
     });
   }

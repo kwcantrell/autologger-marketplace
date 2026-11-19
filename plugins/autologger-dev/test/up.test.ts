@@ -188,3 +188,58 @@ test('up plans make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1 for a quoted value, 
     assert.deepEqual(makeCalls(runner), ['make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1', 'DEV_HTTPS=1 make dev-up']);
   }
 });
+
+test("a step's output that ends without a newline is ended before the next step's header, still scrubbed", async () => {
+  const f = fixture({ credentials: false, overrides: GOOD_OVERRIDES.replace('CUSTOM_DASHBOARDS_ENABLED=1', 'CUSTOM_DASHBOARDS_ENABLED=0') });
+  const runner = fakeRunner({
+    'docker container': { code: 1, stderr: 'No such container' },
+    'make dev-bao': (_call, options) => {
+      options.onOutput?.('started\ntail');
+      return { code: 0 };
+    },
+    'make dev-bao-set': (_call, options) => {
+      options.onOutput?.(`secret ${GOOGLE_SECRET}`);
+      return { code: 0 };
+    },
+  });
+  const { code, stderr } = await cli({ env: f.env, runner }, 'up', '--repo', f.repo);
+  assert.equal(code, EXIT.ok, stderr);
+  assert.match(stderr, /started\ntail\n==> make dev-bao-set /);
+  assert.match(stderr, /\nsecret \[redacted\]\n==> DEV_HTTPS=1 make dev-up /);
+  assert.ok(!stderr.includes(GOOGLE_SECRET));
+});
+
+test('up and up --dry-run warn about a Google value with spaces around it, naming the spaces, never the value', async () => {
+  for (const [id, secret, key] of [
+    [` ${GOOGLE_ID}`, GOOGLE_SECRET, 'GOOGLE_CLIENT_ID'],
+    [GOOGLE_ID, `${GOOGLE_SECRET} `, 'GOOGLE_CLIENT_SECRET'],
+  ] as const) {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${id}\nGOOGLE_CLIENT_SECRET=${secret}\nCUSTOM_DASHBOARDS_ENABLED=1\n` });
+    const dry = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo, '--dry-run', '--json');
+    assert.equal(dry.code, EXIT.ok, dry.stderr);
+    const report = JSON.parse(dry.stdout) as DryRun;
+    assert.equal(report.google_client, 'placeholder');
+    assert.equal(report.warnings.length, 1);
+    assert.match(report.warnings[0] ?? '', new RegExp(`^${key} in .* is surrounded by spaces, and autologger stores the value verbatim, surrounding spaces included, so Google will reject the client.*Remove the spaces, then run make dev-bao and up again\\.$`));
+    const run = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo);
+    assert.equal(run.code, EXIT.ok, run.stderr);
+    assert.match(run.stdout, new RegExp(`Warning: ${key} in .* is surrounded by spaces`));
+    assert.match(run.stderr, new RegExp(`autologger-dev: warning: ${key} in .* is surrounded by spaces`));
+    for (const out of [dry, run]) {
+      for (const v of [GOOGLE_ID, GOOGLE_SECRET]) assert.ok(!(out.stdout + out.stderr).includes(v), 'no value printed');
+    }
+  }
+});
+
+test('up plans make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1 for a value with spaces around it, and says why', async () => {
+  for (const value of [' 1', '1 ', '\t1']) {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${GOOGLE_ID}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\nCUSTOM_DASHBOARDS_ENABLED=${value}\n` });
+    const dry = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo, '--dry-run', '--json');
+    assert.equal(dry.code, EXIT.ok, dry.stderr);
+    const report = JSON.parse(dry.stdout) as DryRun;
+    const step = report.steps.find((s) => s.id === 'dev-bao-set');
+    assert.equal(step?.run, true, JSON.stringify(value));
+    assert.match(step?.reason ?? '', /CUSTOM_DASHBOARDS_ENABLED has spaces around its value in .*surrounding spaces included.*rewrites it without them/);
+    assert.deepEqual(report.warnings, []);
+  }
+});
