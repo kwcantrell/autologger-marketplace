@@ -6,8 +6,8 @@ import { importTokens, isExpired, login, logout, parseDevTokenGrant, requireSign
 import { CLI_NAME, devTokenHint, importTokensCommand, indexBuildCommand, loginCommand, reusableClientId } from './commands.ts';
 import { CliError, messageOf, UsageError } from './errors.ts';
 import { DEFAULT_SERVER, type Fetch, isObject, resolveServer } from './http.ts';
-import { type Caller, RateLimitStop, readSnapshot, readState, statePath, writeJsonFile } from './copy.ts';
-import { exportSessions, summarize } from './export.ts';
+import { type Caller, type Rec, RateLimitStop, readSnapshot, readState, statePath, writeJsonFile } from './copy.ts';
+import { exportSessions, listAll, summarize } from './export.ts';
 import { execute, plan, type Plan, type RunResult, targetSession, targetState, type TargetSession } from './importer.ts';
 import { checkLinks } from './links.ts';
 import { McpClient, resultText } from './mcp.ts';
@@ -73,7 +73,13 @@ Commands:
                                Plan copying the snapshot's events, topics and wiki pages into
                                existing sessions of the server (the target): a dry run that writes
                                nothing. Wiki links are rewritten to the target's ids; fields the
-                               target's tools do not accept are listed as dropped_fields.
+                               target's tools do not accept are listed as dropped_fields. Events
+                               keep their session time (timecode); recording takes are created
+                               first, whole (Stopped then Started row), never left open; a take row
+                               with no partner is skipped. A target session at another frame rate
+                               is listed in frame_rate_mismatch and its timecodes are converted.
+                               Events an earlier run created at a wrong timecode are listed as
+                               fix-timecode and set with update_event.
   import --confirm --snapshot <file> --map ... [--no-wait]
                                Do it (--confirm must come right after import). Progress is kept in
                                <file>.import-state.json, so running it again resumes without
@@ -541,13 +547,23 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
         for (const [source, target] of maps) targets.push(await targetSession(call, server, source, target));
         const stateFile = statePath(snapshotPath);
         const state = readState(stateFile, snapshot.source_server);
-        const input = { snapshot, targets, state: targetState(state, server), tools };
+        const target = targetState(state, server);
+        // The target's events, where an earlier run created some: their timecodes and versions.
+        const targetEvents = new Map<string, Map<string, Rec>>();
+        const withEvents = new Set(Object.entries(target.created).filter(([k]) => k.startsWith('events:')).map(([, v]) => v.target_session_id));
+        for (const t of targets) {
+          if (!withEvents.has(t.target_session_id) || targetEvents.has(t.target_session_id)) continue;
+          const rows = await listAll(call, 'list_events', t.target_session_id, warn);
+          targetEvents.set(t.target_session_id, new Map(rows.flatMap((r) => (typeof r.event_id === 'string' ? [[r.event_id, r] as [string, Rec]] : []))));
+        }
+        const input = { snapshot, targets, state: target, tools, targetEvents };
         const thePlan = plan(input);
         const missing = thePlan.tools.filter((t) => !tools.has(t));
         if (missing.length > 0) {
           throw new CliError(`the target ${server} has no ${missing.join(', ')} tool${missing.length === 1 ? '' : 's'}, which this import needs; nothing was written`);
         }
-        const header = { source_server: snapshot.source_server, target_server: server, snapshot: snapshotPath, state_file: stateFile, sessions: targets };
+        const sessions = targets.map(({ target_fps: _fps, ...rest }) => rest);
+        const header = { source_server: snapshot.source_server, target_server: server, snapshot: snapshotPath, state_file: stateFile, sessions };
         if (!values.confirm) {
           const report = { mode: 'dry-run', ...header, ...planReport(thePlan) };
           out(report, importText(report, thePlan));
@@ -567,6 +583,7 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
           ...planReport(thePlan),
           created: result.created,
           links_fixed: result.links_fixed,
+          timecodes_fixed: result.timecodes_fixed,
           skipped: result.skipped,
           failed: result.failed,
           unresolved_links: result.unresolved_links,
@@ -700,7 +717,8 @@ function planReport(p: Plan): Record<string, unknown> {
   const create = { events: 0, topics: 0, wiki_pages: 0 };
   for (const i of p.items) if (i.action === 'create') create[i.kind]++;
   return {
-    plan: { create, already_done: count('done'), fix_links: count('fix-links'), skip: count('skip') },
+    plan: { create, already_done: count('done'), fix_links: count('fix-links'), fix_timecode: count('fix-timecode'), skip: count('skip') },
+    frame_rate_mismatch: p.frame_rate_mismatch,
     items: p.items,
     dropped_fields: p.dropped_fields,
     unresolved_links: p.unresolved_links,
@@ -712,7 +730,9 @@ function importText(report: Record<string, unknown>, p: Plan): string {
     mode: string;
     target_server: string;
     sessions: TargetSession[];
-    plan: { create: Record<string, number>; already_done: number; fix_links: number; skip: number };
+    plan: { create: Record<string, number>; already_done: number; fix_links: number; fix_timecode: number; skip: number };
+    frame_rate_mismatch: { source_session_id: string; target_session_id: string; source_fps: number; target_fps: number }[];
+    timecodes_fixed?: number;
     dropped_fields: { tool: string; field: string }[];
     unresolved_links: { source_page_id: string; link: string }[];
     created?: Record<string, number>;
@@ -728,6 +748,12 @@ function importText(report: Record<string, unknown>, p: Plan): string {
   lines.push(`  ${confirm ? 'created' : 'create'}: ${c.events ?? 0} events, ${c.topics ?? 0} topics, ${c.wiki_pages ?? 0} wiki pages`);
   if (r.plan.already_done > 0) lines.push(`  already copied by an earlier run: ${r.plan.already_done}`);
   if (confirm && (r.links_fixed ?? 0) > 0) lines.push(`  wiki pages whose links were fixed afterwards: ${r.links_fixed}`);
+  if (r.plan.fix_timecode > 0) {
+    lines.push(confirm ? `  events of an earlier run whose timecode was set: ${r.timecodes_fixed ?? 0} of ${r.plan.fix_timecode}` : `  fix-timecode (events of an earlier run at the wrong session time): ${r.plan.fix_timecode}`);
+  }
+  for (const m of r.frame_rate_mismatch) {
+    lines.push(`  frame rate: session ${m.source_session_id} is ${m.source_fps} fps, target ${m.target_session_id} is ${m.target_fps} fps; timecodes are converted to ${m.target_fps} fps`);
+  }
   for (const i of p.items.filter((x) => x.action === 'skip')) lines.push(`  skip ${i.kind} ${i.source_id}: ${i.reason ?? ''}`);
   for (const f of r.failed ?? []) lines.push(`  failed ${f.kind} ${f.source_id}: ${f.reason}`);
   if (r.dropped_fields.length > 0) lines.push(`  fields the target does not accept (not sent): ${r.dropped_fields.map((d) => `${d.tool}.${d.field}`).join(', ')}`);

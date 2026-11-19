@@ -188,9 +188,26 @@ target session's show receives the wiki pages. Transcripts, session aggregates a
 not copied. Per kind:
 
 - Events: `create_event` with the category's **name** (`category_label`; the target show's
-  categories have other ids, and the tool resolves a name), `message`, `metadata`, and the source
-  `wall_time_utc` as `marked_at_utc`. An event whose category the target show lacks is reported in
-  `failed` with the target's list of categories.
+  categories have other ids, and the tool resolves a name), `message`, `metadata`, the source
+  `wall_time_utc` as `marked_at_utc` and the source `timecode` (frame-accurate, `HH:MM:SS:FF` or
+  `HH:MM:SS;FF` at 29.97), so each event keeps its place on the session timeline. An event whose
+  category the target show lacks is reported in `failed` with the target's list of categories.
+- Recording takes: a session's internal `Recording N Started` / `Recording N Stopped` rows are
+  paired as autologger pairs them (wall-time order, first in first out per N) and created **before
+  its other events**, one whole take at a time, each with its wall time and timecode. Each take's
+  **Stopped row is created first, then its Started row**, and a Started row is only created once
+  its Stopped row is on the target: the target never holds a Started with no Stopped (an open take,
+  which makes the web app ask to resolve an "Unresolved recording"), not even when an import stops
+  between the two rows. A take row with no partner in the snapshot (a take still recording, or a
+  lone Stopped) is not copied and is listed as `skip` with the reason. A target session that is
+  recording (rolling) refuses take rows; they are in `failed` and copied by a rerun once it stops.
+  Copying takes and timecodes needs a target whose `create_event` takes `timecode` (autologger-2
+  `4d2b1a37` or later); on an older target take rows are skipped and `timecode` is a dropped field.
+- Frame rate: when a target session's frame rate (`get_session` `fps`) is not the source session's,
+  the plan and result list it in `frame_rate_mismatch` (both rates) and each timecode is converted
+  through seconds to the target's rate and format (the frame of the target rate holding the same
+  instant, with autologger's frame math: frames counted at the rounded rate). **Create the target
+  session at the source's frame rate to avoid it**: then every timecode is copied exactly.
 - Topics: `create_topic` with `session_time`, `duration_sec`, `topic_level` and `summary`.
 - Wiki pages: `create_wiki_page` in the target session's show with `kind`, `title`, `aliases` and
   the rewritten `body_md`; a session page (`kind: session`) is the mapped target session's own.
@@ -204,12 +221,14 @@ not copied. Per kind:
 
 **Fields.** import reads each write tool's `inputSchema` from the target's `tools/list` (inputs are
 strict) and sends only the fields it accepts; every source field it does not send (such as an
-event's `timecode` or `version`) is listed once in `dropped_fields`, and an item missing a field the
+event's `version`, or its `timecode` on a target too old to take one) is listed once in `dropped_fields`, and an item missing a field the
 tool requires is skipped. A write tool the import needs that the target lacks is an error naming it.
 
 **Dry run first.** Without `--confirm` import reads the target (`tools/list`, `get_session` of each
-target session) and prints the plan: `plan` (counts to create, already done, skipped), `items` (each
-with its `action` and `reason`), `dropped_fields` and `unresolved_links`. It calls no write tool.
+target session, and `list_events` of a target session an earlier run copied events into) and
+prints the plan: `plan` (counts to create, already done, `fix_links`, `fix_timecode`, skipped),
+`frame_rate_mismatch`, `items` (each with its `action` and `reason`), `dropped_fields` and
+`unresolved_links`. It calls no write tool.
 `--confirm` must come right after `import`, so a pre-approved `import --snapshot ...` command line
 can never write. It refuses, with exit 1 and nothing written: a target that is the snapshot's
 source server, a target session that does not exist or you cannot see, a `--map` source session
@@ -229,6 +248,19 @@ is recorded as skipped and never overwritten. A write the target refused for ano
 `failed` and is tried again on the next run. A write whose answer was lost in transit (the
 connection dropped after the server wrote) cannot be told apart from one that never happened, so
 check the target before rerunning after such an error.
+
+**Repairing an earlier import.** An import made before this version created events without their
+timecodes (every copied event at `00:00:00:00` in the web app, take rows included). Run the same
+import again (dry run, then `--confirm`) with the same snapshot, state file and `--map`s: events
+the state file says were copied, whose timecode on the target (read with `list_events`) is not the
+source's (converted to the target rate), are planned as `fix-timecode` (counted in
+`plan.fix_timecode`) and set with `update_event` `timecode`, using the version `list_events`
+answered; category, message and wall time are sent unchanged (a take row's category as
+`internal`). Nothing is created twice. A version conflict (someone edited the event meanwhile) or a
+take row refused because the session is recording is reported in `failed` for that event and not
+retried in that run; the next rerun reads the versions again. The result counts `timecodes_fixed`.
+On a target whose `update_event` takes no `timecode` (autologger-2 before `4d2b1a37`) these events
+are listed as `skip` with that reason instead: update the local stack first.
 
 Neither file holds a token, and content from the source is only ever sent as tool arguments: it
 never selects a tool, a server or a file.

@@ -201,14 +201,17 @@ test('import is a dry run by default: the plan, and no write tool is called', as
   assert.equal(result.code, 0, result.stderr);
   const report = JSON.parse(result.stdout);
   assert.equal(report.mode, 'dry-run');
-  assert.deepEqual(report.plan, { create: { events: 5, topics: 3, wiki_pages: 2 }, already_done: 0, fix_links: 0, skip: 0 });
+  assert.deepEqual(report.plan, { create: { events: 5, topics: 3, wiki_pages: 2 }, already_done: 0, fix_links: 0, fix_timecode: 0, skip: 0 });
+  assert.deepEqual(report.frame_rate_mismatch, []);
   assert.deepEqual(report.sessions, [{ source_session_id: 'S1', target_session_id: 'T1', target_show_id: 'shw_t' }]);
   assert.deepEqual(
     report.unresolved_links.map((u: { link: string }) => u.link).sort(),
     ['cite:S9@3', 'wiki:pg_zzz'],
   );
   const dropped = report.dropped_fields.map((d: { tool: string; field: string }) => `${d.tool}.${d.field}`);
-  for (const field of ['create_event.timecode', 'create_event.version', 'create_topic.ordinal', 'create_wiki_page.revision']) assert.ok(dropped.includes(field), field);
+  for (const field of ['create_event.version', 'create_event.category_color', 'create_topic.ordinal', 'create_wiki_page.revision']) assert.ok(dropped.includes(field), field);
+  // The target's create_event takes timecode (autologger 4d2b1a37 and later): it is sent, not dropped.
+  assert.ok(!dropped.includes('create_event.timecode'));
   assert.equal(new Set(dropped).size, dropped.length, 'each dropped field once');
   assert.deepEqual(writeCalls(s.target), []);
   assert.equal(existsSync(`${s.snapshot}.import-state.json`), false);
