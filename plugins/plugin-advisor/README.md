@@ -61,9 +61,13 @@ basic credentials, autologger `alm_`/`alr_` tokens, `autologger_sid` cookie valu
 `key: value`, `"key": "value"` and `--key value` where the key looks secret (token, secret,
 password, api key, cookie, credential, session, session id and similar) whatever the value's length,
 also when the pair sits inside an ordinary value (`failed: password=x`), the value after
-`--password` in any command, the value after `-p` (`-p x`, `-p=x`, `-px`) only in `mysql`,
-`mysqldump`, `mysqladmin`, `mariadb` and `mariadb-dump` commands (so `mkdir -p`, `ssh -p 2222`,
-`docker run -p 8080:80` and `gcc -pthread` are kept), JWTs, URL credentials, PEM private keys,
+`--password` in any command, the value after `-p` (`-p x`, `-p=x`, `-px`) only in commands where
+`-p` takes a password: the MySQL and MariaDB clients and tools (`mysql`, `mysqldump`, `mysqladmin`,
+`mysqlsh`, `mariadb`, `mariadb-dump` and the rest), the MongoDB shell and tools (`mongo`, `mongosh`,
+`mongodump`, `mongorestore`, `mongoexport`, `mongoimport`, ...), `sshpass`, `cqlsh`, `rabbitmqadmin`,
+`rdesktop`, `7z` and `rar`/`unrar`, up to the end of that command (a newline not continued with `\`,
+or `;`, `|`, `&`), so `mkdir -p`, `ssh -p 2222`, `docker run -p 8080:80`, `psql -p 5433` and
+`gcc -pthread` are kept, JWTs, URL credentials, PEM private keys,
 common provider tokens (GitHub, Slack, AWS, `sk-`), and long random-looking strings (including full
 40-character git SHAs and UUIDs; short SHAs are kept) all become `[redacted]`. Redaction is one
 left-to-right scan per rule, so very long lines (thousands of `a=` pairs) do not overflow the stack.

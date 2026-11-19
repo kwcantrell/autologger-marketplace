@@ -54,6 +54,46 @@ const SECRETS: Array<[string, string, string]> = [
   ['mysqladmin -p value', 'mysqladmin -u root -p secret status', `mysqladmin -u root -p ${R} status`],
   ['mysql by path, any case', '/usr/bin/MySQL --host db -p"a b"', `/usr/bin/MySQL --host db -p"${R}"`],
   ['every -p in one mysql command', 'mysql -pone -p two', `mysql -p${R} -p ${R}`],
+  // Round 1: other tools whose -p takes a password.
+  ['sshpass -p', 'sshpass -p hunter2 ssh host', `sshpass -p ${R} ssh host`],
+  ['mongosh -p', 'mongosh -u admin -p hunter2', `mongosh -u admin -p ${R}`],
+  ['mongo -p', 'mongo -u admin -phunter2 db', `mongo -u admin -p${R} db`],
+  ['mongodump -p', 'mongodump -u a -p hunter2 --db x', `mongodump -u a -p ${R} --db x`],
+  ['mongorestore -p', 'mongorestore -u a -p=hunter2 dump/', `mongorestore -u a -p=${R} dump/`],
+  ['mongoexport -p', 'mongoexport -u a -p hunter2 -c c', `mongoexport -u a -p ${R} -c c`],
+  ['mongoimport -p', 'mongoimport -u a -p hunter2 -c c', `mongoimport -u a -p ${R} -c c`],
+  ['mongostat -p', 'mongostat -u a -p hunter2', `mongostat -u a -p ${R}`],
+  ['mongotop -p', 'mongotop -u a -p hunter2', `mongotop -u a -p ${R}`],
+  ['mongofiles -p', 'mongofiles -u a -p hunter2 list', `mongofiles -u a -p ${R} list`],
+  ['mysqlsh -p', 'mysqlsh -u root -phunter2', `mysqlsh -u root -p${R}`],
+  ['mysqlimport -p', 'mysqlimport -u root -phunter2 db f.txt', `mysqlimport -u root -p${R} db f.txt`],
+  ['mysqlcheck -p', 'mysqlcheck -u root -phunter2 db', `mysqlcheck -u root -p${R} db`],
+  ['mysqlshow -p', 'mysqlshow -u root -phunter2', `mysqlshow -u root -p${R}`],
+  ['mysqlslap -p', 'mysqlslap -u root -phunter2', `mysqlslap -u root -p${R}`],
+  ['mysqlpump -p', 'mysqlpump -u root -phunter2', `mysqlpump -u root -p${R}`],
+  ['mysqlbinlog -p', 'mysqlbinlog -u root -phunter2 log.1', `mysqlbinlog -u root -p${R} log.1`],
+  ['mysql_upgrade -p', 'mysql_upgrade -u root -phunter2', `mysql_upgrade -u root -p${R}`],
+  ['mysql_secure_installation -p', 'mysql_secure_installation -u root -phunter2', `mysql_secure_installation -u root -p${R}`],
+  ['mariadb-admin -p', 'mariadb-admin -u root -phunter2 status', `mariadb-admin -u root -p${R} status`],
+  ['mariadb-import -p', 'mariadb-import -u root -phunter2 db f', `mariadb-import -u root -p${R} db f`],
+  ['mariadb-check -p', 'mariadb-check -u root -phunter2 db', `mariadb-check -u root -p${R} db`],
+  ['mariadb-show -p', 'mariadb-show -u root -phunter2', `mariadb-show -u root -p${R}`],
+  ['mariadb-slap -p', 'mariadb-slap -u root -phunter2', `mariadb-slap -u root -p${R}`],
+  ['mariadb-binlog -p', 'mariadb-binlog -u root -phunter2 log.1', `mariadb-binlog -u root -p${R} log.1`],
+  ['mariadb-upgrade -p', 'mariadb-upgrade -u root -phunter2', `mariadb-upgrade -u root -p${R}`],
+  ['mariadb-secure-installation -p', 'mariadb-secure-installation -u root -phunter2', `mariadb-secure-installation -u root -p${R}`],
+  ['cqlsh -p', 'cqlsh -u cassandra -p hunter2 host', `cqlsh -u cassandra -p ${R} host`],
+  ['rabbitmqadmin -p', 'rabbitmqadmin -u admin -p hunter2 list queues', `rabbitmqadmin -u admin -p ${R} list queues`],
+  ['rdesktop -p', 'rdesktop -u ada -p hunter2 host', `rdesktop -u ada -p ${R} host`],
+  ['7z -p', '7z x -phunter2 a.7z', `7z x -p${R} a.7z`],
+  ['7za -p', '7za a -phunter2 a.7z f', `7za a -p${R} a.7z f`],
+  ['7zr -p', '7zr x -phunter2 a.7z', `7zr x -p${R} a.7z`],
+  ['rar -p', 'rar a -phunter2 a.rar f', `rar a -p${R} a.rar f`],
+  ['unrar -p', 'unrar x -phunter2 a.rar', `unrar x -p${R} a.rar`],
+  // Round 1: a command continued with a backslash is one command, also in details (newlines kept).
+  ['mysql continued with \\ onto a -p line', 'mysql -u root \\\n  -p s3cret db', `mysql -u root \\\n  -p ${R} db`],
+  ['mysql continued with \\ (CRLF)', 'mysql -u root \\\r\n  -ps3cret db', `mysql -u root \\\r\n  -p${R} db`],
+  ['sshpass continued over two lines', 'sshpass \\\n -p s3cret \\\n ssh host', `sshpass \\\n -p ${R} \\\n ssh host`],
   ['mysql -p after a quoted ; in the same command', "mysql -e 'select 1; select 2' -psecret", `mysql -e 'select 1; select 2' -p${R}`],
   ['mysql -p after another command on the line', 'cd /x && mysql -psecret', `cd /x && mysql -p${R}`],
   ['--password after any command', 'psql --password secret', `psql --password ${R}`],
@@ -115,11 +155,23 @@ test('-p outside mysql and similar commands is left alone (job 024)', () => {
     'git log -p HEAD',
     'mysql failed; ssh -p 2222 host',
     'mysql failed\nmkdir -p /x/y',
-    'mysqlsh -p 3306',
+    // A newline without a backslash ends the command.
+    'mysql -u root\n-p 5433 is a port',
+    'redis-cli -p 6380 ping',
     'mysql_config -p x',
   ]) {
     assert.equal(redact(text), text, text);
     assert.equal(containsSecret(text), false, text);
+  }
+});
+
+test('a backslash-continued mysql command keeps no password in details (round 1)', () => {
+  for (const input of ['mysql -u root \\\n  -p s3cret db', 'mysql -u r \\\n -p s3cret', 'mysqldump \\\n  -u root \\\n  -ps3cret db', 'mongosh \\\n -u a \\\n -p s3cret']) {
+    const out = cleanDetail(input);
+    assert.ok(!out.includes('s3cret'), `${JSON.stringify(input)} -> ${JSON.stringify(out)}`);
+    assert.ok(out.includes('\n'), 'details keep their newlines');
+    assert.equal(containsSecret(input), true, input);
+    assert.equal(containsSecret(out), false, out);
   }
 });
 

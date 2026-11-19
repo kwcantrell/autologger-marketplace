@@ -94,14 +94,31 @@ function redactKeyValues(text: string): string {
   return out + text.slice(done);
 }
 
-/** Commands whose `-p` takes a password. Elsewhere `-p` is a port, a parents flag or a publish. */
-const PASSWORD_COMMAND = /\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)(?![\w-])(?:"[^"\n]*"|'[^'\n]*'|[^\n;|&])*/gi;
+/**
+ * Commands whose `-p` takes a password: the MySQL and MariaDB clients and tools, the MongoDB shell and
+ * tools, sshpass, cqlsh (Cassandra), rabbitmqadmin, rdesktop, and the 7-Zip and RAR archivers
+ * (`-p<password>`). Elsewhere `-p` is a port (`ssh`, `psql`, `redis-cli`), a parents flag or a publish.
+ */
+const PASSWORD_COMMANDS = [
+  'mysql', 'mysqldump', 'mysqladmin', 'mysqlimport', 'mysqlcheck', 'mysqlshow', 'mysqlslap', 'mysqlpump', 'mysqlbinlog',
+  'mysqlsh', 'mysql_upgrade', 'mysql_secure_installation',
+  'mariadb', 'mariadb-dump', 'mariadb-admin', 'mariadb-import', 'mariadb-check', 'mariadb-show', 'mariadb-slap',
+  'mariadb-binlog', 'mariadb-upgrade', 'mariadb-secure-installation',
+  'mongo', 'mongosh', 'mongodump', 'mongorestore', 'mongoexport', 'mongoimport', 'mongostat', 'mongotop', 'mongofiles',
+  'sshpass', 'cqlsh', 'rabbitmqadmin', 'rdesktop', '7z', '7za', '7zr', 'rar', 'unrar',
+];
+
+/** A password command, from its word to the end of the command: a newline (unless continued with a
+ * backslash), or `;`, `|` or `&` outside quotes. Longer names come first in the alternation. */
+const PASSWORD_COMMAND = new RegExp(
+  `\\b(?:${[...PASSWORD_COMMANDS].sort((a, b) => b.length - a.length).join('|')})(?![\\w-])(?:"[^"\\n]*"|'[^'\\n]*'|\\\\\\r?\\n|[^\\n;|&])*`,
+  'gi',
+);
 
 /** -p value / -p=value / -pvalue, whatever the value's length. */
 const PASSWORD_FLAG = /(^|[\s"'`(])(-p)(\s+|=)?(?:"([^"\n]*)"|'([^'\n]*)'|([^\s"'-][^\s"']*))/g;
 
-/** `-p` values in each password-taking command, from the command word to the end of its command
- * (a newline, `;`, `|` or `&` outside quotes). */
+/** `-p` values in each password-taking command (see `PASSWORD_COMMAND`). */
 function redactPasswordFlags(text: string): string {
   return text.replace(PASSWORD_COMMAND, (command) =>
     command.replace(PASSWORD_FLAG, (m, lead: string, flag: string, sep: string | undefined, dq?: string, sq?: string, bare?: string) => {
