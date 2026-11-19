@@ -36,6 +36,10 @@ test('the CI workflow runs on main, reads only, and its job id is the required c
   for (const step of ['npm ci', 'npm run typecheck', 'npm test', 'node plugins/plugin-builder/src/cli.ts check --all']) {
     assert.match(ci, new RegExp(`^ {8}run: ${step.replace(/[.]/g, '\\.')}$`, 'm'), `missing step: ${step}`);
   }
+  // check-versions needs history to reach the base, and gets the base SHA through env.
+  assert.match(ci, /^ {10}fetch-depth: 0$/m);
+  assert.match(ci, /^ {10}BASE_SHA: \$\{\{ github\.event_name == 'pull_request' && github\.event\.pull_request\.base\.sha \|\| github\.event\.before \}\}$/m);
+  assert.match(ci, /^ {8}run: node scripts\/check-versions\.ts --base "\$BASE_SHA"$/m);
 });
 
 test('Dependabot updates npm and github-actions at / weekly, one grouped PR each', () => {

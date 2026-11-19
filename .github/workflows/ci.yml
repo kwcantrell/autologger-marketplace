@@ -27,6 +27,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history, so check-versions can find the PR base or the push's before SHA.
+          fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -43,3 +45,11 @@ jobs:
         run: npm test
       - name: Plugin convention check
         run: node plugins/plugin-builder/src/cli.ts check --all
+      - name: Plugin versions bumped
+        # Every change under plugins/<name>/ must raise that plugin's version (Claude Code caches
+        # plugins by version). A pull request compares against its base; a push to main (including
+        # one by the admin bypass) against the push's before SHA, or the first parent when that is
+        # all zeros. The SHA comes in through env, never spliced into the script.
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/check-versions.ts --base "$BASE_SHA"
