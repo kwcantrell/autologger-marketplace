@@ -25,7 +25,7 @@ export const RULES = {
   'npx-quoted-root': 'every skill npx line passes --package="${CLAUDE_PLUGIN_ROOT}" in double quotes',
   'npx-bin-name': "every skill npx line runs the plugin's own bin",
   'npx-prefix': 'every skill npx line starts with the exact required prefix',
-  'npx-chained': 'every skill npx line is one CLI call with plain arguments: no ; & | ` < > $( after the prefix (except a trailing < <placeholder> stdin redirect)',
+  'npx-chained': 'every skill npx line is one CLI call with plain arguments: no ; & | ` < > $( after the prefix (except <placeholder>s standing alone or filling a quote pair, and a trailing < <placeholder> stdin redirect; \\-continued lines are checked joined)',
   'allowed-tools': 'the skill frontmatter allowed-tools has Bash(<prefix> <bin>:*), or Bash(<prefix> <bin> <command>:*) rules',
   'tests-present': 'test/ has at least one *.test.ts',
   'e2e-test': 'a test runs the SKILL.md command lines through npx',
@@ -238,19 +238,36 @@ interface SkillLine {
   inSh: boolean;
 }
 
-/** Trimmed lines starting with `npx `, and whether each is inside a ```sh fence. */
+/** Whether a trimmed line ends in an unescaped `\` (an odd number of them), so the shell continues it. */
+function continues(trimmed: string): boolean {
+  return (/\\+$/.exec(trimmed)?.[0].length ?? 0) % 2 === 1;
+}
+
+/**
+ * Trimmed lines starting with `npx `, and whether each is inside a ```sh fence. Inside a ```sh fence a
+ * line ending in `\\` (trailing spaces ignored) is joined with the lines that continue it, as the shell
+ * would run them; the joined command keeps the first physical line's number.
+ */
 export function npxLines(text: string): SkillLine[] {
   const out: SkillLine[] = [];
+  const raw = text.split('\n');
   let fence: string | null = null;
-  text.split('\n').forEach((raw, index) => {
-    const trimmed = raw.trim();
+  for (let index = 0; index < raw.length; index++) {
+    const start = index;
+    let trimmed = (raw[index] ?? '').trim();
     const open = /^```\s*(\S*)/.exec(trimmed);
     if (open) {
       fence = fence === null ? (open[1] ?? '') : null;
-      return;
+      continue;
     }
-    if (trimmed.startsWith('npx ')) out.push({ line: index + 1, text: trimmed, inSh: fence === 'sh' });
-  });
+    if (fence === 'sh') {
+      while (continues(trimmed) && index + 1 < raw.length && !/^```/.test((raw[index + 1] ?? '').trim())) {
+        index++;
+        trimmed = `${trimmed.slice(0, -1).trimEnd()} ${(raw[index] ?? '').trim()}`.trim();
+      }
+    }
+    if (trimmed.startsWith('npx ')) out.push({ line: start + 1, text: trimmed, inSh: fence === 'sh' });
+  }
   return out;
 }
 
@@ -427,15 +444,72 @@ export function shellMeta(rest: string): string | null {
 /** A skill line's `<placeholder>`: a letter, then letters, digits, `_`, `-`, `.` or spaces. */
 const PLACEHOLDER = '<[A-Za-z][\\w .-]*>';
 
+/** What may stand next to a quoted placeholder: whitespace, a line edge or JSON punctuation. */
+const QUOTE_EDGE = '[\\s{}\\[\\],:]';
+
+/** A placeholder that is a whole word (whitespace or a line edge on both sides). */
+const STANDALONE = new RegExp(`(?<=^|\\s)${PLACEHOLDER}(?=\\s|$)`, 'g');
+
+/** A placeholder filling one quote pair, `"<x>"` or `'<x>'`, with a QUOTE_EDGE or line edge outside it. */
+const QUOTED = new RegExp(`(?<=(?:^|${QUOTE_EDGE})(["']))${PLACEHOLDER}(?=\\1(?:$|${QUOTE_EDGE}))`, 'g');
+
+/** One trailing ` < <placeholder>` stdin redirect (at least one space between `<` and the placeholder). */
+const STDIN_REDIRECT = new RegExp(`\\s<\\s+${PLACEHOLDER}$`);
+
 /**
- * `shellMeta` for a skill command line, with two exceptions the skills rely on and nothing more:
- * `<placeholder>` words (Claude fills them in; they are not shell redirects), and one trailing
+ * The shell quoting state just before each character of `text`: `''` outside quotes, `"'"` inside
+ * single quotes, `'"'` inside double quotes.
+ */
+function quoteStates(text: string): string[] {
+  const states: string[] = [];
+  let state = '';
+  for (let i = 0; i < text.length; i++) {
+    states.push(state);
+    const c = text[i];
+    if (state === "'") {
+      if (c === "'") state = '';
+    } else if (c === '\\') {
+      states.push(state);
+      i++;
+    } else if (state === '"') {
+      if (c === '"') state = '';
+    } else if (c === "'" || c === '"') {
+      state = c;
+    }
+  }
+  return states;
+}
+
+/**
+ * `shellMeta` for a skill command line, with exceptions the skills rely on and nothing more. Claude
+ * fills `<placeholder>`s in before a line runs, so a placeholder is not read as a redirect when it is
+ * a whole word (whitespace or a line edge on both sides), or when it fills one quote pair, `"<x>"` or
+ * `'<x>'`, that is a real shell quote or a `"…"` string inside a single-quoted (JSON) argument, with
+ * whitespace, a line edge or JSON punctuation (`{}[],:`) outside the quotes. A placeholder glued to
+ * other text (`<a>/tmp`, `<a><b>`, `<<a>`, `"<a>/tmp"`, `'<a>'x`) is still checked. One trailing
  * ` < <placeholder>` that redirects a file the user named into the CLI's stdin (autologger-mcp's
- * `import-tokens`, which must never take its secret as an argument). That redirect runs no other
+ * `import-tokens`, which must never take its secret as an argument) is allowed; it runs no other
  * command. Pipes, a `<` mid-line, or a `<` from a literal path are still flagged.
  */
 export function skillLineMeta(rest: string): string | null {
-  return shellMeta(rest.replace(new RegExp(`\\s<\\s*${PLACEHOLDER}$`), '').replace(new RegExp(PLACEHOLDER, 'g'), ''));
+  const line = rest.replace(STDIN_REDIRECT, '');
+  const states = quoteStates(line);
+  const spans: Array<[number, number]> = [];
+  for (const m of line.matchAll(STANDALONE)) spans.push([m.index, m.index + m[0].length]);
+  for (const m of line.matchAll(QUOTED)) {
+    const quote = m[1];
+    const before = states[m.index - 1];
+    // a real opening quote, or a "…" string inside single quotes (where the placeholder is literal)
+    if (before === '' || (quote === '"' && before === "'")) spans.push([m.index, m.index + m[0].length]);
+  }
+  let kept = '';
+  let at = 0;
+  for (const [from, to] of spans.sort((a, b) => a[0] - b[0])) {
+    if (from < at) continue;
+    kept += line.slice(at, from);
+    at = to;
+  }
+  return shellMeta(kept + line.slice(at));
 }
 
 /** Claude Code's hook handler types. Only `command` hooks run a program, so only they must run the CLI. */

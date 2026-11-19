@@ -115,9 +115,12 @@ npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>
   end-to-end test (`test/cli.test.ts`) extracts and runs every such line, so a skill whose command
   does not work fails `npm test`. Each line is one CLI call with plain arguments: nothing chained,
   piped, substituted or redirected after the prefix (`;`, `&`, `|`, backtick, `<`, `>`, `$(`), since
-  the test runs it and `allowed-tools` pre-approves its prefix. `<placeholder>` words are fine, as is
-  one trailing `< <placeholder>` that feeds a file the user named to the CLI's stdin
-  (`plugin-builder check` rule `npx-chained`).
+  the test runs it and `allowed-tools` pre-approves its prefix. A `<placeholder>` is fine as a whole
+  word (whitespace or a line edge on both sides) or filling one quote pair (`"<x>"`, `'<x>'`, also a
+  `"…"` string in a single-quoted JSON argument), with whitespace, a line edge or `{}[],:` outside the
+  quotes; glued to other text (`<a>/tmp`, `<a><b>`, `'<a>'x`) it is checked like the rest. One trailing
+  `< <placeholder>` that feeds a file the user named to the CLI's stdin is allowed. A line ending in
+  `\` is checked joined with the lines it continues (`plugin-builder check` rule `npx-chained`).
 - `allowed-tools` in the skill frontmatter allows that prefix (`Bash(npx --yes --offline
   --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>:*)`). A CLI with commands that act on
   the machine (run a Makefile, start containers) pre-approves only its read-only commands instead,
