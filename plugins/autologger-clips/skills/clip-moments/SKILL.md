@@ -1,14 +1,14 @@
 ---
 name: clip-moments
-description: Clips moments from an autologger session into a video timeline and opens it in the OpenReel editor - finds where a topic comes up (with autologger-mcp), confirms the time ranges with the user, maps the session's video (a local file, or the YouTube source downloaded with yt-dlp), builds an FCPXML or OTIO timeline with session time mapped to video time, then imports it into the OpenReel web editor through agent-browser or exports it with OpenReel Desktop's MCP tools. Use when the user asks to clip, cut, extract or make a video of the moments where something is talked about in an autologger session, or to open autologger moments in a video editor.
-allowed-tools: Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips timeline:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips compile:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips media list:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips editor status:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips desktop doctor:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips --help:*)
+description: Clips moments from an autologger session into a video timeline and opens it in the OpenReel editor - finds where a topic comes up (with autologger-mcp), confirms the time ranges with the user, maps the session's video (a local file, or the YouTube source downloaded with yt-dlp), builds an FCPXML or OTIO timeline with session time mapped to video time, then imports it into the OpenReel web editor through agent-browser or exports it with OpenReel Desktop's MCP tools; for a YouTube-imported session it can instead publish the clips as an autologger custom dashboard (the YouTube video embedded, with the clip list) after the user agrees. Use when the user asks to clip, cut, extract or make a video of the moments where something is talked about in an autologger session, or to open autologger moments in a video editor or show them as clips in an autologger dashboard.
+allowed-tools: Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips timeline:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips compile:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips dashboard:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips media list:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips editor status:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips desktop doctor:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips --help:*)
 ---
 
 # Clipping autologger moments
 
 Run this plugin's CLI exactly as written below, from any directory, with no install or build step;
 `${CLAUDE_PLUGIN_ROOT}` is this plugin's folder. Only the read-only commands (`timeline`,
-`compile`, `media list`, `editor status`, `desktop doctor`) are pre-approved; `media set`,
+`compile`, `dashboard`, `media list`, `editor status`, `desktop doctor`) are pre-approved; `media set`,
 `media remove`, `media fetch`, `editor start` and `editor stop` ask for permission, and you ask
 the user before each of them as said below.
 
@@ -142,6 +142,47 @@ yourself. If `connected` is false, they start OpenReel Desktop. Then with OpenRe
 `media_files` (inside an allowed folder), then `import_timeline_from_path` with the timeline file
 (or `import_timeline_xml` with its text). **Ask the user before `export_video`**, naming the output
 path (inside an allowed folder), and poll `get_render_status` until it finishes.
+
+## 5c. Or publish the clips as an autologger dashboard (YouTube sessions)
+
+When the session's video came from YouTube (its `list_session_media` result has a `youtube` item,
+section 3), the clips can be shown inside autologger instead of a video file: a custom dashboard
+with the YouTube video embedded and the list of clips (label, session time, length); picking a clip
+plays its range. Nothing is downloaded. With the clip list and the saved `list_session_media`
+output:
+
+```sh
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips dashboard --clips "<clips_file>" --media-json "<media_json_file>" --out "<tsx_file>" --save-args "<save_args_file>" --json
+```
+
+`<tsx_file>` ends in `.tsx` (for example `clips-dashboard.tsx`), `<save_args_file>` in `.json`.
+Add `--title "<title>"` for the dashboard's title (default `Clips: <session_title>`) and
+`--pad <s>` as for `timeline`. The command only writes those two files. It exits 1 when the
+session's media is not a YouTube import, its video id is not one, or the clips come from different
+videos (use `compile-playlist`'s `--compilation`). Show the user `players` (the video URL and each
+clip's `label`, `video_start_s`-`video_end_s`) and `merged`, `clamped`, `dropped` and `warnings`.
+
+**Ask the user first**: name the session it is saved on, the title, and that every reader of the
+session will see it. Publishing is not pre-approved and goes through the **autologger-mcp**
+plugin, not this CLI: after they agree, run its `call save_dashboard --args-file
+"<save_args_file>" --json` (its `write-session-data` skill; the file holds `{title, tsx, scope:
+{kind: "session", session_id}}`). It answers `{dashboard_id, revision}`. Then give the user the
+web viewer link: the session's page, `<server>/sessions/<session_id>` (the `server` that
+autologger-mcp's `status` shows, for example `https://localhost:8787`), whose **Dashboards** tab
+lists it under Custom dashboards by its title. Running `save_dashboard` again with the same file
+makes another dashboard (a session holds at most 20); to replace one, add `dashboard_id` and
+`expected_revision` (from that answer) to the file's arguments.
+
+A refusal is a fixed text; tell the user what it means instead of retrying:
+- `Owner or admin role required.`: saving a dashboard needs an owner or admin of the session's
+  studio. The user (the account autologger-mcp signed in as) is a member only; an owner or admin
+  of the studio has to publish it, or give them that role.
+- `Session not found`: that account cannot read the session (or the id is wrong).
+- `A session has at most 20 dashboards.`: delete an old one first (ask the user).
+- `Line L, column C: <reason>`: autologger refused the code. The generated file should never get
+  this; do not edit the TSX by hand: report it (plugin-advisor) and show the user the message.
+- An unknown tool `save_dashboard`: custom dashboards are off on that server.
+- A read-only sign-in: autologger-mcp's message gives the login command with write scope.
 
 ## 6. Removing a mapping
 

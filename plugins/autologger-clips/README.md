@@ -9,7 +9,11 @@ Claude finds the moments with the `autologger-mcp` plugin (its `moments` command
 transcripts, topics and wiki) and picks time ranges with you. This plugin's CLI does the
 deterministic parts: it keeps a map from each session to its video file, maps session time to
 video time, merges and clamps the ranges, writes an FCPXML 1.10 or OTIO timeline, downloads a
-YouTube-imported session's video with `yt-dlp`, and runs the OpenReel web editor.
+YouTube-imported session's video with `yt-dlp`, and runs the OpenReel web editor. For
+YouTube-imported sessions it can instead write the clips as an autologger **custom dashboard**: the
+YouTube video embedded, with the list of clips that each play their range, published (after you
+agree) with `autologger-mcp`'s `call save_dashboard`, so viewers watch them inside autologger
+without downloading anything.
 
 ## Install
 
@@ -26,8 +30,8 @@ OpenReel Desktop with its MCP server registered for unattended exports.
 
 | Skill | Use |
 | --- | --- |
-| `clip-moments` | Finds the moments about a topic in a session, confirms the ranges with you, writes the clip list, checks or fetches the media, builds the timeline, then opens it in the web editor (agent-browser) or exports it through OpenReel Desktop's MCP tools. |
-| `compile-playlist` | The same across a playlist's (or show's) sessions: a compilation ordered by session date, with a title card naming each session. |
+| `clip-moments` | Finds the moments about a topic in a session, confirms the ranges with you, writes the clip list, checks or fetches the media, builds the timeline, then opens it in the web editor (agent-browser) or exports it through OpenReel Desktop's MCP tools; or, for a YouTube import, writes and (after you agree) publishes a custom dashboard of the clips. |
+| `compile-playlist` | The same across a playlist's (or show's) sessions: a compilation ordered by session date, with a title card naming each session; or a dashboard with one YouTube player per video. |
 
 ## Commands
 
@@ -35,6 +39,7 @@ OpenReel Desktop with its MCP server registered for unattended exports.
 | --- | --- |
 | `timeline --clips <file.json> --out <file.fcpxml\|file.otio> [--fps <rate>] [--pad <s>] [--title <name>]` | Writes a timeline with one clip per range, in list order. Ranges of one session that overlap or touch (closer than half a frame) are merged, after `--pad` (default 0) is added to both ends; a merged clip takes the place of its first range and joins the labels with ` / `. Ranges are clamped to the video (start at 0, end at its length) and reported; a range wholly outside it is dropped and reported. |
 | `compile --clips <file.json> --out <timeline> [--order date\|list] [--title-cards] [--title-seconds <s>] [--fps <rate>] [--pad <s>] [--title <name>]` | The same for clips from several sessions, ordered by session date then time (the default; every session needs a `session_date`) or in list order. `--title-cards` puts a card (default 3 s) naming the session, `session_title (date)`, before each run of its clips. |
+| `dashboard --clips <file.json> --media-json <file> --out <file.tsx> [--title <t>] [--pad <s>] [--compilation] [--order list\|date] [--ordinal <n>] [--save-args <file.json> [--session <id>]]` | Writes an autologger custom dashboard (see [Dashboards](#dashboards)). `--media-json` is the session's `list_session_media` answer (as for `media fetch`); for clips of several sessions give `--media-json <session_id>=<file>` once per session. Refused (exit 1) when a session's media is not `youtube`, its `video_id` is not `^[A-Za-z0-9_-]{11}$`, the clips come from different videos without `--compilation`, from more than 8 videos, a range ends past 86,400 s of video, or the file would be over 100,000 characters. `--save-args` also writes `save_dashboard`'s arguments, `{title, tsx, scope: {kind: "session", session_id}}`, for `autologger-mcp call save_dashboard --args-file`; the scope is the clips' session, or `--session` when they come from several. |
 | `media set <session_id> <video file> [--offset <s>] [--duration <s>]` | Maps a session to a local video file. `--offset` (default 0) is the session time at which the video's second 0 plays; write a negative one as `--offset=-5`. `--duration` gives the video's length when it is not an MP4/MOV (whose header the CLI reads). |
 | `media list` | The map, with `exists` for each file. |
 | `media remove <session_id>` | Removes a session from the map. |
@@ -46,8 +51,9 @@ OpenReel Desktop with its MCP server registered for unattended exports.
 
 Every command takes `--json` (one JSON value on stdout) and exits 0 (success), 1 (failed) or 2
 (usage error), with the message on stderr. The skills pre-approve only the read-only commands
-(`timeline`, `compile`, `media list`, `editor status`, `desktop doctor`, `--help`); `media
-set|remove|fetch` and `editor start|stop` ask first.
+(`timeline`, `compile`, `dashboard`, `media list`, `editor status`, `desktop doctor`, `--help`);
+`media set|remove|fetch` and `editor start|stop` ask first. Publishing a dashboard is not this
+CLI's: it goes through `autologger-mcp`'s `call`, which asks.
 
 ## The clip list
 
@@ -114,6 +120,33 @@ that is: the best MP4 video with M4A audio merged into one `.mp4` (merging needs
 the best single MP4, saved as `<video id>.mp4`. `~/Documents` is one of the folders OpenReel
 Desktop's MCP tools may read. Downloading is the user's call: the skills ask first, and respect
 YouTube's terms and the rights holder.
+
+## Dashboards
+
+`dashboard` writes one TSX file for autologger's custom dashboards (autologger-2 spec
+`custom-dashboards`): a `YouTubePlayer` per video (`@autologger/dashboard`, props `{videoId,
+start, end, title, autoplay}`) and, under it, the clips as buttons showing the label, the session
+time and the length. Picking a clip sets the player's `start`/`end` to its video range and plays
+it. The ranges are planned exactly as `timeline` plans them: `--pad`, then overlapping or touching
+ranges of a session merged, then `video time = session time - take_start_s` (the take's offset
+from `list_session_media`), clamped to the media's `duration_s`. A dashboard shows one video
+unless `--compilation`, which gives one player per video in compile order (session date, or
+`--order list`); autologger draws at most 8 players at once, so more videos are refused.
+
+The file keeps autologger's save-time rules: it imports only `useState` from `react`,
+`YouTubePlayer`, `formatDuration` and `formatTimecode` from `@autologger/dashboard`, and `Button`
+and `Card*` from `@/components/ui/*` (all on `DASHBOARD_IMPORT_ALLOWLIST`); it has one `export
+default` function component, no `iframe` or `script`, no denylisted global, and is at most 100,000
+characters. Labels and titles come from session data, so they are only ever data: `JSON.stringify`
+into one `DATA` constant (with `<`, `>`, `&`, U+2028 and U+2029 escaped), never put into JSX or
+code; the rest of the file is a fixed template. The tests check this with hostile labels and
+against a copy of the allowlist and denylists, which is compared with autologger-2's
+`packages/contract/src/customDashboards.ts` when a checkout is present.
+
+Publishing (`save_dashboard`, a write) needs an owner or admin of the session's studio; anyone
+else gets `Owner or admin role required.` The skills ask before publishing and give the session's
+page, `<server>/sessions/<session_id>`, where the Dashboards tab lists it. The viewer's browser
+loads the video from `youtube-nocookie.com`; autologger sends nothing to YouTube.
 
 ## Editor modes
 

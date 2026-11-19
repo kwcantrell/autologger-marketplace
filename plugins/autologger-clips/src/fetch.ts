@@ -36,7 +36,7 @@ export function ytdlpArgs(url: string, dir: string): string[] {
 export const YTDLP_INSTALL_HINT =
   'yt-dlp is not on PATH; install it (https://github.com/yt-dlp/yt-dlp#installation, for example `pipx install yt-dlp`, `brew install yt-dlp` or your package manager), and ffmpeg so it can merge video and audio, then run media fetch again';
 
-const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+export const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 
 export interface MediaItem {
   ordinal?: number;

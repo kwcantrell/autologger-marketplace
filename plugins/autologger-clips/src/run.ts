@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { buildTimeline, summary } from './build.ts';
+import { buildDashboard, dashboardSummary } from './dashboard.ts';
 import { desktopDoctor } from './desktop.ts';
 import { editorStatus, OPENREEL_COMMIT, startEditor, stopEditor } from './editor.ts';
 import { CliError, messageOf, UsageError } from './errors.ts';
@@ -39,6 +40,17 @@ Commands:
           [--title-seconds <s>] [--fps <rate>] [--pad <s>] [--title <name>]
       A compilation across sessions, ordered by session date then time (default) or list order,
       optionally with a title card naming each session before its clips.
+  dashboard --clips <file.json> --media-json <file> --out <file.tsx> [--title <t>] [--pad <s>]
+            [--compilation] [--order list|date] [--ordinal <n>] [--save-args <file.json> [--session <id>]]
+      Write an autologger custom dashboard (TSX) that embeds the sessions' YouTube video with
+      YouTubePlayer and lists the clips (label, session time, length); picking one plays its range
+      (video time = session time - the take's take_start_s, padded and merged as timeline does).
+      --media-json is the session's list_session_media result; for clips of several sessions give
+      --media-json <session_id>=<file> for each. Clips of different videos need --compilation (one
+      player per video, at most 8, in compile order: by session date unless --order list).
+      --save-args also writes save_dashboard's arguments {title, tsx, scope} for autologger-mcp's
+      call save_dashboard --args-file (scope: the clips' session, or --session). Writes local files
+      only; it never calls autologger.
   media set <session_id> <video file> [--offset <s>] [--duration <s>]
       Map a session to a local video file (--offset: session time of the video's second 0).
   media list                      The media map, with whether each file exists.
@@ -87,7 +99,10 @@ const OPTIONS = {
   'title-seconds': { type: 'string' },
   offset: { type: 'string' },
   duration: { type: 'string' },
-  'media-json': { type: 'string' },
+  'media-json': { type: 'string', multiple: true },
+  compilation: { type: 'boolean', default: false },
+  'save-args': { type: 'string' },
+  session: { type: 'string' },
   dir: { type: 'string' },
   ordinal: { type: 'string' },
   ref: { type: 'string' },
@@ -100,6 +115,7 @@ type Values = ReturnType<typeof parseArgs<{ options: typeof OPTIONS; allowPositi
 const ALLOWED: Record<string, readonly (keyof typeof OPTIONS)[]> = {
   timeline: ['clips', 'out', 'fps', 'pad', 'title'],
   compile: ['clips', 'out', 'fps', 'pad', 'title', 'order', 'title-cards', 'title-seconds'],
+  dashboard: ['clips', 'media-json', 'out', 'title', 'pad', 'compilation', 'order', 'ordinal', 'save-args', 'session'],
   'media set': ['offset', 'duration'],
   'media list': [],
   'media remove': [],
@@ -179,6 +195,29 @@ export async function run(argv: readonly string[], io: Io): Promise<number> {
         });
         return print(report, summary(report));
       }
+      case 'dashboard': {
+        checkOptions(group, values);
+        positionals(group, rest, 0, '');
+        if (values.clips === undefined) throw new UsageError('dashboard needs --clips <file.json>');
+        if (values.out === undefined) throw new UsageError('dashboard needs --out <file.tsx>');
+        if (values['media-json'] === undefined) throw new UsageError("dashboard needs --media-json <file> (the session's list_session_media result)");
+        const order = values.order ?? (values.compilation === true ? 'date' : 'list');
+        if (order !== 'date' && order !== 'list') throw new UsageError(`--order must be date or list, got '${order}'`);
+        const report = buildDashboard({
+          clips: values.clips,
+          mediaJson: values['media-json'],
+          out: values.out,
+          ...(values.title !== undefined ? { title: values.title } : {}),
+          pad: values.pad !== undefined ? parseSeconds(values.pad, '--pad', { min: 0 }) : 0,
+          order,
+          compilation: values.compilation === true,
+          ...(values.ordinal !== undefined ? { ordinal: intOption(values.ordinal, '--ordinal', 0, 1_000_000) as number } : {}),
+          ...(values['save-args'] !== undefined ? { saveArgs: values['save-args'] } : {}),
+          ...(values.session !== undefined ? { session: values.session } : {}),
+          cwd,
+        });
+        return print(report, dashboardSummary(report));
+      }
       case 'media': {
         const [sub, ...args] = rest;
         const command = `media ${sub ?? ''}`.trim();
@@ -211,9 +250,11 @@ export async function run(argv: readonly string[], io: Io): Promise<number> {
         }
         // fetch
         const [id] = positionals(command, args, 1, '<session_id>');
-        if (values['media-json'] === undefined) throw new UsageError('media fetch needs --media-json <file> (the list_session_media result for the session)');
+        const mediaJson = values['media-json'] ?? [];
+        if (mediaJson.length === 0) throw new UsageError('media fetch needs --media-json <file> (the list_session_media result for the session)');
+        if (mediaJson.length > 1) throw new UsageError('media fetch takes one --media-json <file>');
         const fetched = await fetchMedia(id as string, {
-          mediaJson: values['media-json'],
+          mediaJson: mediaJson[0] as string,
           ...(values.dir !== undefined ? { dir: values.dir } : {}),
           ...(values.ordinal !== undefined ? { ordinal: intOption(values.ordinal, '--ordinal', 0, 1_000_000) as number } : {}),
           cwd,

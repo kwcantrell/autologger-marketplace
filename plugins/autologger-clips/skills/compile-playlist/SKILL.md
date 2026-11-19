@@ -1,14 +1,14 @@
 ---
 name: compile-playlist
-description: Makes a video compilation across many autologger sessions - typically the sessions of an imported YouTube playlist or a show - of every moment about a topic, ordered by session date with a title card naming each session, by finding the moments with autologger-mcp, confirming them with the user, fetching each session's YouTube video with yt-dlp (or mapping local files), building one FCPXML or OTIO timeline, and opening it in the OpenReel editor or exporting it with OpenReel Desktop. Use when the user asks for a compilation, supercut, montage or highlight reel across sessions, episodes or a playlist.
-allowed-tools: Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips compile:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips timeline:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips media list:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips editor status:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips desktop doctor:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips --help:*)
+description: Makes a video compilation across many autologger sessions - typically the sessions of an imported YouTube playlist or a show - of every moment about a topic, ordered by session date with a title card naming each session, by finding the moments with autologger-mcp, confirming them with the user, fetching each session's YouTube video with yt-dlp (or mapping local files), building one FCPXML or OTIO timeline, and opening it in the OpenReel editor or exporting it with OpenReel Desktop - or, for YouTube imports, publishing it as an autologger custom dashboard with one embedded player per video. Use when the user asks for a compilation, supercut, montage or highlight reel across sessions, episodes or a playlist.
+allowed-tools: Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips compile:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips dashboard:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips timeline:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips media list:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips editor status:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips desktop doctor:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips --help:*)
 ---
 
 # A compilation across sessions
 
 This is the `clip-moments` skill across many sessions; read it for the details of each step (the
 session-time rule, the web editor walk-through with agent-browser, OpenReel Desktop). Run the
-commands exactly as written, from any directory. Only `compile`, `timeline`, `media list`,
+commands exactly as written, from any directory. Only `compile`, `timeline`, `dashboard`, `media list`,
 `editor status` and `desktop doctor` are pre-approved; `media fetch`, `media set`, `editor start`
 and `editor stop` ask for permission, and you ask the user before each as said below.
 
@@ -86,6 +86,48 @@ Or OpenReel Desktop, as in `clip-moments` section 5b (ask before `export_video`)
 ```sh
 npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips desktop doctor --json
 ```
+
+## 6. Or publish it as an autologger dashboard (YouTube sessions)
+
+When every session is a YouTube import, the compilation can live inside autologger instead: one
+custom dashboard with one YouTube player per video, in compile order (session date, or `--order
+list`), each with its clips. Save every session's `list_session_media` output to a file (section
+3; no download is needed) and pass one `--media-json "<session_media>"` per session, where
+`<session_media>` is `<session_id>=<file>` (for example `ses_1=media-ses_1.json`). A dashboard is
+saved on one session: **ask the user which** (usually the first or the newest) and pass it as
+`--session`:
+
+```sh
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-clips dashboard --compilation --clips "<clips_file>" --media-json "<session_media>" --session <session_id> --out "<tsx_file>" --save-args "<save_args_file>" --json
+```
+
+`--title "<title>"` names it (default `Clip compilation`). autologger shows at most 8 players in one
+dashboard, so the command exits 1 for clips from more than 8 videos: split the clip list (by date)
+into several dashboards. It also exits 1 when a session is not a YouTube import. Show the user
+`players` (video, sessions, clips with `video_start_s`-`video_end_s`) and any `merged`, `clamped`,
+`dropped` and `warnings`. Publishing is as in `clip-moments` section 5c:
+
+**Ask the user first**: name the session it is saved on, the title, and that every reader of the
+session will see it. Publishing is not pre-approved and goes through the **autologger-mcp**
+plugin, not this CLI: after they agree, run its `call save_dashboard --args-file
+"<save_args_file>" --json` (its `write-session-data` skill; the file holds `{title, tsx, scope:
+{kind: "session", session_id}}`). It answers `{dashboard_id, revision}`. Then give the user the
+web viewer link: the session's page, `<server>/sessions/<session_id>` (the `server` that
+autologger-mcp's `status` shows, for example `https://localhost:8787`), whose **Dashboards** tab
+lists it under Custom dashboards by its title. Running `save_dashboard` again with the same file
+makes another dashboard (a session holds at most 20); to replace one, add `dashboard_id` and
+`expected_revision` (from that answer) to the file's arguments.
+
+A refusal is a fixed text; tell the user what it means instead of retrying:
+- `Owner or admin role required.`: saving a dashboard needs an owner or admin of the session's
+  studio. The user (the account autologger-mcp signed in as) is a member only; an owner or admin
+  of the studio has to publish it, or give them that role.
+- `Session not found`: that account cannot read the session (or the id is wrong).
+- `A session has at most 20 dashboards.`: delete an old one first (ask the user).
+- `Line L, column C: <reason>`: autologger refused the code. The generated file should never get
+  this; do not edit the TSX by hand: report it (plugin-advisor) and show the user the message.
+- An unknown tool `save_dashboard`: custom dashboards are off on that server.
+- A read-only sign-in: autologger-mcp's message gives the login command with write scope.
 
 Exit codes: 0 success, 1 the command failed, 2 usage error; on a non-zero exit show the stderr
 message to the user.

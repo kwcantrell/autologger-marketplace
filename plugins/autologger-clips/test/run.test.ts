@@ -10,7 +10,7 @@ test('--help prints usage on stdout naming every command', async () => {
   const { code, stdout } = await call(ctx, '--help');
   assert.equal(code, EXIT.ok);
   assert.match(stdout, new RegExp(`^Usage: ${CLI_NAME} `));
-  for (const c of ['timeline', 'compile', 'media set', 'media list', 'media remove', 'media fetch', 'editor start', 'editor status', 'editor stop', 'desktop doctor', '--json']) assert.ok(stdout.includes(c), c);
+  for (const c of ['timeline', 'compile', 'dashboard', '--compilation', '--save-args', 'media set', 'media list', 'media remove', 'media fetch', 'editor start', 'editor status', 'editor stop', 'desktop doctor', '--json']) assert.ok(stdout.includes(c), c);
 });
 
 test('--version prints the package version', async () => {
