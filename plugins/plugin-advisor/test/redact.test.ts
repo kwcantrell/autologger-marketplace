@@ -708,3 +708,213 @@ test('redact stays fast on escaped keys, backslash runs and continued authorizat
     assert.ok(ms < 200, `${JSON.stringify(input.slice(0, 12))}x${input.length}: ${ms} ms`);
   }
 });
+
+// Job 036 (follow-up 034 #1): bare values after escaped keys, and escaped values after plain keys.
+const ESCAPED_BARE: Array<[string, string, string, string]> = [
+  ['escaped token, number', String.raw`{\"token\": 123456}`, String.raw`{\"token\": ${R}}`, '123456'],
+  ['escaped password, bare word', String.raw`{\"password\": hunter2}`, String.raw`{\"password\": ${R}}`, 'hunter2'],
+  ['plain key, escaped value', String.raw`password: \"hunter2\"`, String.raw`password: ${R}"${R}\"`, 'hunter2'],
+  ['escaped api_key, number, then status', String.raw`{\"api_key\": 98765, \"status\": \"ok\"}`, String.raw`{\"api_key\": ${R}, \"status\": \"ok\"}`, '98765'],
+];
+
+for (const [name, input, expected, secret] of ESCAPED_BARE) {
+  test(`redact escaped JSON with a bare or plain-key value: ${name} (job 036)`, () => {
+    assert.equal(redact(input), expected);
+    assert.equal(containsSecret(input), true);
+    assert.equal(containsSecret(expected), false);
+    assert.equal(redact(expected), expected);
+    for (const out of [redact(input), cleanDetail(input), cleanSummary(input)]) {
+      assert.ok(!out.includes(secret), `${JSON.stringify(out)} keeps ${secret}`);
+      assert.equal(containsSecret(out), false, out);
+    }
+  });
+}
+
+test('escaped JSON with a bare value keeps the pairs after it (job 036)', () => {
+  const input = String.raw`{\"api_key\": 98765, \"status\": \"ok\"}`;
+  for (const out of [redact(input), cleanDetail(input), cleanSummary(input)]) {
+    assert.ok(out.includes(String.raw`\"status\": \"ok\"`), out);
+  }
+});
+
+test('escaped look-alikes with ordinary keys keep their text (job 036)', () => {
+  for (const text of [String.raw`{\"count\": 3}`, String.raw`{\"status\": \"ok\"}`, String.raw`note: \"see docs\"`]) {
+    assert.equal(redact(text), text, text);
+    assert.equal(cleanDetail(text), text, text);
+    assert.equal(cleanSummary(text), text, text);
+    assert.equal(containsSecret(text), false, text);
+  }
+});
+
+// Job 036 (follow-up 034 #3): -p values in a password command that an authorization value takes the
+// end of its first line from, continued onto the next line with a backslash.
+const CONTINUED_PASSWORD: Array<[string, string, string, string[]]> = [
+  ['-ptoken db', 'Authorization: x; mysql \\\n-ptoken db', `Authorization: ${R}\n-p${R} ${R}`, ['token', 'x', 'db']],
+  ["-p 'a b'", "Authorization: x; mysql \\\n-p 'a b'", `Authorization: ${R}\n-p '${R}'`, ['a b', 'x']],
+  ['command before the key', 'mysql -H Authorization: x \\\n-p s3cret', `mysql -H Authorization: ${R}\n-p ${R}`, ['s3cret', ': x']],
+  ['&& mysqldump, -p "s3cret x"', 'HTTP_AUTHORIZATION: x && mysqldump \\\n-p "s3cret x"', `HTTP_AUTHORIZATION: ${R}\n-p "${R}"`, ['s3cret', 'x']],
+];
+
+for (const [name, input, expected, secrets] of CONTINUED_PASSWORD) {
+  test(`redact a continued password command after an authorization value: ${name} (job 036)`, () => {
+    assert.equal(redact(input), expected);
+    assert.equal(containsSecret(input), true);
+    assert.equal(containsSecret(expected), false);
+    for (const out of [redact(input), cleanDetail(input), cleanSummary(input)]) {
+      assert.equal(containsSecret(out), false, out);
+      // `x` is checked as a word: `Authorization` and `HTTP_AUTHORIZATION` hold the letter.
+      for (const word of secrets) assert.ok(!(word === 'x' ? /\bx\b/.test(out) : out.includes(word)), `${JSON.stringify(out)} keeps ${word}`);
+    }
+  });
+}
+
+test('a clean continued password command keeps its words (job 036)', () => {
+  for (const text of ['mysql \\\n-u root db', 'Authorization: x; ssh \\\n-p 2222 host']) {
+    for (const out of [redact(text), cleanDetail(text)]) {
+      for (const word of text.startsWith('mysql') ? ['root', 'db'] : ['2222', 'host']) assert.ok(out.includes(word), `${JSON.stringify(out)} lost ${word}`);
+    }
+  }
+  assert.equal(redact('mysql \\\n-u root db'), 'mysql \\\n-u root db');
+  assert.ok(cleanSummary('mysql \\\n-u root db').includes('root db'));
+});
+
+// Job 036 (follow-up 034 #4): an escaped quote inside an escaped value.
+const ESCAPED_QUOTE_INSIDE: Array<[string, string, string, string[]]> = [
+  ['password a"b', String.raw`{\"password\": \"a\\\"b\"}`, String.raw`{\"password\": \"${R}\"}`, ['a', 'b']],
+  ['token a"b zzsecret', String.raw`{\"token\": \"a\\\"b zzsecret\"}`, String.raw`{\"token\": \"${R}\"}`, ['a', 'b', 'zzsecret']],
+];
+
+for (const [name, input, expected, secrets] of ESCAPED_QUOTE_INSIDE) {
+  test(`redact an escaped value holding an escaped quote: ${name} (job 036)`, () => {
+    assert.equal(redact(input), expected);
+    assert.equal(containsSecret(input), true);
+    assert.equal(containsSecret(expected), false);
+    for (const out of [redact(input), cleanDetail(input), cleanSummary(input)]) {
+      assert.equal(out, expected);
+      // The value's text after the key, without the marker.
+      const value = out.slice(out.indexOf(':')).replaceAll(R, '');
+      for (const word of secrets) assert.ok(!value.includes(word), `${JSON.stringify(out)} keeps ${word}`);
+    }
+  });
+}
+
+test('a literal backslash before an escaped closing quote still closes the value (job 036)', () => {
+  // The JSON value is a\ (an escaped backslash), logged inside a JSON string: four backslashes, then \".
+  const input = String.raw`{\"password\": \"a\\\\\", \"status\": \"ok\"}`;
+  assert.equal(redact(input), String.raw`{\"password\": \"${R}\", \"status\": \"ok\"}`);
+});
+
+// Job 036: what the differential fuzz against the job 034 code turned up while this was built. Each
+// of these lost its secret in a draft of this change and is redacted by the code before it.
+test('continued -p values and escaped values keep what the job 034 code redacts (job 036)', () => {
+  const all = [redact, cleanDetail, cleanSummary];
+  const cases: Array<[string, string, Array<(text: string) => string>]> = [
+    // The --flag rule reads -ptoken with the next line's word before the -p rule takes `token`.
+    ['Authorization:mariadb\\\nmongo\t-ptoken\nzq681nw', 'zq681nw', all],
+    // -p values that the later rules leave alone are redacted whatever they hold, as before.
+    ['authorization=sshpass\\\n-pzq6n7k\u0001', 'zq6n7k', all],
+    ['authorization=mysql\\\n-pBearerzqa43w', 'zqa43w', all],
+    ['Authorization=mongo\\\n-p:zqvkww', 'zqvkww', all],
+    // A -p value that is a key keeps its pair with the next line once the summary joins them.
+    ['Authorization: x; mysql \\\n-ptoken\n= zq2v1k', 'zq2v1k', [cleanSummary]],
+    // Reading past an escaped inner quote drops a quote, so not after a password command's name:
+    // the -p rule pairs quotes to find where the command ends.
+    ['mysql\\\\\\"AUTHORIZATION\\\\\\":\\\\\\"\\\\\\\\\\\\\\"\\\\\\" &\n-pzq17gdk"', 'zq17gdk', [cleanSummary]],
+  ];
+  for (const [input, secret, clean] of cases) {
+    for (const f of clean) assert.ok(!f(input).includes(secret), `${f.name} ${JSON.stringify(input)}: ${JSON.stringify(f(input))}`);
+  }
+});
+
+test('the 300k-input differential fuzz finds keep their secrets redacted once joined (job 036)', () => {
+  for (const [input, secret] of [
+    // A -p value whose last word is a key, with its separator later on the line.
+    ["'Authorization='\nauthorization:mysql\\\n-p)cookie :\nzq7fclk", 'zq7fclk'],
+    // A -p value that is a backslash opening an escaped key.
+    ["'authorization=mysqldump\\\n'-p\\\"session\\\"=\n\"zq1bmtlw\"", 'zq1bmtlw'],
+    ['"Authorization:mariadb\\\n-p"\\"jwt\\"=\n\'zq1jmitw\'', 'zq1jmitw'],
+    // A quoted -p value glued to more text.
+    ["sshpass'Authorization:\\\n-p'-p'zq3x1'", 'zq3x1'],
+    // A bare escaped value that is a separator the cookie rule reads.
+    ['Cookie:\n\\"sid\\":=,zqhqwvw=', 'zqhqwvw'],
+    ['cookie:\n\\"Cookie\\":=}zqhxvkk=', 'zqhxvkk'],
+    // A plain-key escaped value holding only a backslash.
+    ['session:\'zq2a\n\\"Authorization\\":\\"\'Cookie=\\"\\\\"', 'zq2a'],
+    // A plain-key escaped value inside an escaped value, whose opening escape could close it.
+    ['mysql\n' + String.raw`-p'zq25cbv\\\\\\\"Cookie\\\\\\\":\"'jwt=\\\\\\\"w\\\\\\\"`, 'zq25cbv'],
+  ]) {
+    assert.ok(!cleanSummary(input!).includes(secret!), `${JSON.stringify(input)}: ${JSON.stringify(cleanSummary(input!))}`);
+  }
+});
+
+test('a bare or plain-key escaped value that another rule reads is left to it (job 036)', () => {
+  for (const [input, secret] of [
+    // `mysql` is the -p rule's command once cleanSummary joins the lines.
+    ['{\\"session\\": mysql}\n-p zq9a1', 'zq9a1'],
+    ['{\\"session\\": mysql,\n-p zq9a2', 'zq9a2'],
+    ['password: \\"mysql\\"\n-p zq9a3', 'zq9a3'],
+  ]) {
+    assert.ok(!cleanSummary(input!).includes(secret!), `${JSON.stringify(input)}: ${JSON.stringify(cleanSummary(input!))}`);
+  }
+});
+
+const NEW_PATHS: Array<[string, (n: number) => string]> = [
+  ['escaped values with inner quotes, never closed', (n) => '{\\"token\\": \\"a\\\\\\"b '.repeat(n / 20)],
+  ['escaped values with inner quotes, closed', (n) => '{\\"token\\": \\"a\\\\\\"b\\"}, '.repeat(n / 23)],
+  ['nested escapes 1, 3, 7, 15 deep', (n) => ['\\"', '\\\\\\"', '\\\\\\\\\\\\\\"', '\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"'].map((e) => `${e}token${e}: ${e}a`).join(' ').repeat(n / 100)],
+  ['bare escaped values', (n) => '{\\"token\\": 123456, \\"password\\": hunter2}'.repeat(n / 43)],
+  ['plain keys with escaped values', (n) => 'password: \\"hunter2\\" '.repeat(n / 23)],
+  ['continued commands before the key', (n) => 'mysql -H Authorization: x \\\n-ptoken db \\\n'.repeat(n / 42)],
+  ['continued authorization lines, no command through them', (n) => 'Authorization: x \\\nmysql; \\\n'.repeat(n / 28)],
+  ['one long continued line of -p values', (n) => `Authorization: x; mysql \\\n${'-p a b \\\n'.repeat(n / 10)}`],
+  ['many quoted -p values on one continued line', (n) => `Authorization: x; mysql \\\n${'-p "a" -ptoken '.repeat(n / 16)}`],
+];
+
+test('redact stays linear on the job 036 paths: 64 KB under 200 ms, 3.1x the input under 6x the time (job 036)', () => {
+  for (const [name, make] of NEW_PATHS) {
+    const small = make(66000);
+    const large = make(206250);
+    const best = (input: string): number => Math.min(...[0, 1, 2].map(() => timed(() => redact(input))));
+    const ms = best(small);
+    assert.ok(ms < 200, `${name} x${small.length}: ${ms} ms`);
+    for (const f of [cleanSummary, cleanDetail]) {
+      const t = timed(() => f(small));
+      assert.ok(t < 600, `${f.name} ${name}: ${t} ms`);
+    }
+    const ratio = best(large) / Math.max(ms, 1);
+    assert.ok(ratio < 6, `${name}: ${ratio.toFixed(1)}x for 3.1x the input`);
+  }
+});
+
+// Job 036 round 1: a quote opened by an earlier command before the authorization key pairs with one
+// in the value, so read from the line's start no command reaches the value's end. Read from the
+// value's start (as job 034 did), `mysqldump` does, and its -p on the next line is redacted.
+test('a quote opened before the authorization key does not hide the command in its value (job 036)', () => {
+  const input = 'mysql -e "select 1 Authorization: x; mysqldump db" -h h; echo " \\\n-p s3cret';
+  for (const f of [redact, cleanDetail, cleanSummary]) {
+    const out = f(input);
+    assert.ok(!out.includes('s3cret'), `${f.name}: ${JSON.stringify(out)}`);
+    assert.equal(containsSecret(out), false, out);
+  }
+  assert.equal(redact(input), `mysql -e "select 1 Authorization: ${R}\n-p ${R}`);
+});
+
+// redactContinuedLines maps the redacted text back to its lines by line number, and gives up when a
+// rule changed the number of lines. Only the PEM rule may (it runs before the lines are counted).
+test('no rule adds or removes a line break, except the PEM rule (job 036)', () => {
+  const triggers = [
+    'Authorization:', 'Authorization: x \\', 'Proxy-Authorization=Bearer abc', '"Authorization: x', 'Cookie: a=b;', 'Set-Cookie:',
+    'Bearer', 'Basic', 'alm_abcd', 'ghp_aaaaaaaaaaaaaaaaaaaa', 'eyJhbGciOi.eyJzdWIi.sig', 'autologger_sid=', 'autologger_sid',
+    'token=', 'password:', '"token":', '\\"token\\":', '\\"token\\": \\"a', '--token', '--api-key', 'mysql -p', 'mysql \\', '-p',
+    'a'.repeat(20) + '1', 'A1b2'.repeat(12), 'https://ada:', 'x', '',
+  ];
+  const breaks = ['\n', '\r\n', '\n\n', ' \\\n', ' ', '\t\n '];
+  for (const a of triggers) {
+    for (const nl of breaks) {
+      for (const b of ['x', 'abcDEF123456ghiJKL789', '= zq', '-p zq', '"zq"', '\\"zq\\"}', 'Authorization: y', '']) {
+        const text = `${a}${nl}${b}${nl}${a} ${b}`;
+        assert.equal(redact(text).split('\n').length, text.split('\n').length, JSON.stringify(text));
+      }
+    }
+  }
+});
