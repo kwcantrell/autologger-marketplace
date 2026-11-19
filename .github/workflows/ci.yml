@@ -21,7 +21,8 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # A full run takes about a minute. A hang fails the job instead of running to GitHub's 6 h limit.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,6 +36,10 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
       - name: Test
+        # npm test sets --test-timeout, which fails a test that never settles, with its name. A test
+        # blocked in synchronous code (spawnSync, a busy loop) cannot be interrupted by it; this
+        # step timeout stops that case.
+        timeout-minutes: 10
         run: npm test
       - name: Plugin convention check
         run: node plugins/plugin-builder/src/cli.ts check --all

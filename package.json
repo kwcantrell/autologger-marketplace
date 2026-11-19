@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --test 'templates/*/test/**/*.test.ts' 'plugins/*/test/**/*.test.ts' 'scripts/test/**/*.test.ts'",
+    "test": "node --test --test-timeout=60000 'templates/*/test/**/*.test.ts' 'plugins/*/test/**/*.test.ts' 'scripts/test/**/*.test.ts'",
     "new-plugin": "node scripts/new-plugin.ts"
   },
   "devDependencies": {

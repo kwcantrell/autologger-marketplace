@@ -61,6 +61,30 @@ export function enclosingRepo(dir: string): string | null {
   }
 }
 
+/**
+ * `mkdir -p`, with `mode` on each directory it creates. Not `mkdirSync(dir, { recursive: true })`:
+ * on Node 24 (seen on 24.22.2) that never returns when mkdir keeps failing with ENOENT although the
+ * parent exists, as it does under /proc, so the hook would spin until it is killed. Walking up by
+ * hand throws that ENOENT instead.
+ */
+export function makeDirs(dir: string, mode: number): void {
+  const mkdir = (path: string): void => {
+    try {
+      mkdirSync(path, { mode });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  };
+  try {
+    mkdir(dir);
+  } catch (error) {
+    const parent = dirname(dir);
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || parent === dir) throw error;
+    makeDirs(parent, mode);
+    mkdir(dir);
+  }
+}
+
 export class Store {
   readonly dir: string;
   readonly logPath: string;
@@ -83,7 +107,7 @@ export class Store {
   }
 
   private ensureDir(dir: string): void {
-    mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+    makeDirs(dir, DIR_MODE);
     chmodSync(dir, DIR_MODE);
   }
 
