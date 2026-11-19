@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { hello } from '../src/hello.ts';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { after, test } from 'node:test';
 import { CLI_NAME, EXIT, run } from '../src/run.ts';
+import { fakeClaude, sandbox } from './helpers.ts';
 
 function call(...argv: string[]): { code: number; stdout: string; stderr: string } {
   let stdout = '';
@@ -10,39 +12,163 @@ function call(...argv: string[]): { code: number; stdout: string; stderr: string
   return { code, stdout, stderr };
 }
 
-test('hello() builds the greeting', () => {
-  assert.deepEqual(hello('Ada'), { greeting: 'Hello, Ada!' });
-});
-
-test('hello prints text by default', () => {
-  assert.deepEqual(call('hello', 'Ada'), { code: EXIT.ok, stdout: 'Hello, Ada!\n', stderr: '' });
-});
-
-test('hello --json prints one JSON object', () => {
-  const { code, stdout, stderr } = call('hello', '--json');
-  assert.equal(code, EXIT.ok);
-  assert.equal(stderr, '');
-  assert.deepEqual(JSON.parse(stdout), { greeting: 'Hello, world!' });
-});
-
 test('--help prints usage on stdout', () => {
   const { code, stdout } = call('--help');
   assert.equal(code, EXIT.ok);
   assert.match(stdout, new RegExp(`^Usage: ${CLI_NAME} `));
-  assert.match(stdout, /--json/);
+  for (const c of ['catalog', 'match <task text>', 'settings set mode <mode>', 'install <name> [--confirmed]', 'hook']) assert.ok(stdout.includes(c), c);
 });
 
 test('--version prints the package version', () => {
-  const { code, stdout } = call('--version');
-  assert.equal(code, EXIT.ok);
-  assert.match(stdout, /^\d+\.\d+\.\d+\n$/);
+  assert.deepEqual(call('--version'), { code: EXIT.ok, stdout: '0.1.0\n', stderr: '' });
 });
 
-for (const argv of [['nope'], ['nope', '--json'], [], ['hello', '--bogus'], ['hello', 'a', 'b']]) {
-  test(`usage error for ${JSON.stringify(argv)}: exit 2, message on stderr only`, () => {
-    const { code, stdout, stderr } = call(...argv);
-    assert.equal(code, EXIT.usage);
-    assert.equal(stdout, '');
-    assert.match(stderr, new RegExp(`^${CLI_NAME}: .+\\nRun '${CLI_NAME} --help' for usage\\.\\n$`));
-  });
+test('usage errors exit 2 with the message on stderr and nothing on stdout', () => {
+  for (const [argv, message] of [
+    [['no-such-command', '--json'], /unknown command 'no-such-command'/],
+    [[], /missing command/],
+    [['catalog', '--nope'], /Unknown option '--nope'/],
+    [['catalog', '--confirmed'], /catalog does not take --confirmed/],
+    [['catalog', 'extra'], /catalog takes no arguments/],
+    [['install', '--json'], /install takes exactly one plugin name/],
+    [['install', 'Bad_Name'], /kebab-case/],
+    [['settings', 'set', 'mode', 'sometimes', '--json'], /mode must be one of ask, notify, auto-install, off/],
+    [['settings', 'get', 'mode'], /settings takes no arguments, or: set mode/],
+  ] as const) {
+    const s = sandbox();
+    try {
+      const r = s.call([...argv]);
+      assert.equal(r.code, EXIT.usage, argv.join(' '));
+      assert.equal(r.stdout, '');
+      assert.match(r.stderr, message);
+      assert.match(r.stderr, new RegExp(`^${CLI_NAME}: `));
+    } finally {
+      s.cleanup();
+    }
+  }
+});
+
+test('settings: default ask, set validates and persists in an owner-only config file', () => {
+  const s = sandbox();
+  try {
+    assert.deepEqual(JSON.parse(s.call(['settings', '--json']).stdout), {
+      mode: 'ask',
+      default: true,
+      modes: ['ask', 'notify', 'auto-install', 'off'],
+      path: join(s.configDir, 'config.json'),
+    });
+    assert.equal(existsSync(s.configDir), false, 'reading the mode writes nothing');
+    for (const mode of ['notify', 'auto-install', 'off', 'ask']) {
+      const r = s.call(['settings', 'set', 'mode', mode, '--json']);
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(JSON.parse(r.stdout).mode, mode);
+      assert.equal(JSON.parse(s.call(['settings', '--json']).stdout).mode, mode);
+    }
+    assert.equal(statSync(s.configDir).mode & 0o777, 0o700);
+    assert.equal(statSync(join(s.configDir, 'config.json')).mode & 0o777, 0o600);
+    assert.deepEqual(JSON.parse(readFileSync(join(s.configDir, 'config.json'), 'utf8')), { mode: 'ask' });
+    assert.match(s.call(['settings']).stdout, /^mode: ask {2}\(/);
+    // A bad value on disk falls back to the default.
+    writeFileSync(join(s.configDir, 'config.json'), '{"mode":"loud"}');
+    assert.equal(JSON.parse(s.call(['settings', '--json']).stdout).default, true);
+  } finally {
+    s.cleanup();
+  }
+});
+
+/** A sandbox whose PATH holds only a fake claude and node. */
+function installSandbox(script?: string): ReturnType<typeof sandbox> & { calls: () => string[][] } {
+  const s = sandbox();
+  const bin = fakeClaude(s.dir, script);
+  s.env.PATH = `${bin}:${dirname(process.execPath)}`;
+  const calls = (): string[][] => {
+    const file = join(s.dir, 'claude-calls.jsonl');
+    return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l).argv) : [];
+  };
+  return Object.assign(s, { calls });
 }
+
+const sandboxes: Array<{ cleanup: () => void }> = [];
+after(() => sandboxes.forEach((s) => s.cleanup()));
+function fresh(script?: string): ReturnType<typeof installSandbox> {
+  const s = installSandbox(script);
+  sandboxes.push(s);
+  return s;
+}
+
+test('install in ask mode refuses without --confirmed and runs claude plugin install with it', () => {
+  const s = fresh();
+  const refused = s.call(['install', 'autologger-dev', '--json']);
+  assert.equal(refused.code, EXIT.failure);
+  assert.equal(refused.stdout, '');
+  assert.match(refused.stderr, /mode is ask: ask the user first, and pass --confirmed only after they say yes/);
+  assert.deepEqual(s.calls(), []);
+  const r = s.call(['install', 'autologger-dev', '--confirmed', '--json']);
+  assert.equal(r.code, EXIT.ok, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), {
+    plugin: 'autologger-dev',
+    marketplace: 'autologger-marketplace',
+    command: 'claude plugin install autologger-dev@autologger-marketplace',
+    mode: 'ask',
+    installed: true,
+    output: 'Successfully installed plugin',
+    reload: 'Run /reload-plugins (or restart Claude Code) to load it.',
+  });
+  assert.deepEqual(s.calls(), [['plugin', 'install', 'autologger-dev@autologger-marketplace']]);
+  assert.match(s.call(['install', 'autologger-browser', '--confirmed']).stdout, /^Installed autologger-browser@autologger-marketplace\. Run \/reload-plugins/);
+});
+
+test('install in auto-install mode needs no --confirmed', () => {
+  const s = fresh();
+  s.call(['settings', 'set', 'mode', 'auto-install']);
+  const r = s.call(['install', 'autologger-dev', '--json']);
+  assert.equal(r.code, EXIT.ok, r.stderr);
+  assert.equal(JSON.parse(r.stdout).mode, 'auto-install');
+  assert.deepEqual(s.calls(), [['plugin', 'install', 'autologger-dev@autologger-marketplace']]);
+});
+
+test('install refuses in notify mode (printing the command) and off mode, even with --confirmed', () => {
+  const s = fresh();
+  s.call(['settings', 'set', 'mode', 'notify']);
+  const n = s.call(['install', 'autologger-dev', '--confirmed', '--json']);
+  assert.deepEqual([n.code, n.stdout], [EXIT.failure, '']);
+  assert.match(n.stderr, /mode is notify, so nothing is installed; to install it, run: claude plugin install autologger-dev@autologger-marketplace/);
+  s.call(['settings', 'set', 'mode', 'off']);
+  const o = s.call(['install', 'autologger-dev', '--confirmed', '--json']);
+  assert.deepEqual([o.code, o.stdout], [EXIT.failure, '']);
+  assert.match(o.stderr, /mode off/);
+  assert.deepEqual(s.calls(), []);
+});
+
+test('install refuses a plugin outside the marketplace, or one already installed (even disabled)', () => {
+  const s = fresh();
+  for (const [name, message] of [
+    ['other-tools', /'other-tools' is not a plugin in autologger-marketplace/],
+    ['autologger-mcp', /autologger-mcp@autologger-marketplace is already installed$/m],
+    ['autologger-specs', /already installed but disabled/],
+  ] as const) {
+    const r = s.call(['install', name, '--confirmed', '--json']);
+    assert.deepEqual([r.code, r.stdout], [EXIT.failure, ''], name);
+    assert.match(r.stderr, message);
+  }
+  assert.deepEqual(s.calls(), []);
+});
+
+test('install refuses when the marketplace manifest cannot be found', () => {
+  const s = sandbox({ knownMarketplace: false });
+  sandboxes.push(s);
+  const r = s.call(['install', 'autologger-dev', '--confirmed']);
+  assert.equal(r.code, EXIT.failure);
+  assert.match(r.stderr, /cannot find the autologger-marketplace manifest/);
+});
+
+test('install reports a failing claude, and a missing one', () => {
+  const s = fresh("console.error('Plugin not found in marketplace'); process.exit(3);");
+  const r = s.call(['install', 'autologger-dev', '--confirmed', '--json']);
+  assert.deepEqual([r.code, r.stdout], [EXIT.failure, '']);
+  assert.match(r.stderr, /claude plugin install autologger-dev@autologger-marketplace exited 3: Plugin not found in marketplace/);
+  s.env.PATH = join(s.dir, 'empty-path');
+  const missing = s.call(['install', 'autologger-dev', '--confirmed']);
+  assert.equal(missing.code, EXIT.failure);
+  assert.match(missing.stderr, /claude is not on PATH; run this yourself: claude plugin install autologger-dev@autologger-marketplace/);
+});

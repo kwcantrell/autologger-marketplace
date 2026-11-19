@@ -1,5 +1,7 @@
 // End to end: runs the exact npx command lines from the skill, the way Claude Code would after
-// installing the plugin (a fresh copy, unrelated cwd, no npm install or build step).
+// installing the plugin (a fresh copy, unrelated cwd, no npm install or build step), against a
+// fixture Claude Code config dir, a scratch plugin-discover config dir and a fake `claude` on PATH
+// (the real one is never run). Also runs the hook command exactly as hooks/hooks.json declares it.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -9,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { FIXTURES, fakeClaude, sandbox } from './helpers.ts';
 
 const CLI_NAME = 'plugin-discover';
 const SKILL = 'skills/plugin-discover/SKILL.md';
@@ -30,16 +33,35 @@ env.CLAUDE_PLUGIN_ROOT = pluginRoot;
 // Empty npx cache, and offline: proves nothing is fetched from the registry.
 env.npm_config_cache = join(scratch, 'npm-cache');
 env.npm_config_offline = 'true';
+// Claude Code's records come from the fixtures (never the real ~/.claude), and `claude` is a fake.
+const fixture = sandbox();
+after(fixture.cleanup);
+env.CLAUDE_CONFIG_DIR = fixture.claudeDir;
+env.PLUGIN_DISCOVER_CONFIG_DIR = join(scratch, 'config', 'plugin-discover');
+env.HOME = join(scratch, 'home');
+env.PATH = `${fakeClaude(scratch)}:${process.env.PATH ?? ''}`;
 
 function skillCommands(): string[] {
   const text = readFileSync(join(pluginRoot, SKILL), 'utf8');
   const blocks = [...text.matchAll(/```sh\n([\s\S]*?)```/g)].map((m) => m[1] ?? '');
-  return blocks.flatMap((b) => b.split('\n')).filter((line) => line.startsWith('npx '));
+  return blocks.flatMap((b) => b.split('\n')).map((l) => l.trim()).filter((line) => line.startsWith('npx '));
 }
 
-function sh(command: string): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync('sh', ['-c', command], { cwd, env, encoding: 'utf8', timeout: 60_000 });
+function sh(command: string, input?: string): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync('sh', ['-c', command], { cwd, env, encoding: 'utf8', timeout: 60_000, input: input ?? '' });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+const VALUES: Record<string, string> = { 'one-line task summary': 'bring up the local dev stack with https', name: 'autologger-dev', mode: 'ask' };
+
+/** Fills a skill line's `<placeholder>` values. */
+function fill(command: string): string {
+  return command.replace(/<([a-z -]+)>/g, (m, name: string) => VALUES[name] ?? m);
+}
+
+function claudeCalls(): string[][] {
+  const file = join(scratch, 'claude-calls.jsonl');
+  return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l).argv) : [];
 }
 
 test('the skill calls the CLI only through the shared npx invocation', () => {
@@ -49,20 +71,76 @@ test('the skill calls the CLI only through the shared npx invocation', () => {
   assert.equal(existsSync(join(pluginRoot, 'node_modules')), false);
 });
 
-test('every skill command line runs from a fresh copy and exits 0', () => {
-  for (const command of skillCommands()) {
+test('allowed-tools pre-approves only match, catalog and --help: never install or settings', () => {
+  const text = readFileSync(join(pluginRoot, SKILL), 'utf8');
+  const line = /^allowed-tools: (.*)$/m.exec(text)?.[1] ?? '';
+  const rules = [...line.matchAll(/Bash\((.*?):\*\)/g)].map((m) => m[1] ?? '');
+  assert.deepEqual(rules, ['match', 'catalog', '--help'].map((c) => `${INVOCATION} ${c}`));
+});
+
+test('every skill command line runs from a fresh copy, in order, and exits 0', () => {
+  const commands = skillCommands();
+  for (const c of ['match', 'install', 'settings', 'catalog', '--help']) {
+    assert.ok(commands.some((l) => l.startsWith(`${INVOCATION} ${c}`)), `the skill runs ${c}`);
+  }
+  for (const line of commands) {
+    const command = fill(line);
+    // The install line without --confirmed is the auto-install mode's; the one with it is ask mode's.
+    const auto = command.includes(' install ') && !command.includes('--confirmed');
+    sh(`${INVOCATION} settings set mode ${auto ? 'auto-install' : 'ask'}`);
     const { status, stdout, stderr } = sh(command);
     assert.equal(status, 0, `${command}\nstderr: ${stderr}`);
     assert.notEqual(stdout, '', command);
     if (command.endsWith(' --help')) assert.match(stdout, new RegExp(`^Usage: ${CLI_NAME} `));
-    if (command.includes(' --json')) JSON.parse(stdout);
+    if (!command.includes(' --json')) continue;
+    const value = JSON.parse(stdout);
+    if (command.includes(' match ')) {
+      assert.equal(value.available[0].name, 'autologger-dev');
+      assert.equal(value.mode, 'ask');
+    }
+    if (command.includes(' install ')) assert.deepEqual([value.installed, value.mode], [true, auto ? 'auto-install' : 'ask']);
+    if (command.includes(' catalog ')) assert.ok(value.installed.some((p: { name: string }) => p.name === 'autologger-mcp'));
+    if (command.includes(' settings ')) assert.equal(value.mode, 'ask');
   }
+  // The fake claude ran once per install line, with exactly the marketplace install command.
+  assert.deepEqual(claudeCalls(), [
+    ['plugin', 'install', 'autologger-dev@autologger-marketplace'],
+    ['plugin', 'install', 'autologger-dev@autologger-marketplace'],
+  ]);
 });
 
-test('hello --json through npx prints the greeting as JSON', () => {
-  const { status, stdout } = sh(`${INVOCATION} hello --json "Ada Lovelace"`);
+test('install through npx in ask mode without --confirmed exits 1 and runs nothing', () => {
+  const before = claudeCalls().length;
+  sh(`${INVOCATION} settings set mode ask`);
+  const { status, stdout, stderr } = sh(`${INVOCATION} install autologger-dev --json`);
+  assert.deepEqual([status, stdout], [1, '']);
+  assert.match(stderr, /^plugin-discover: mode is ask: ask the user first/);
+  assert.equal(claudeCalls().length, before);
+});
+
+test('match through npx reports none_applicable with the plugin-advisor record command', () => {
+  const { status, stdout } = sh(`${INVOCATION} match "fix a flaky react component test" --json`);
   assert.equal(status, 0);
-  assert.deepEqual(JSON.parse(stdout), { greeting: 'Hello, Ada Lovelace!' });
+  const value = JSON.parse(stdout);
+  assert.equal(value.none_applicable, true);
+  assert.match(value.advisor.record, / -- plugin-advisor record --plugin none --kind missing-guidance --summary /);
+});
+
+test('the hook command from hooks/hooks.json adds the hint once per session from the fresh copy', () => {
+  const hooks = JSON.parse(readFileSync(join(pluginRoot, 'hooks', 'hooks.json'), 'utf8'));
+  const handler = hooks.hooks.UserPromptSubmit[0].hooks[0];
+  const args: string[] = handler.args.map((a: string) => a.replaceAll('${CLAUDE_PLUGIN_ROOT}', pluginRoot));
+  const input = readFileSync(join(FIXTURES, 'hooks', 'prompt-autologger.json'), 'utf8');
+  const hook = (stdin: string): { status: number | null; stdout: string; stderr: string } => {
+    const r = spawnSync(handler.command, args, { cwd, env, input: stdin, encoding: 'utf8', timeout: 10_000 });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+  const first = hook(input);
+  assert.deepEqual([first.status, first.stderr], [0, '']);
+  assert.equal(JSON.parse(first.stdout).hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  assert.match(JSON.parse(first.stdout).hookSpecificOutput.additionalContext, /run its `match` command/);
+  assert.deepEqual(hook(input), { status: 0, stdout: '', stderr: '' });
+  assert.deepEqual(hook(readFileSync(join(FIXTURES, 'hooks', 'prompt-unrelated.json'), 'utf8')), { status: 0, stdout: '', stderr: '' });
 });
 
 test('an unknown command through npx exits 2 with the message on stderr', () => {
@@ -93,7 +171,7 @@ test('with CLAUDE_PLUGIN_ROOT empty, the invocation fails without contacting a r
       npm_config_update_notifier: 'false',
     };
     delete onlineEnv.npm_config_offline;
-    const child = spawn('sh', ['-c', `${INVOCATION} --help`], { cwd, env: onlineEnv });
+    const child = spawn('sh', ['-c', `${INVOCATION} --help`], { cwd, env: onlineEnv, timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
     child.stderr.resume();

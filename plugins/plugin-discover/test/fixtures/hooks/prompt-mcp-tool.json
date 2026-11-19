@@ -1,0 +1,1 @@
+{"session_id":"7c0a8d0e-1111-4b2a-9e43-000000000002","transcript_path":"/home/dev/.claude/projects/-home-dev-src/7c0a8d0e-1111-4b2a-9e43-000000000002.jsonl","cwd":"/","permission_mode":"acceptEdits","hook_event_name":"UserPromptSubmit","prompt":"call list_events for session 42 and summarise the logged events"}
