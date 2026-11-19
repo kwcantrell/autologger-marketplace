@@ -26,6 +26,7 @@ does the work and is tested like ordinary code.
 | Plugin | What it does |
 | --- | --- |
 | `autologger-dev` | Local dev stack setup for autologger and its MCP connection: `doctor`, `up` (only `dev-bao`, `dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1`, `DEV_HTTPS=1 dev-up`), `ca`, `status`, `connect`. Never prints OpenBao state values. See its `README.md`. |
+| `autologger-browser` | A dedicated Chromium profile for agent-browser on a dev stack: `doctor`, `setup` (a private NSS database trusting the dev CA as `C,,`, plus a launcher passed as `--executable-path` that sets HOME/XDG_DATA_HOME for Chromium), `signin` (a `make dev-login` cookie from stdin, never on a command line), `reset`. Files only under `~/.autologger-dev/browser/slot-<N>/`. See its `README.md`. |
 | `autologger-mcp` | CLI + skills for autologger's MCP endpoint: OAuth sign-in (`login`, `status`, `logout`, and `import-tokens` for a dev stack's `make dev-mcp-token`), MCP tool calls (`tools`, `call`) and a wiki-link checker (`check-links`). See its `README.md`. |
 | `autologger-specs` | Spec coverage for an autologger checkout: `which`, `stale` (the `specs-with-code` rule), `lint`, `new`, `gate`. Its `test/verify-autologger.ts` checks it against autologger's own Python gates. |
 | `plugin-builder` | Builds plugins for this marketplace: `new` (runs `scripts/new-plugin.ts`), `check` (this file's convention, statically, with a fix per finding), `verify` (the full gate for one plugin). Its `build-plugin` skill is the workflow. See its `README.md`. |

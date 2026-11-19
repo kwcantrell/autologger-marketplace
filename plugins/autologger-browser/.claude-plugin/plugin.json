@@ -1,12 +1,14 @@
 {
   "name": "autologger-browser",
   "version": "0.1.0",
-  "description": "Dev-CA-trusting Chromium profile for agent-browser on a local autologger dev stack: doctor, setup (scoped NSS trust + launcher), signin (dev-login cookie from stdin), reset.",
+  "description": "A Chromium profile for agent-browser that trusts a local autologger dev stack's private CA in its own NSS database only, optionally signed in with make dev-login: doctor, setup, signin and reset, in a TypeScript CLI.",
   "author": {
     "name": "Kalen Cantrell"
   },
   "keywords": [
     "autologger",
-    "template"
+    "dev-stack",
+    "agent-browser",
+    "tls"
   ]
 }

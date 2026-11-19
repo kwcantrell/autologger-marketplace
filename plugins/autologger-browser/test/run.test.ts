@@ -1,48 +1,45 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { hello } from '../src/hello.ts';
-import { CLI_NAME, EXIT, run } from '../src/run.ts';
+import { run, USAGE } from '../src/run.ts';
+import { appOrigin, cookieName, runtimeOrigin, sessionName, slotPaths } from '../src/slot.ts';
+import { capture, fakeRunner } from './helpers.ts';
 
-function call(...argv: string[]): { code: number; stdout: string; stderr: string } {
-  let stdout = '';
-  let stderr = '';
-  const code = run(argv, { stdout: (t) => (stdout += t), stderr: (t) => (stderr += t) });
-  return { code, stdout, stderr };
+async function cli(args: string[]): Promise<{ code: number; out: string; err: string }> {
+  const c = capture({ env: { HOME: '/nonexistent-home', PATH: '/nonexistent' }, runner: fakeRunner().runner });
+  const code = await run(args, c.io);
+  return { code, out: c.out(), err: c.err() };
 }
 
-test('hello() builds the greeting', () => {
-  assert.deepEqual(hello('Ada'), { greeting: 'Hello, Ada!' });
+test('--help prints usage on stdout and exits 0', async () => {
+  const { code, out } = await cli(['--help']);
+  assert.equal(code, 0);
+  assert.equal(out, USAGE);
+  assert.match(out, /^Usage: autologger-browser /);
 });
 
-test('hello prints text by default', () => {
-  assert.deepEqual(call('hello', 'Ada'), { code: EXIT.ok, stdout: 'Hello, Ada!\n', stderr: '' });
+test('usage errors exit 2 with the message on stderr and nothing on stdout', async () => {
+  for (const [args, message] of [
+    [[], /missing command/],
+    [['nope'], /unknown command 'nope'/],
+    [['setup', '--slot', '10'], /--slot must be one digit/],
+    [['setup', 'extra'], /takes no arguments/],
+    [['signin', '--ca', 'x'], /signin does not take --ca/],
+    [['doctor', '--bogus'], /Unknown option/],
+  ] as const) {
+    const { code, out, err } = await cli([...args]);
+    assert.equal(code, 2, args.join(' '));
+    assert.equal(out, '');
+    assert.match(err, message);
+  }
 });
 
-test('hello --json prints one JSON object', () => {
-  const { code, stdout, stderr } = call('hello', '--json');
-  assert.equal(code, EXIT.ok);
-  assert.equal(stderr, '');
-  assert.deepEqual(JSON.parse(stdout), { greeting: 'Hello, world!' });
+test('slot rules: origins, cookie names, sessions and folders', () => {
+  assert.equal(appOrigin(0), 'https://localhost:8787');
+  assert.equal(appOrigin(7), 'https://localhost:27787');
+  assert.equal(runtimeOrigin(0), 'https://dashboards.localhost');
+  assert.equal(runtimeOrigin(7), 'https://dashboards-7.localhost');
+  assert.equal(cookieName(0), 'autologger_sid');
+  assert.equal(cookieName(7), 'autologger_sid_7');
+  assert.equal(sessionName(7), 'autologger-dev-7');
+  assert.equal(slotPaths({ HOME: '/h' }, 7).dir, '/h/.autologger-dev/browser/slot-7');
 });
-
-test('--help prints usage on stdout', () => {
-  const { code, stdout } = call('--help');
-  assert.equal(code, EXIT.ok);
-  assert.match(stdout, new RegExp(`^Usage: ${CLI_NAME} `));
-  assert.match(stdout, /--json/);
-});
-
-test('--version prints the package version', () => {
-  const { code, stdout } = call('--version');
-  assert.equal(code, EXIT.ok);
-  assert.match(stdout, /^\d+\.\d+\.\d+\n$/);
-});
-
-for (const argv of [['nope'], ['nope', '--json'], [], ['hello', '--bogus'], ['hello', 'a', 'b']]) {
-  test(`usage error for ${JSON.stringify(argv)}: exit 2, message on stderr only`, () => {
-    const { code, stdout, stderr } = call(...argv);
-    assert.equal(code, EXIT.usage);
-    assert.equal(stdout, '');
-    assert.match(stderr, new RegExp(`^${CLI_NAME}: .+\\nRun '${CLI_NAME} --help' for usage\\.\\n$`));
-  });
-}
