@@ -2,7 +2,7 @@
 // relies on (docs/specs/mcp-authorization.md and mcp-session-data.md in autologger): discovery,
 // dynamic client registration, authorization code + PKCE S256 with `iss`, refresh rotation with
 // reuse detection that revokes the grant, revocation, and a stateless Streamable HTTP /mcp with a
-// bearer check. Endpoint paths are deliberately not autologger's, so the tests prove that the CLI
+// bearer check, plus a stand-in for the dev-only `make dev-mcp-token` (`mintDevTokens`). Endpoint paths are deliberately not autologger's, so the tests prove that the CLI
 // discovers them.
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -171,6 +171,33 @@ export class FakeAutologger {
   revokeAll(): void {
     for (const g of this.grants) g.revoked = true;
     this.access.clear();
+  }
+
+  /**
+   * Plays autologger's dev-only `make dev-mcp-token`: registers a client (unless `clientId` names
+   * one), creates a grant without the consent flow and issues its tokens, and returns the JSON line
+   * the real command prints (autologger-2 server/src/devMcpToken.ts), as text.
+   */
+  mintDevTokens(scope = 'dashboards', clientId?: string): string {
+    let id = clientId;
+    if (id === undefined) {
+      id = `alc_${randomBytes(16).toString('base64url')}`;
+      this.clients.set(id, { redirect_uris: ['http://127.0.0.1/callback'] });
+      this.counts.registrations++;
+    }
+    const grant: Grant = { id: randomBytes(8).toString('hex'), client_id: id, scope, revoked: false };
+    this.grants.push(grant);
+    const tokens = this.issue(grant);
+    return `${JSON.stringify({
+      issuer: this.base,
+      resource: this.resource,
+      client_id: id,
+      scope: tokens.scope,
+      token_type: 'Bearer',
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_in: tokens.expires_in,
+    })}\n`;
   }
 
   /** Forget the access tokens only, so the next /mcp call answers 401. */

@@ -1,7 +1,7 @@
 ---
 name: sign-in
 description: Checks, explains and ends the autologger-mcp sign-in to an autologger server. Use when the user wants to connect to, sign in to, or sign out of autologger from Claude Code, asks which autologger account or permissions are active, or when another autologger-mcp command failed with "not signed in", "invalid_grant" or a TLS certificate error.
-allowed-tools: Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp:*)
+allowed-tools: Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp status:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp login:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp logout:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp tools:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp call:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp check-links:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp --help:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp --version:*)
 ---
 
 # Signing in to autologger
@@ -44,6 +44,34 @@ If a command fails with a TLS certificate error (for example `SELF_SIGNED_CERT_I
 server uses a private CA, as the dev stack does. Tell the user to set
 `NODE_EXTRA_CA_CERTS=/path/to/their-ca.crt` (for the dev stack, its CA certificate file) in the
 environment Claude Code runs in, and restart it. Never suggest turning TLS verification off.
+
+## A local dev stack without Google sign-in: dev-mcp-token
+
+A local autologger dev stack (`https://localhost:8787`, or a dev slot's `https://localhost:2N787`)
+can mint MCP tokens without the browser or a Google OAuth client: `make dev-mcp-token
+EMAIL=<address>` in the user's autologger-2 checkout prints one JSON line with the tokens, and
+`import-tokens` stores it as the sign-in. Offer this when `login` cannot work on a dev stack (its
+Google client is still a placeholder). It is **the user's step**: the make target creates an
+account and a grant in their dev stack. Give them the line to run in their autologger-2 checkout,
+`make dev-mcp-token EMAIL=<address> | ` followed by `import_tokens_command` from `status --json`
+(put `DEV_SLOT=N ` before `make` for dev slot N; add `SCOPE="dashboards session-data:write"` after
+the email for edit access). They run it in their terminal, or here by typing `!` and the line. Then
+run `status --json` again. The import replaces any previous sign-in to that server.
+
+The token JSON is a secret. **Never print, echo, copy, summarise or store it anywhere**: do not run
+`make dev-mcp-token` yourself, do not `cat` or read a file that holds it, and never put it in a
+command line (`import-tokens` reads it from standard input only, and refuses a server whose issuer
+or resource does not match). `import-tokens` writes credentials, so it is not pre-approved: only if
+the user asks you to import a file they already saved the output in, **ask them first, naming the
+file and the server**, then redirect the file into it without reading it:
+
+```sh
+npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp import-tokens --json < <token_file>
+```
+
+It prints `server`, `scope`, `can_write`, `expires_at`, `client_id` and whether a previous sign-in
+was `replaced` (and `revoked_previous`); never a token. After it, `tools`, `call`, refreshes and
+`logout` work as after a browser sign-in.
 
 ## Signing out
 
