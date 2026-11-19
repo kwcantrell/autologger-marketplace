@@ -6,7 +6,6 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
-  existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -17,7 +16,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { CliError } from './errors.ts';
 
 export type Env = Readonly<Record<string, string | undefined>>;
@@ -91,6 +90,33 @@ export function redact(text: string): string {
   return out;
 }
 
+/**
+ * `mkdir -p` with `mode` on each directory it creates, one level at a time. Not
+ * `mkdirSync(dir, { recursive: true })`: on Node 24 (seen on 24.22.2) that never returns when mkdir
+ * keeps failing with ENOENT although the parent exists, as it does under /proc. Walking up by hand
+ * throws that ENOENT instead. An existing path that is not a directory fails with ENOTDIR.
+ */
+export function makeDirs(dir: string, mode: number): void {
+  const mkdir = (path: string): void => {
+    try {
+      mkdirSync(path, { mode });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      if (!statSync(path).isDirectory()) {
+        throw Object.assign(new Error(`ENOTDIR: not a directory, mkdir '${path}'`), { code: 'ENOTDIR', path });
+      }
+    }
+  };
+  try {
+    mkdir(dir);
+  } catch (error) {
+    const parent = dirname(dir);
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || parent === dir) throw error;
+    makeDirs(parent, mode);
+    mkdir(dir);
+  }
+}
+
 export class CredentialStore {
   readonly dir: string;
   readonly path: string;
@@ -160,7 +186,11 @@ export class CredentialStore {
   private ensureDir(): void {
     const root = join(this.dir, '..');
     for (const dir of [root, this.dir]) {
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+      try {
+        makeDirs(dir, 0o700);
+      } catch (error) {
+        throw new CliError(`cannot create ${dir}: ${(error as Error).message}`);
+      }
       // mkdir's mode is filtered by the umask, and an existing directory may be wider: set it.
       if ((statSync(dir).mode & 0o777) !== 0o700) chmodSync(dir, 0o700);
     }
