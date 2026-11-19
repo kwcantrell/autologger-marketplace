@@ -13,12 +13,14 @@ import {
   containerName,
   CREDENTIALS_FILE,
   DASHBOARDS_KEY,
+  DASHBOARDS_ON,
   dashboardsState,
   googleClient,
   googleKeysIn,
   isFile,
   openbaoContainer,
   OVERRIDES_FILE,
+  QUOTES_AND_SPACES_WHY,
   QUOTES_WHY,
   readOverrides,
   SPACES_WHY,
@@ -120,18 +122,17 @@ export async function planUp(ctx: UpContext): Promise<UpReport> {
     status: 'planned',
   });
   const dashboards = dashboardsState(values);
+  const on = DASHBOARDS_ON.join(', ').replace(/, ([^,]*)$/, ' or $1');
   steps.push({
     id: 'dev-bao-set',
     command: STEPS['dev-bao-set'].command,
     run: dashboards !== 'enabled',
     reason:
       dashboards === 'enabled'
-        ? `${DASHBOARDS_KEY}=1 is already in ${overridesPath}`
+        ? `${DASHBOARDS_KEY} is already on in ${overridesPath}`
         : dashboards === 'quoted'
-          ? `${DASHBOARDS_KEY} is quoted in ${overridesPath} (${QUOTES_WHY}, so it is not 1); this rewrites it unquoted, and /mcp needs it`
-          : dashboards === 'padded'
-            ? `${DASHBOARDS_KEY} has spaces around its value in ${overridesPath} (${SPACES_WHY}, so it is not exactly 1); this rewrites it without them, and /mcp needs it`
-            : `${DASHBOARDS_KEY} is not 1 in ${overridesPath}; /mcp needs it`,
+          ? `${DASHBOARDS_KEY} is quoted in ${overridesPath} (${QUOTES_WHY}, so it is not on); this rewrites it unquoted, as 1, and /mcp needs it`
+          : `${DASHBOARDS_KEY} is not ${on} in ${overridesPath}; /mcp needs it`,
     status: 'planned',
   });
   steps.push({
@@ -145,11 +146,12 @@ export async function planUp(ctx: UpContext): Promise<UpReport> {
 
   const google = overrides.state === 'unreadable' ? null : googleClient(values);
   const warnings: string[] = [];
-  for (const [state, what, why, fix] of [
-    ['quoted', 'wrapped in quotes', QUOTES_WHY, 'Remove the quotes'],
-    ['padded', 'surrounded by spaces', SPACES_WHY, 'Remove the spaces'],
+  const quotedAndPadded = google === null ? [] : google.quotedAndPadded;
+  for (const [keys, what, why, fix] of [
+    [google === null ? [] : googleKeysIn(google, 'quoted').filter((k) => !quotedAndPadded.includes(k)), 'wrapped in quotes', QUOTES_WHY, 'Remove the quotes'],
+    [quotedAndPadded, 'wrapped in quotes with spaces around them', QUOTES_AND_SPACES_WHY, 'Remove both the quotes and the spaces'],
+    [google === null ? [] : googleKeysIn(google, 'padded'), 'surrounded by spaces', SPACES_WHY, 'Remove the spaces'],
   ] as const) {
-    const keys = google === null ? [] : googleKeysIn(google, state);
     if (keys.length === 0) continue;
     warnings.push(
       `${keys.join(' and ')} in ${overridesPath} ${keys.length > 1 ? 'are' : 'is'} ${what}, and ${why}, so Google will reject the client: the stack will come up, but Google sign-in (and so the MCP sign-in) will not work. ${fix}, then run make dev-bao and up again.`,

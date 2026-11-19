@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync as renameReal, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { singleCertificate, writeCertificate } from '../src/ca.ts';
+import { removeCreatedDirs, singleCertificate, writeCertificate } from '../src/ca.ts';
 import { CliError } from '../src/errors.ts';
 import { EXIT } from '../src/run.ts';
 import { type Call, cli, fakeRunner, fixture, INHERITED, NOT_FOUND, TEST_CA } from './helpers.ts';
@@ -321,5 +321,101 @@ test('ca --out into a directory it cannot write fails with exit 1 and no temp fi
     assert.deepEqual(readdirSync(dir), []);
   } finally {
     chmodSync(dir, 0o755);
+  }
+});
+
+// Folders ca --out created: removed again when it fails, kept when it succeeds; folders that were
+// there before are never removed.
+const RENAME_FAILS = {
+  write: (fd: number, text: string) => void writeFileSync(fd, text),
+  rename: () => {
+    throw Object.assign(new Error('EXDEV: cross-device link not permitted, rename'), { code: 'EXDEV' });
+  },
+};
+const WRITE_FAILS = {
+  write: () => {
+    throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+  },
+  rename: (a: string, b: string) => void renameReal(a, b),
+};
+
+for (const [name, ops] of [
+  ['the write', WRITE_FAILS],
+  ['the rename', RENAME_FAILS],
+] as const) {
+  test(`writeCertificate: when ${name} fails, the parent folders it created are removed, and the folder that was there survives`, () => {
+    const home = fixture().home;
+    const before = readdirSync(home).sort();
+    const out = join(home, 'new', 'deeper', 'ca.crt');
+    assert.throws(() => writeCertificate(out, TEST_CA, ops), /nothing was written$/);
+    assert.equal(existsSync(join(home, 'new')), false, 'created folders are gone');
+    assert.deepEqual(readdirSync(home).sort(), before, 'home itself (pre-existing) is untouched');
+  });
+}
+
+test('writeCertificate: a pre-existing parent survives a failure, only the folders below it that it created go', () => {
+  const home = fixture().home;
+  const existing = join(home, 'existing');
+  mkdirSync(existing);
+  assert.throws(() => writeCertificate(join(existing, 'a', 'b', 'ca.crt'), TEST_CA, RENAME_FAILS), /nothing was written$/);
+  assert.equal(statSync(existing).isDirectory(), true);
+  assert.deepEqual(readdirSync(existing), []);
+  // A pre-existing direct parent (nothing created) also survives, even though it is empty.
+  assert.throws(() => writeCertificate(join(existing, 'ca.crt'), TEST_CA, RENAME_FAILS), /nothing was written$/);
+  assert.equal(statSync(existing).isDirectory(), true);
+});
+
+test('writeCertificate: a created folder that something else filled in the meantime is kept', () => {
+  const home = fixture().home;
+  const out = join(home, 'made', 'ca.crt');
+  const ops = {
+    write: (fd: number, text: string) => {
+      writeFileSync(fd, text);
+      writeFileSync(join(home, 'made', 'other.txt'), 'not ours\n');
+    },
+    rename: RENAME_FAILS.rename,
+  };
+  assert.throws(() => writeCertificate(out, TEST_CA, ops), /nothing was written$/);
+  assert.deepEqual(readdirSync(join(home, 'made')), ['other.txt']);
+});
+
+test('writeCertificate: success keeps the folders it created', () => {
+  const home = fixture().home;
+  const out = join(home, 'kept', 'deeper', 'ca.crt');
+  writeCertificate(out, TEST_CA);
+  assert.equal(readFileSync(out, 'utf8'), TEST_CA);
+  assert.deepEqual(readdirSync(join(home, 'kept', 'deeper')), ['ca.crt']);
+});
+
+test('removeCreatedDirs never goes above the first created folder, or anywhere when that is not an ancestor', () => {
+  const home = fixture().home;
+  mkdirSync(join(home, 'keep', 'x', 'y'), { recursive: true });
+  removeCreatedDirs(join(home, 'keep', 'x', 'y'), join(home, 'keep', 'x'));
+  assert.equal(existsSync(join(home, 'keep', 'x')), false);
+  assert.equal(statSync(join(home, 'keep')).isDirectory(), true, 'the empty folder above the first created one stays');
+  mkdirSync(join(home, 'other', 'z'), { recursive: true });
+  removeCreatedDirs(join(home, 'other', 'z'), join(home, 'keep'));
+  assert.equal(existsSync(join(home, 'other', 'z')), true, 'not under firstCreated: nothing removed');
+});
+
+test('ca --out into new folders: make failing, refused output or a failed mkdir leave no new folder', { skip: process.getuid?.() === 0 ? 'root can write anywhere' : false }, async () => {
+  for (const runner of [fakeRunner({ 'make dev-ca': { code: 2, stdout: '', stderr: 'not running\n' } }), fakeRunner({ 'make dev-ca': { stdout: TEST_CA + TEST_CA } })]) {
+    const f = fixture();
+    const r = await cli({ env: f.env, runner }, 'ca', '--repo', f.repo, '--out', join(f.home, 'fresh', 'sub', 'ca.crt'));
+    assert.equal(r.code, EXIT.failure);
+    assert.equal(existsSync(join(f.home, 'fresh')), false);
+  }
+  // Creating the folder itself fails (read-only parent): the pre-existing parent survives, empty.
+  const f = fixture();
+  const locked = join(f.home, 'locked');
+  mkdirSync(locked);
+  chmodSync(locked, 0o555);
+  try {
+    const r = await cli({ env: f.env }, 'ca', '--repo', f.repo, '--out', join(locked, 'new', 'ca.crt'));
+    assert.equal(r.code, EXIT.failure);
+    assert.match(r.stderr, /nothing was written\n$/);
+    assert.deepEqual(readdirSync(locked), []);
+  } finally {
+    chmodSync(locked, 0o755);
   }
 });

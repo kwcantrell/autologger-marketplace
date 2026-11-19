@@ -13,13 +13,16 @@ import {
   CREDENTIALS_FILE,
   containerName,
   DASHBOARDS_KEY,
+  DASHBOARDS_ON,
   dashboardsState,
   defaultCaFile,
   googleClient,
   googleKeysIn,
   isFile,
+  isQuotedAndPadded,
   openbaoContainer,
   OVERRIDES_FILE,
+  QUOTES_AND_SPACES_WHY,
   QUOTES_WHY,
   readOverrides,
   SPACES_WHY,
@@ -37,7 +40,8 @@ export interface Check {
   fix: string | null;
   /**
    * google_client and custom_dashboards only, when overrides.env could be read: each key's state
-   * (`set`, `placeholder`, `quoted`, `padded`, `not set`; `enabled`, `quoted`, `padded`, `not enabled`), never its value.
+   * (`set`, `placeholder`, `quoted`, `padded`, `not set`; `enabled`, `quoted`, `not enabled`), never its value.
+   * A `quoted` value that also has spaces around it keeps the state `quoted`; its fix names both.
    */
   keys?: Record<string, string>;
 }
@@ -124,13 +128,23 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
     const google = googleClient(values);
     const where = overrides.state === 'absent' ? `${overridesPath} does not exist` : `in ${overridesPath}`;
     const detail = `GOOGLE_CLIENT_ID is ${google.keys.GOOGLE_CLIENT_ID}, GOOGLE_CLIENT_SECRET is ${google.keys.GOOGLE_CLIENT_SECRET} (${where})`;
-    const quoted = googleKeysIn(google, 'quoted');
+    const quotedAndPadded = google.quotedAndPadded;
+    const quoted = googleKeysIn(google, 'quoted').filter((k) => !quotedAndPadded.includes(k));
     const padded = googleKeysIn(google, 'padded');
     const unset = [...googleKeysIn(google, 'placeholder'), ...googleKeysIn(google, 'not set')];
     const fixes: string[] = [];
-    const verbatim = [...(quoted.length > 0 ? [QUOTES_WHY] : []), ...(padded.length > 0 ? [SPACES_WHY] : [])];
+    const verbatim = [
+      ...(quoted.length > 0 ? [QUOTES_WHY] : []),
+      ...(quotedAndPadded.length > 0 ? [QUOTES_AND_SPACES_WHY] : []),
+      ...(padded.length > 0 ? [SPACES_WHY] : []),
+    ];
     if (quoted.length > 0) {
       fixes.push(`remove the quotes around the value of ${quoted.join(' and ')} in ${overridesPath} (${QUOTES_WHY}, so Google rejects the client), then run make dev-bao and ${up} again`);
+    }
+    if (quotedAndPadded.length > 0) {
+      fixes.push(
+        `remove both the quotes and the spaces around the value of ${quotedAndPadded.join(' and ')} in ${overridesPath} (${QUOTES_AND_SPACES_WHY}, so Google rejects the client), then run make dev-bao and ${up} again`,
+      );
     }
     if (padded.length > 0) {
       fixes.push(`remove the spaces around the value of ${padded.join(' and ')} in ${overridesPath} (${SPACES_WHY}, so Google rejects the client), then run make dev-bao and ${up} again`);
@@ -147,24 +161,20 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
       keys: { ...google.keys },
     });
     const dashboards = dashboardsState(values);
-    // up runs make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1 for anything but exactly 1, which rewrites the line.
+    const on = DASHBOARDS_ON.join(', ').replace(/, ([^,]*)$/, ' or $1');
+    // up runs make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1 for anything the server does not read as on, which rewrites the line.
     const rewrite = `or just run ${up}, which rewrites it as ${DASHBOARDS_KEY}=1 (make dev-bao-set), so editing it by hand is optional`;
+    const unquote = isQuotedAndPadded(values.get(DASHBOARDS_KEY)) ? 'remove both the quotes and the spaces around' : 'remove the quotes around';
     checks.push({
       ...(dashboards === 'enabled'
-        ? ok('custom_dashboards', `${DASHBOARDS_KEY}=1 (${where})`)
+        ? ok('custom_dashboards', `${DASHBOARDS_KEY} is on (${where})`)
         : dashboards === 'quoted'
           ? fail(
               'custom_dashboards',
-              `${DASHBOARDS_KEY} is quoted (${where}): ${QUOTES_WHY}, so it is not 1 to autologger and /mcp is off`,
-              `remove the quotes around the value of ${DASHBOARDS_KEY} in ${overridesPath} (${QUOTES_WHY}), then run make dev-bao and ${up} again; ${rewrite}`,
+              `${DASHBOARDS_KEY} is quoted (${where}): ${QUOTES_WHY}, so autologger does not read it as on and /mcp is off`,
+              `${unquote} the value of ${DASHBOARDS_KEY} in ${overridesPath} (${QUOTES_WHY}), then run make dev-bao and ${up} again; ${rewrite}`,
             )
-          : dashboards === 'padded'
-            ? fail(
-                'custom_dashboards',
-                `${DASHBOARDS_KEY} has spaces around its value (${where}): ${SPACES_WHY}, so it is not exactly 1`,
-                `remove the spaces around the value of ${DASHBOARDS_KEY} in ${overridesPath} (${SPACES_WHY}), then run make dev-bao and ${up} again; ${rewrite}`,
-              )
-            : missing('custom_dashboards', `${DASHBOARDS_KEY} is not 1 (${where}), so /mcp is off`, `${up} (runs make dev-bao-set ${DASHBOARDS_KEY}=1)`)),
+          : missing('custom_dashboards', `${DASHBOARDS_KEY} is not ${on} (${where}), so /mcp is off`, `${up} (runs make dev-bao-set ${DASHBOARDS_KEY}=1)`)),
       keys: { [DASHBOARDS_KEY]: dashboards },
     });
   }

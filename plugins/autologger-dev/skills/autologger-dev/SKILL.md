@@ -38,10 +38,11 @@ their `fix`. Tell the user which checks are not ok, in one line each.
 - `docker`, `make`, `node`: installing software is the user's call; tell them what is missing.
 - `openbao`, `openbao_credentials`, `custom_dashboards`, `dev_server` missing: step 2 (`up`) fixes these.
 - `google_client` missing: step 5; the stack still comes up without it, but nobody can sign in.
-- `google_client` or `custom_dashboards` `fail` with a key `quoted` or `padded`: its value in
-  `overrides.env` is wrapped in quotes or has spaces around it, which autologger keeps; tell the user
-  to remove them themselves (relay the fix), then run `make dev-bao` and step 2 again. Do not edit the
-  file for them. For `custom_dashboards`, step 2 alone also rewrites the value as `1`.
+- `google_client` `fail` with a key `quoted` or `padded`, or `custom_dashboards` `fail` with
+  `quoted`: its value in `overrides.env` is wrapped in quotes or has spaces around it (or both: the
+  fix then names both), which autologger keeps; tell the user to remove them themselves (relay the
+  fix), then run `make dev-bao` and step 2 again. Do not edit the file for them. For
+  `custom_dashboards`, step 2 alone also rewrites the value as `1`.
 - `node_extra_ca_certs` missing or a `dev_server` TLS failure: steps 3 and 5.
 
 ## 2. Bring the stack up - ask the user first
