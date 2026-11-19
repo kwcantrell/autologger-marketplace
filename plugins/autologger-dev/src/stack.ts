@@ -115,7 +115,8 @@ export function isFile(path: string): boolean {
 
 /**
  * KEY=VALUE lines, the way docker/scripts/local-bao.mjs reads them (blank and # lines skipped, the
- * last line of a key wins). Malformed lines are skipped here: their text is never shown.
+ * last line of a key wins, the value is the rest of the line verbatim: no quote is removed and
+ * nothing is trimmed). Malformed lines are skipped here: their text is never shown.
  */
 export function parseEnvText(text: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -140,21 +141,36 @@ export function readOverrides(env: Env): OverridesRead {
   }
 }
 
-/** A value that is not a real setting: empty, or one of the defaults' REPLACE_ME placeholders. */
+/**
+ * A value with surrounding whitespace and one matching pair of surrounding quotes ("..." or '...')
+ * removed. local-bao.mjs keeps quotes as part of the value, so `KEY=""` reaches the OpenBao secret
+ * as the two characters `""`: not empty to autologger's own blank check, but no setting either.
+ */
+export function unquote(value: string): string {
+  return value.trim().replace(/^(['"])(.*)\1$/, '$2').trim();
+}
+
+/** A value that is not a real setting: empty (quoted or not), or one of the defaults' REPLACE_ME placeholders. */
 export function isPlaceholder(value: string | undefined): boolean {
-  return value === undefined || value.trim() === '' || value.includes('REPLACE_ME');
+  return value === undefined || unquote(value) === '' || value.includes('REPLACE_ME');
 }
 
 export interface GoogleClient {
   /** true when both keys hold a non-placeholder value in overrides.env. */
   ok: boolean;
-  /** For each key: 'set', 'placeholder' (a REPLACE_ME or empty value) or 'not set' (the defaults' placeholder applies). */
+  /**
+   * For each key: 'set', 'placeholder' (a REPLACE_ME value) or 'not set' (no line for it, so the
+   * defaults' placeholder applies, or an empty value: `KEY=`, `KEY=""` or `KEY=''`).
+   */
   keys: Record<(typeof GOOGLE_KEYS)[number], 'set' | 'placeholder' | 'not set'>;
 }
 
 export function googleClient(values: Map<string, string>): GoogleClient {
-  const state = (key: string): 'set' | 'placeholder' | 'not set' =>
-    !values.has(key) ? 'not set' : isPlaceholder(values.get(key)) ? 'placeholder' : 'set';
+  const state = (key: string): 'set' | 'placeholder' | 'not set' => {
+    const value = values.get(key);
+    if (value === undefined || unquote(value) === '') return 'not set';
+    return isPlaceholder(value) ? 'placeholder' : 'set';
+  };
   const keys = { GOOGLE_CLIENT_ID: state('GOOGLE_CLIENT_ID'), GOOGLE_CLIENT_SECRET: state('GOOGLE_CLIENT_SECRET') };
   return { ok: keys.GOOGLE_CLIENT_ID === 'set' && keys.GOOGLE_CLIENT_SECRET === 'set', keys };
 }
@@ -191,7 +207,7 @@ export function secretValues(env: Env, checkoutPath: string | undefined): string
   const values: string[] = [];
   const add = (key: string, value: unknown): void => {
     if (typeof value !== 'string' || NON_SECRET_KEYS.has(key) || value.includes('REPLACE_ME')) return;
-    for (const v of [value.trim(), value.trim().replace(/^(['"])(.*)\1$/, '$2')]) {
+    for (const v of [value.trim(), unquote(value)]) {
       if (v.length >= MIN_SECRET_LENGTH) values.push(v);
     }
   };
@@ -231,13 +247,21 @@ export function redactor(secrets: readonly string[]): (text: string) => string {
 }
 
 /**
- * The environment for make and docker: the caller's, without the variables that would point make at
- * another dev slot, a stage or prod stack, or allow a reset. Extra values (DEV_HTTPS=1) are added.
+ * Variables the caller's environment may not pass to make: those that would point it at another dev
+ * slot, a stage or prod stack, or allow a reset, and make's own (flags and variable assignments in
+ * MAKEFLAGS/GNUMAKEFLAGS/MFLAGS, MAKELEVEL, which makes it print "Entering directory" lines into
+ * output that is parsed, and MAKEFILES, extra makefiles it would read first).
+ */
+export const STRIPPED_ENV = ['DEV_SLOT', 'DEV_HTTPS', 'CONFIRM', 'EMAIL', 'MAKEFLAGS', 'GNUMAKEFLAGS', 'MFLAGS', 'MAKELEVEL', 'MAKEFILES'] as const;
+
+/**
+ * The environment for make and docker: the caller's, without STRIPPED_ENV and STAGE_* variables.
+ * Extra values (DEV_HTTPS=1) are added.
  */
 export function childEnv(env: Env, extra: Record<string, string> = {}): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(env)) {
-    if (['DEV_SLOT', 'DEV_HTTPS', 'CONFIRM', 'EMAIL', 'MAKEFLAGS', 'MFLAGS'].includes(k) || k.startsWith('STAGE_')) continue;
+    if ((STRIPPED_ENV as readonly string[]).includes(k) || k.startsWith('STAGE_')) continue;
     out[k] = v;
   }
   return { ...out, ...extra };

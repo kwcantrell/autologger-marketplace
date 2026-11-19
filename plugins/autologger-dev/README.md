@@ -73,9 +73,9 @@ Every command takes `--json` (exactly one JSON value on stdout) and `--help`.
 
 | Command | What it does |
 | --- | --- |
-| `doctor [--repo <path>] [--server <url>]` | Named checks, each `ok`, `missing` or `fail` with a one-line fix: `checkout`, `docker` (daemon reachable), `make`, `node` (>= 22.12), `openbao` (container running), `openbao_credentials` (`.env.openbao.dev`), `google_client` (non-placeholder in `overrides.env`), `custom_dashboards` (`CUSTOM_DASHBOARDS_ENABLED=1`), `node_extra_ca_certs` (set to a readable file), `dev_server` (answers; a TLS trust failure is `fail`). Read-only. Exit 0 whenever it ran. |
+| `doctor [--repo <path>] [--server <url>]` | Named checks, each `ok`, `missing` or `fail` with a one-line fix: `checkout`, `docker` (daemon reachable), `make`, `node` (>= 22.12), `openbao` (container running), `openbao_credentials` (`.env.openbao.dev`), `google_client` (non-placeholder in `overrides.env`; `KEY=`, `KEY=""` and `KEY=''` count as not set), `custom_dashboards` (`CUSTOM_DASHBOARDS_ENABLED=1`), `node_extra_ca_certs` (set to a readable file), `dev_server` (answers; a TLS trust failure is `fail`). Read-only. Exit 0 whenever it ran. |
 | `up --repo <path> [--dry-run]` | Runs in the checkout, in order and only as needed: `make dev-bao` (container not running or `.env.openbao.dev` missing), `make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1` (not already set), `DEV_HTTPS=1 make dev-up` (always). make's output streams to stderr; the first failing step stops it with exit 1 naming the step. Warns when the Google client is a placeholder (the stack still comes up). `--dry-run` prints the plan and runs nothing. |
-| `ca --repo <path> [--out <file>]` | Runs `DEV_HTTPS=1 make dev-ca`, refuses (exit 1, nothing written) anything but exactly one valid PEM certificate or anything that looks like a private key, writes it to `--out` (default `~/.autologger-dev/autologger-dev-ca.crt`, mode 644, parent created) and prints the `export NODE_EXTRA_CA_CERTS=<path>` line. |
+| `ca --repo <path> [--out <file>]` | Runs `DEV_HTTPS=1 make dev-ca`, refuses (exit 1, nothing written) anything but exactly one valid PEM certificate or anything that looks like a private key, writes it to `--out` (default `~/.autologger-dev/autologger-dev-ca.crt`, mode 644, parent created; an existing file there is replaced only if it is a regular file holding one PEM certificate, otherwise exit 1 and it is left unchanged) and prints the `export NODE_EXTRA_CA_CERTS=<path>` line. |
 | `status [--server <url>]` | Whether the server answers, whether `<server>/.well-known/oauth-protected-resource` returns JSON naming the resource, and whether `<server>/mcp` exists (any answer but 404). A TLS trust failure is reported as `tls: "untrusted"` with the `ca` / `NODE_EXTRA_CA_CERTS` fix. Exit 0 whenever it ran. |
 | `connect [--server <url>]` | Prints, never runs, what is left: the `NODE_EXTRA_CA_CERTS` export (when unset), `claude mcp add --transport http autologger-dev <server>/mcp`, and the alternative `autologger-mcp login --server <server>`. |
 
@@ -86,11 +86,16 @@ stderr as `autologger-dev: <message>` and stdout is empty.
 
 - **No secret value leaves the CLI.** It reads `overrides.env` only to say whether a key is set or a
   placeholder. Every line it prints, make's and docker's output included, is scrubbed of any value
-  found in `overrides.env`, `secrets.json`, `secret_id` and `.env.openbao.dev`.
+  found in `overrides.env`, `secrets.json`, `secret_id` and `.env.openbao.dev`. Those files are read
+  again for every write, so a value `make dev-bao` generates and prints in the same step is caught.
 - **A fixed step list.** `up` can run only the three commands above. It never runs a `*-reset`,
   `*-down`, stage or prod target, or `dev-bao-set` with another key, and drops `CONFIRM`,
-  `DEV_SLOT`, `DEV_HTTPS`, `EMAIL`, `MAKEFLAGS` and `STAGE_*` from make's environment (so it always
-  acts on the default dev slot).
+  `DEV_SLOT`, `DEV_HTTPS`, `EMAIL`, `STAGE_*` and make's own `MAKEFLAGS`, `GNUMAKEFLAGS`, `MFLAGS`,
+  `MAKELEVEL` and `MAKEFILES` from make's environment (so it always acts on the default dev slot, and
+  a parent make cannot add flags, variables or "Entering directory" lines to `ca`'s output).
+- **`ca --out` never clobbers another file.** An existing file at the target is replaced only if it
+  is a regular file holding one PEM certificate (an earlier `ca` run's); a directory, a symlink or
+  any other file is refused with exit 1 and left unchanged.
 - **No Makefile from an untrusted repository.** Only `up` and `ca` run `make`, and only in a checkout
   named explicitly (`--repo` or `$AUTOLOGGER_REPO`, never the current directory) whose `origin` is
   github.com/kwcantrell/autologger-2. The skill pre-approves only `doctor`, `status`, `connect`,

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Check } from '../src/doctor.ts';
 import { EXIT } from '../src/run.ts';
-import { answering, cli, type CliOptions, fakeRunner, fixture, GOOD_OVERRIDES, NOT_FOUND, untrusted } from './helpers.ts';
+import { answering, cli, type CliOptions, fakeRunner, fixture, GOOD_OVERRIDES, GOOGLE_ID, GOOGLE_SECRET, NOT_FOUND, untrusted } from './helpers.ts';
 
 const NAMES = [
   'checkout',
@@ -91,6 +91,14 @@ test('doctor make: missing when not on PATH', async () => {
   const c = (await doctorChecks({ ...h, runner: fakeRunner({ 'make --version': NOT_FOUND }) }, '--repo', h.repo)).checks.get('make');
   assert.equal(c?.status, 'missing');
   assert.match(c?.fix ?? '', /install make/);
+});
+
+test('doctor make: fail with its fix when make --version exits non-zero', async () => {
+  const h = healthy();
+  const c = (await doctorChecks({ ...h, runner: fakeRunner({ 'make --version': { code: 2, stdout: '', stderr: 'make: broken\n' } }) }, '--repo', h.repo)).checks.get('make');
+  assert.equal(c?.status, 'fail');
+  assert.equal(c?.detail, 'make --version exited 2');
+  assert.equal(c?.fix, 'reinstall make');
 });
 
 test('doctor node: 22.12 is enough, 22.11 is fail, absent is missing', async () => {
@@ -213,4 +221,39 @@ test('doctor rejects a non-loopback http server as a usage error', async () => {
   assert.equal(code, EXIT.usage);
   assert.equal(stdout, '');
   assert.match(stderr, /must be an https:\/\/ URL/);
+});
+
+for (const key of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'] as const) {
+  const other = key === 'GOOGLE_CLIENT_ID' ? `GOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}` : `GOOGLE_CLIENT_ID=${GOOGLE_ID}`;
+  for (const empty of ['', '""', "''", '  ""  ', '" "']) {
+    test(`doctor and up --dry-run report ${key}=${empty} as not set`, async () => {
+      const f = fixture({ overrides: `${other}\n${key}=${empty}\nCUSTOM_DASHBOARDS_ENABLED=1\n` });
+      const { checks } = await doctorChecks({ env: f.env }, '--repo', f.repo);
+      const c = checks.get('google_client');
+      assert.equal(c?.status, 'missing');
+      assert.match(c?.detail ?? '', new RegExp(`${key} is not set`));
+      assert.doesNotMatch(c?.detail ?? '', new RegExp(`${key} is set`));
+      const text = await cli({ env: f.env }, 'doctor', '--repo', f.repo);
+      assert.match(text.stdout, /\[missing\] google_client: /);
+      const up = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo, '--dry-run', '--json');
+      assert.equal(up.code, EXIT.ok, up.stderr);
+      const report = JSON.parse(up.stdout) as { google_client: string; warnings: string[] };
+      assert.equal(report.google_client, 'placeholder');
+      assert.match(report.warnings[0] ?? '', /is a placeholder or not set/);
+    });
+  }
+}
+
+test('a quoted real Google client is set, and no value is printed', async () => {
+  for (const q of ['"', "'"]) {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${q}${GOOGLE_ID}${q}\nGOOGLE_CLIENT_SECRET=${q}${GOOGLE_SECRET}${q}\nCUSTOM_DASHBOARDS_ENABLED=1\n` });
+    const { checks } = await doctorChecks({ env: f.env }, '--repo', f.repo);
+    assert.equal(checks.get('google_client')?.status, 'ok');
+    const up = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo, '--dry-run', '--json');
+    assert.equal((JSON.parse(up.stdout) as { google_client: string }).google_client, 'set');
+    const text = await cli({ env: f.env }, 'doctor', '--repo', f.repo);
+    for (const out of [text.stdout + text.stderr, up.stdout + up.stderr]) {
+      for (const v of [GOOGLE_ID, GOOGLE_SECRET, GOOGLE_ID.slice(0, 12), GOOGLE_SECRET.slice(-12)]) assert.ok(!out.includes(v));
+    }
+  }
 });

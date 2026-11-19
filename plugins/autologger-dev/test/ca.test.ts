@@ -1,12 +1,12 @@
 // ca: runs DEV_HTTPS=1 make dev-ca (injected runner), accepts exactly one PEM certificate, writes it
 // mode 644 and prints the NODE_EXTRA_CA_CERTS export.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { singleCertificate } from '../src/ca.ts';
 import { EXIT } from '../src/run.ts';
-import { cli, fakeRunner, fixture, NOT_FOUND, TEST_CA } from './helpers.ts';
+import { type Call, cli, fakeRunner, fixture, INHERITED, NOT_FOUND, TEST_CA } from './helpers.ts';
 
 const KEY_BLOCK = '-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg\n-----END PRIVATE KEY-----\n';
 
@@ -90,4 +90,124 @@ test('ca: make failing, make missing and no checkout are exit 1', async () => {
 test('ca --out with an empty path is a usage error', async () => {
   const r = await cli({}, 'ca', '--out', '');
   assert.equal(r.code, EXIT.usage);
+});
+
+/**
+ * make dev-ca as GNU make answers it: in a sub-make (MAKELEVEL set) or with w / --print-directory
+ * in MAKEFLAGS, GNUMAKEFLAGS or MFLAGS it prints "Entering directory" lines around the recipe's
+ * output, which would no longer be a single certificate.
+ */
+function gnuMakeDevCa(call: Call): { stdout: string } {
+  const env = call.env ?? {};
+  const flags = `${env.MAKEFLAGS ?? ''} ${env.GNUMAKEFLAGS ?? ''} ${env.MFLAGS ?? ''}`;
+  const printDirectory = (env.MAKELEVEL ?? '') !== '' || /(^|\s)-?w|--print-directory/.test(flags);
+  const level = Number(env.MAKELEVEL ?? '0') || 0;
+  return {
+    stdout: printDirectory
+      ? `make[${level + 1}]: Entering directory '${call.cwd ?? ''}'\n${TEST_CA}make[${level + 1}]: Leaving directory '${call.cwd ?? ''}'\n`
+      : TEST_CA,
+  };
+}
+
+test('ca run from inside another make (MAKELEVEL, MAKEFLAGS, ... inherited) still gets the bare certificate', async () => {
+  // The fake really would wrap the output: proof that the stripping is what makes this pass.
+  assert.match(gnuMakeDevCa({ command: 'make', args: ['dev-ca'], cwd: '/r', env: { MAKELEVEL: '1' } }).stdout, /Entering directory/);
+  for (const inherited of [{ MAKELEVEL: '1' }, { MAKEFLAGS: 'w' }, { GNUMAKEFLAGS: '--print-directory' }, { MFLAGS: '-w' }, INHERITED]) {
+    const f = fixture();
+    const runner = fakeRunner({ 'make dev-ca': (call) => gnuMakeDevCa(call) });
+    const { code, stderr } = await cli({ env: { ...f.env, ...inherited }, runner }, 'ca', '--repo', f.repo);
+    assert.equal(code, EXIT.ok, `${JSON.stringify(inherited)}: ${stderr}`);
+    const make = runner.calls.find((c) => c.command === 'make');
+    for (const k of Object.keys(INHERITED)) assert.equal(make?.env?.[k], k === 'DEV_HTTPS' ? '1' : undefined, k);
+    assert.equal(readFileSync(join(f.home, '.autologger-dev', 'autologger-dev-ca.crt'), 'utf8'), TEST_CA);
+  }
+});
+
+test('ca --out to a path that does not exist yet writes it', async () => {
+  const f = fixture();
+  const out = join(f.home, 'new', 'ca.crt');
+  const { code, stderr } = await cli({ env: f.env }, 'ca', '--repo', f.repo, '--out', out);
+  assert.equal(code, EXIT.ok, stderr);
+  assert.equal(readFileSync(out, 'utf8'), TEST_CA);
+});
+
+test('ca replaces an existing certificate file (re-running ca refreshes it) and makes it mode 644', async () => {
+  const f = fixture();
+  const out = join(f.home, '.autologger-dev', 'autologger-dev-ca.crt');
+  mkdirSync(join(f.home, '.autologger-dev'));
+  // An older certificate, padded with whitespace, mode 600.
+  writeFileSync(out, `\n${TEST_CA}\n\n`, { mode: 0o600 });
+  const { code, stderr } = await cli({ env: f.env }, 'ca', '--repo', f.repo);
+  assert.equal(code, EXIT.ok, stderr);
+  assert.equal(readFileSync(out, 'utf8'), TEST_CA);
+  assert.equal(statSync(out).mode & 0o777, 0o644);
+});
+
+for (const [name, content] of [
+  ['a shell profile', 'export PATH=/usr/bin\n'],
+  ['an empty file', ''],
+  ['a CA bundle with two certificates', TEST_CA + TEST_CA],
+  ['a certificate with its private key', TEST_CA + '-----BEGIN PRIVATE KEY-----\nMIGH\n-----END PRIVATE KEY-----\n'],
+] as const) {
+  test(`ca --out refuses to overwrite ${name}, leaves it byte-for-byte unchanged and runs no make`, async () => {
+    const f = fixture();
+    const out = join(f.home, 'existing file');
+    writeFileSync(out, content, { mode: 0o600 });
+    const runner = fakeRunner();
+    for (const json of [[], ['--json']]) {
+      const { code, stdout, stderr } = await cli({ env: f.env, runner }, 'ca', '--repo', f.repo, '--out', out, ...json);
+      assert.equal(code, EXIT.failure);
+      assert.equal(stdout, '');
+      assert.equal(stderr, `autologger-dev: refusing to write ${out}: it exists and is not a single PEM certificate; only a missing file or an existing single-certificate file is replaced. Nothing was written; pass another --out\n`);
+      assert.equal(readFileSync(out, 'utf8'), content);
+      assert.equal(statSync(out).mode & 0o777, 0o600);
+    }
+    assert.deepEqual(runner.calls.filter((c) => c.command === 'make'), []);
+  });
+}
+
+test('ca --out refuses a symlink (even to a certificate) and a directory, and leaves them as they were', async () => {
+  const f = fixture();
+  const target = join(f.home, 'real.crt');
+  writeFileSync(target, TEST_CA);
+  const link = join(f.home, 'link.crt');
+  symlinkSync(target, link);
+  const dangling = join(f.home, 'dangling.crt');
+  symlinkSync(join(f.home, 'nowhere.crt'), dangling);
+  const dir = join(f.home, 'certs');
+  mkdirSync(dir);
+  for (const [out, why] of [
+    [link, 'it is a symlink'],
+    [dangling, 'it is a symlink'],
+    [dir, 'it is a directory'],
+  ] as const) {
+    const runner = fakeRunner();
+    const { code, stdout, stderr } = await cli({ env: f.env, runner }, 'ca', '--repo', f.repo, '--out', out);
+    assert.equal(code, EXIT.failure, out);
+    assert.equal(stdout, '');
+    assert.match(stderr, new RegExp(`^autologger-dev: refusing to write ${out.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: ${why};`));
+    assert.deepEqual(runner.calls.filter((c) => c.command === 'make'), []);
+  }
+  assert.equal(readlinkSync(link), target);
+  assert.equal(readlinkSync(dangling), join(f.home, 'nowhere.crt'));
+  assert.equal(existsSync(join(f.home, 'nowhere.crt')), false);
+  assert.equal(readFileSync(target, 'utf8'), TEST_CA);
+  assert.equal(lstatSync(dir).isDirectory(), true);
+});
+
+test('ca --out refuses a symlink planted while make dev-ca ran (nothing written through it)', async () => {
+  const f = fixture();
+  const out = join(f.home, 'ca.crt');
+  const victim = join(f.home, 'victim');
+  writeFileSync(victim, 'keep me\n');
+  const runner = fakeRunner({
+    'make dev-ca': () => {
+      symlinkSync(victim, out);
+      return { stdout: TEST_CA };
+    },
+  });
+  const { code, stderr } = await cli({ env: f.env, runner }, 'ca', '--repo', f.repo, '--out', out);
+  assert.equal(code, EXIT.failure);
+  assert.match(stderr, /it is a symlink/);
+  assert.equal(readFileSync(victim, 'utf8'), 'keep me\n');
 });
