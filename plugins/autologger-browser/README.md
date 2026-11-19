@@ -44,7 +44,8 @@ message on stderr.
 `~/.autologger-local-openbao/overrides.env` (or `$LOCAL_BAO_DIR/overrides.env`) sets a valid
 `DEV_PORT` (digits only, 1-65535, no leading zero, read verbatim as autologger-dev reads it), else
 `https://localhost:8787`. It sets doctor's `app_tls` probe and setup's `app_url`. Slots 1-9 always
-use `2N787`. The session cookie `signin` sets is not tied to a port.
+use `2N787`. Slot 0's `DEV_PORT` also sets the origin `signin` reports. The session cookie it sets works on any
+port, so the cookie itself does not change with `DEV_PORT`.
 
 **CA fixes.** When the dev CA is missing or stale, doctor's fix is
 `autologger-dev ca --repo <path to autologger-2>` (plus `--slot N`): autologger-dev's `ca` runs the

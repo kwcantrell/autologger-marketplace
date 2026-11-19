@@ -163,7 +163,7 @@ test('doctor and setup name autologger-dev ca with --repo in every CA fix', asyn
 test('signin names the slot origin (DEV_PORT for slot 0) but writes the same cookie, text and --json', async () => {
   const t = tempHome();
   try {
-    const run0 = async (slot: string[], json: boolean) => {
+    const runSignin = async (slot: string[], json: boolean) => {
       const fake = fakeRunner();
       const c = capture({ env: t.env, runner: fake.runner, readStdin: async () => (slot.length === 0 ? 'autologger_sid=tok\n' : 'autologger_sid_2=tok\n'), stdinIsTty: false });
       const code = await run(['signin', ...slot, ...(json ? ['--json'] : [])], c.io);
@@ -173,22 +173,22 @@ test('signin names the slot origin (DEV_PORT for slot 0) but writes the same coo
     for (const slot of [[], ['--slot', '2']]) {
       assert.equal((await cli(t.env, ['setup', ...slot])).code, 0);
     }
-    const base = await run0([], false);
+    const base = await runSignin([], false);
     assert.equal(base.code, 0, base.err);
     assert.match(base.out, /for https:\/\/localhost:8787 \(/, 'no DEV_PORT');
     const baseCookie = base.cookie;
 
     writeOverrides(t.home, 'DEV_PORT=9443\n');
-    const text = await run0([], false);
+    const text = await runSignin([], false);
     assert.match(text.out, /for https:\/\/localhost:9443 \(/);
     assert.ok(!text.out.includes('8787'));
-    const json = await run0([], true);
+    const json = await runSignin([], true);
     assert.equal((JSON.parse(json.out) as { origin: string }).origin, 'https://localhost:9443');
     const stripExpiry = (input: string): string => input.replace(/"--expires","\d+"/, '');
     assert.equal(stripExpiry(json.cookie), stripExpiry(baseCookie), 'same cookie url, name and attributes');
     assert.ok(json.cookie.includes('https://localhost:8787/'));
 
-    const slot2 = await run0(['--slot', '2'], true);
+    const slot2 = await runSignin(['--slot', '2'], true);
     assert.equal((JSON.parse(slot2.out) as { origin: string }).origin, 'https://localhost:22787');
   } finally {
     t.cleanup();

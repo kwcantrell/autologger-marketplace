@@ -1,7 +1,8 @@
 // File operations on this plugin's own folder: ensurePrivateDir creates directories mode 700 and
-// refuses symlinks; ensureDirs (the path down to ~/.autologger-dev/browser) tolerates symlinks above
-// that folder (a symlinked HOME is normal) but rejects non-directories and broken symlinks, and the
-// launcher is replaced atomically.
+// refuses symlinks; ensureDirs (the path down to ~/.autologger-dev, where setup stops it) tolerates
+// symlinks on that path (a symlinked HOME is normal) but rejects non-directories and broken symlinks.
+// The browser folder itself and everything below it go through ensurePrivateDir. The launcher is
+// replaced atomically.
 import { randomBytes } from 'node:crypto';
 import { chmodSync, type Stats, closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, renameSync, statSync, symlinkSync, unlinkSync, writeSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
