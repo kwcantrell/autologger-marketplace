@@ -25,6 +25,7 @@ export const RULES = {
   'npx-quoted-root': 'every skill npx line passes --package="${CLAUDE_PLUGIN_ROOT}" in double quotes',
   'npx-bin-name': "every skill npx line runs the plugin's own bin",
   'npx-prefix': 'every skill npx line starts with the exact required prefix',
+  'npx-chained': 'every skill npx line is one CLI call with plain arguments: no ; & | ` < > $( after the prefix (except a trailing < <placeholder> stdin redirect)',
   'allowed-tools': 'the skill frontmatter allowed-tools has Bash(<prefix> <bin>:*), or Bash(<prefix> <bin> <command>:*) rules',
   'tests-present': 'test/ has at least one *.test.ts',
   'e2e-test': 'a test runs the SKILL.md command lines through npx',
@@ -308,7 +309,19 @@ function checkSkills(root: string, rel: string, bin: string, add: Add): void {
       if (!l.inSh) {
         add(file, 'npx-outside-sh', 'npx line outside a ```sh block; the e2e test runs only ```sh lines, so this one is untested', 'put it in a ```sh fenced block', l.line);
       }
-      if (l.text === exact || l.text.startsWith(`${exact} `)) continue;
+      if (l.text === exact || l.text.startsWith(`${exact} `)) {
+        const chained = skillLineMeta(l.text.slice(exact.length));
+        if (chained !== null) {
+          add(
+            file,
+            'npx-chained',
+            `chains ${JSON.stringify(chained)} after the CLI call; a skill command line is one CLI call with plain arguments (the e2e test runs it and allowed-tools pre-approves its prefix)`,
+            `make it one CLI call per line, "${exact} <command> [args] --json", and put any extra logic in the CLI`,
+            l.line,
+          );
+        }
+        continue;
+      }
       if (l.text.startsWith(`${PREFIX} `)) {
         const called = l.text.slice(PREFIX.length + 1).split(/\s+/, 1)[0] ?? '';
         add(file, 'npx-bin-name', `runs '${called}', but this plugin's bin is '${bin}'`, `use "${exact} ..."`, l.line);
@@ -336,10 +349,16 @@ function checkSkills(root: string, rel: string, bin: string, add: Add): void {
  * one place, hooks/hooks.json, which Claude Code loads on its own and `checkHooks` validates.
  */
 function checkManifestHooks(file: string, text: string, hooks: unknown, add: Add): void {
-  const index = text.split('\n').findIndex((l) => /^\s*"hooks"\s*:/.test(l));
-  const line = index === -1 ? undefined : index + 1;
+  const line = topLevelKeyLine(text, 'hooks');
   const finding = (message: string, fix: string) => add(file, 'hooks-cli', message, fix, line);
-  const paths = typeof hooks === 'string' ? [hooks] : Array.isArray(hooks) && hooks.length > 0 && hooks.every((h) => typeof h === 'string') ? (hooks as string[]) : null;
+  let paths: string[] | null;
+  if (typeof hooks === 'string') {
+    paths = [hooks];
+  } else if (Array.isArray(hooks) && hooks.length > 0 && hooks.every((h) => typeof h === 'string')) {
+    paths = hooks as string[];
+  } else {
+    paths = null;
+  }
   if (paths !== null) {
     const isDefault = (p: string) => p.replace(/^(\$\{CLAUDE_PLUGIN_ROOT\}\/|\.\/)/, '') === 'hooks/hooks.json';
     const others = paths.filter((p) => !isDefault(p));
@@ -360,6 +379,29 @@ function checkManifestHooks(file: string, text: string, hooks: unknown, add: Add
 }
 
 /**
+ * The 1-based line of `key` as a key of the top-level object of the JSON `text`, skipping nested
+ * objects and string contents, or undefined when there is none.
+ */
+export function topLevelKeyLine(text: string, key: string): number | undefined {
+  const quoted = JSON.stringify(key);
+  let depth = 0;
+  let line = 1;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '\n') line++;
+    else if (c === '{' || c === '[') depth++;
+    else if (c === '}' || c === ']') depth--;
+    else if (c === '"') {
+      let end = i + 1;
+      while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
+      if (depth === 1 && text.slice(i, end + 1) === quoted && /^\s*:/.test(text.slice(end + 1))) return line;
+      i = end;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Claude Code's hook event names (the keys of "hooks" in hooks/hooks.json), taken from Claude Code
  * 2.1.328 (`claude --version`) on 2026-11-19. A newer event is flagged until it is added here.
  */
@@ -371,8 +413,30 @@ export const HOOK_EVENTS: readonly string[] = [
   'InstructionsLoaded', 'CwdChanged', 'FileChanged', 'DirectoryAdded', 'MessageDisplay',
 ];
 
-/** Shell metacharacters that would chain or redirect another command after a shell-form hook's CLI call. */
+/** Shell metacharacters that would chain, substitute or redirect another command after a CLI call. */
 const SHELL_META = /[;&|`<>\n\r]|\$\(/;
+
+/**
+ * The first shell metacharacter in `rest` (what follows the npx prefix and bin of a command line),
+ * or null when only plain arguments follow. Shared by `hooks-cli` and `npx-chained`.
+ */
+export function shellMeta(rest: string): string | null {
+  return SHELL_META.exec(rest)?.[0] ?? null;
+}
+
+/** A skill line's `<placeholder>`: a letter, then letters, digits, `_`, `-`, `.` or spaces. */
+const PLACEHOLDER = '<[A-Za-z][\\w .-]*>';
+
+/**
+ * `shellMeta` for a skill command line, with two exceptions the skills rely on and nothing more:
+ * `<placeholder>` words (Claude fills them in; they are not shell redirects), and one trailing
+ * ` < <placeholder>` that redirects a file the user named into the CLI's stdin (autologger-mcp's
+ * `import-tokens`, which must never take its secret as an argument). That redirect runs no other
+ * command. Pipes, a `<` mid-line, or a `<` from a literal path are still flagged.
+ */
+export function skillLineMeta(rest: string): string | null {
+  return shellMeta(rest.replace(new RegExp(`\\s<\\s*${PLACEHOLDER}$`), '').replace(new RegExp(PLACEHOLDER, 'g'), ''));
+}
 
 /** Claude Code's hook handler types. Only `command` hooks run a program, so only they must run the CLI. */
 export const HOOK_TYPES: readonly string[] = ['command', 'prompt', 'agent', 'http', 'mcp_tool'];
@@ -380,9 +444,10 @@ export const HOOK_TYPES: readonly string[] = ['command', 'prompt', 'agent', 'htt
 /**
  * hooks/hooks.json: `{"description"?, "hooks": {<Event>: [{"matcher"?, "hooks": [<hook>...]}]}}`.
  * A command hook must run the plugin's own CLI, either in exec form (`"command": "node"`,
- * `"args": ["${CLAUDE_PLUGIN_ROOT}/<bin file>", ...]`, so the path never reaches a shell) or as a
- * shell command starting with the convention's npx prefix and the plugin's bin (or the same npx
- * words in exec form). Any other command would put logic outside the tested CLI.
+ * `"args": ["${CLAUDE_PLUGIN_ROOT}/<bin file>", ...]`, so the path never reaches a shell), or as a
+ * shell command that is the convention's npx prefix and the plugin's bin followed only by plain
+ * arguments (no `shellMeta` character, so nothing is chained, substituted or redirected), or the
+ * same npx words in exec form. Any other command would put logic outside the tested CLI.
  */
 function checkHooks(root: string, rel: string, bin: string, binTarget: string, add: Add): void {
   const file = `${rel}/hooks/hooks.json`;
@@ -449,10 +514,10 @@ function checkHooks(root: string, rel: string, bin: string, binTarget: string, a
           args !== undefined
             ? (command === 'node' && argv[0] === nodeArg) || (command === 'npx' && prefixWords.every((w, i) => argv[i] === w))
             : command === exact || command.startsWith(`${exact} `);
-        const chained = args === undefined && runsCli ? SHELL_META.exec(command.slice(exact.length)) : null;
+        const chained = args === undefined && runsCli ? shellMeta(command.slice(exact.length)) : null;
         if (chained !== null) {
           finding(
-            `${hat} chains ${JSON.stringify(chained[0])} after the CLI call in a shell command; only the npx prefix, the plugin's bin, its command and plain arguments are allowed`,
+            `${hat} chains ${JSON.stringify(chained)} after the CLI call in a shell command; only the npx prefix, the plugin's bin, its command and plain arguments are allowed`,
             `put the extra logic in the CLI and use exec form, which runs no shell: ${execForm}`,
           );
           return;
