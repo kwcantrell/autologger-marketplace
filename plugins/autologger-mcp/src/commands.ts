@@ -60,3 +60,11 @@ export function devTokenHint(server: string, clientId?: string): string {
   if (!isLoopback(server)) return '';
   return `Or, on a local dev stack without Google sign-in, run in the autologger-2 checkout (your email for <address>; DEV_SLOT=N in front for dev slot N):\n  ${importTokensCommand(server, clientId)}`;
 }
+
+/**
+ * The exact `index build` command for a server and scope (`['--show', '<id>']`, `['--all']`, ...),
+ * with any further arguments (`--max-reads 400`, `--json`). Every part is shell-quoted.
+ */
+export function indexBuildCommand(server: string, scopeArgs: readonly string[], more: readonly string[] = []): string {
+  return terminalCommand(['index', 'build', '--server', server, ...scopeArgs, ...more].map(shellQuote).join(' '));
+}

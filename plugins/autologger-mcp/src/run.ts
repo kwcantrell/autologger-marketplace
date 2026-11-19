@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { parseArgs } from 'node:util';
 import { importTokens, isExpired, login, logout, parseDevTokenGrant, requireSignedIn, TokenSource } from './auth.ts';
-import { CLI_NAME, devTokenHint, importTokensCommand, loginCommand, reusableClientId } from './commands.ts';
+import { CLI_NAME, devTokenHint, importTokensCommand, indexBuildCommand, loginCommand, reusableClientId } from './commands.ts';
 import { CliError, messageOf, UsageError } from './errors.ts';
 import { DEFAULT_SERVER, type Fetch, isObject, resolveServer } from './http.ts';
 import { type Caller, RateLimitStop, readSnapshot, readState, statePath, writeJsonFile } from './copy.ts';
@@ -11,8 +11,11 @@ import { exportSessions, summarize } from './export.ts';
 import { execute, plan, type Plan, type RunResult, targetSession, targetState, type TargetSession } from './importer.ts';
 import { checkLinks } from './links.ts';
 import { McpClient, resultText } from './mcp.ts';
+import { findMoments, type Moment } from './moments.ts';
+import { findPerson, personGraph, PersonNotFound } from './personGraph.ts';
 import { discover, WRITE_SCOPE } from './oauth.ts';
 import { CredentialStore, type Env, redact } from './store.ts';
+import { budgetCaller, buildIndex, DEFAULT_MAX_READS, MAX_TOTAL_WAIT_S, MAX_WAIT_S, type Scope, scopeArgs, scopeKey, scopeText, scopeView, WikiIndex } from './wikiIndex.ts';
 
 export { CLI_NAME, importTokensCommand, loginCommand } from './commands.ts';
 
@@ -77,6 +80,27 @@ Commands:
                                duplicates. A rate limit is waited out (--no-wait: stop instead).
                                Needs a 'login --write' sign-in to the target; refuses a target that
                                is the snapshot's source server.
+  index build (--show <id> | --studio <id> | --all) [--max-reads N]
+                               Read every visible session of the scope (read tools only: listings,
+                               get_session, events, topics, transcript paragraphs, wiki pages with
+                               whole bodies) into a local index. A later build re-reads a session's
+                               content only when get_session's revision or counts changed, and a
+                               page body only when its revision changed. At most N tool calls per
+                               run (default ${DEFAULT_MAX_READS}); a rate limit is waited out (at most ${MAX_WAIT_S} s a wait,
+                               ${MAX_TOTAL_WAIT_S} s a run). When it stops early it reports complete: false and the
+                               command that continues it.
+  index status                 What is indexed for the server, and how old it is.
+  index clear                  Delete the server's index.
+  moments "<query>" (--show <id> | --studio <id> | --all) [--term <alt> ...]
+                               From the index only (no server calls): every moment whose topic,
+                               event, transcript paragraph or wiki page mentions the query or a
+                               --term (whole words, case and accents ignored), with session, time,
+                               snippet and a cite:<session_id>@<seconds> link; ordered by session
+                               date and time, near-duplicates merged.
+  person-graph "<name or page_id>" (--show <id> | --studio <id> | --all)
+                               From the index only: a person's wiki page, the pages it links to and
+                               that link to it, the moments it cites and the topics they fall in,
+                               as nodes, edges and a Mermaid diagram.
 
 Options:
   --server <url>   autologger server (default: $AUTOLOGGER_URL, else ${DEFAULT_SERVER})
@@ -86,7 +110,7 @@ Options:
 
 Environment:
   AUTOLOGGER_URL             Default server.
-  AUTOLOGGER_MCP_CONFIG_DIR  Credentials directory (default: $XDG_CONFIG_HOME/autologger-mcp,
+  AUTOLOGGER_MCP_CONFIG_DIR  Credentials and index directory (default: $XDG_CONFIG_HOME/autologger-mcp,
                              else ~/.config/autologger-mcp).
   NODE_EXTRA_CA_CERTS        A CA certificate file to trust, e.g. the dev stack's private CA.
   BROWSER                    Program that opens the sign-in URL.
@@ -112,6 +136,11 @@ const OPTIONS = {
   map: { type: 'string', multiple: true },
   confirm: { type: 'boolean', default: false },
   'no-wait': { type: 'boolean', default: false },
+  show: { type: 'string' },
+  studio: { type: 'string' },
+  all: { type: 'boolean', default: false },
+  'max-reads': { type: 'string' },
+  term: { type: 'string', multiple: true },
 } as const;
 
 type OptionName = keyof typeof OPTIONS;
@@ -126,6 +155,9 @@ const COMMAND_OPTIONS: Record<string, OptionName[]> = {
   'check-links': [],
   export: ['server', 'session', 'out', 'force', 'no-wait'],
   import: ['server', 'snapshot', 'map', 'confirm', 'no-wait'],
+  index: ['server', 'show', 'studio', 'all', 'max-reads'],
+  moments: ['server', 'show', 'studio', 'all', 'term'],
+  'person-graph': ['server', 'show', 'studio', 'all'],
 };
 
 function version(): string {
@@ -227,6 +259,94 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
     const server = resolveServer(values.server, env);
     const store = new CredentialStore(env, server);
     const ctx = { ...ctxBase, store };
+
+    if (command === 'index') {
+      const [sub, ...extra] = rest;
+      if (sub !== 'build' && sub !== 'status' && sub !== 'clear') throw new UsageError('index takes build, status or clear');
+      if (extra.length > 0) throw new UsageError(`index ${sub} takes no further arguments`);
+      const index = new WikiIndex(env, server);
+      if (sub !== 'build') {
+        for (const name of ['show', 'studio', 'all', 'max-reads'] as const) {
+          const v = values[name];
+          if (v !== undefined && v !== false) throw new UsageError(`index ${sub} does not take --${name}`);
+        }
+        if (sub === 'clear') {
+          const cleared = index.clear();
+          out({ server, index_dir: index.dir, cleared }, cleared ? `Deleted the index of ${server} (${index.dir}).\n` : `No index for ${server}; nothing to do.\n`);
+          return EXIT.ok;
+        }
+        const report = indexStatus(index, ctx.now());
+        out(report, statusText(report));
+        return EXIT.ok;
+      }
+      const scope = parseScope(values);
+      let maxReads = DEFAULT_MAX_READS;
+      if (values['max-reads'] !== undefined) {
+        maxReads = Number(values['max-reads']);
+        if (!Number.isInteger(maxReads) || maxReads < 1 || maxReads > 100_000) throw new UsageError('--max-reads must be a whole number from 1 to 100000');
+      }
+      const tokens = new TokenSource(ctx);
+      const client = connect(ctx, tokens);
+      await client.initialize();
+      const call = budgetCaller({
+        call: (name, args) => client.callTool(name, args),
+        sleep: rawIo.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+        notice: (text) => io.stderr(`${CLI_NAME}: ${text}`),
+        maxReads,
+      });
+      const result = await buildIndex({ caller: call, index, scope, now: ctx.now, warn });
+      const again = indexBuildCommand(server, scopeArgs(scope), [...(values['max-reads'] !== undefined ? ['--max-reads', String(maxReads)] : []), ...(json ? ['--json'] : [])]);
+      const report = { ...result, ...(result.complete ? {} : { continue_command: again }) };
+      out(
+        report,
+        `${result.complete ? 'Indexed' : 'Partly indexed'} ${scopeText(scope)} on ${server}: ${result.sessions.in_scope} sessions (${result.sessions.content_read} read, ${result.sessions.unchanged} unchanged${
+          result.sessions.done_before > 0 ? `, ${result.sessions.done_before} done by the earlier run` : ''
+        }), ${result.pages.read} wiki pages read, ${result.reads} tool calls.\n${
+          result.failed.map((f) => `  session ${f.session_id}: ${f.reason}\n`).join('')
+        }${result.complete ? '' : `Stopped: ${result.stopped ?? 'incomplete'}. ${result.sessions.remaining} sessions remain; to continue, run:\n  ${again}\n`}`,
+      );
+      return EXIT.ok;
+    }
+    if (command === 'moments' || command === 'person-graph') {
+      if (rest.length !== 1 || (rest[0] ?? '').trim() === '') throw new UsageError(command === 'moments' ? 'moments takes one query: moments "<query>" --show <id>' : 'person-graph takes one name or page id: person-graph "<name>" --show <id>');
+      const query = rest[0] ?? '';
+      const scope = parseScope(values);
+      const view = scopeView(new WikiIndex(env, server), scope);
+      const build = indexBuildCommand(server, scopeArgs(scope), ['--json']);
+      const coverage = {
+        server,
+        scope: scopeKey(scope),
+        complete: view.complete,
+        sessions_indexed: view.sessions.length,
+        sessions_missing: view.missing,
+        built_at: view.built_at,
+        oldest_check: view.oldest_check,
+        ...(view.complete ? {} : { build_command: build }),
+      };
+      const notice = view.complete ? '' : `Note: ${scopeText(scope)} is not fully indexed${view.missing !== null ? ` (${view.missing} sessions missing)` : ''}; to index it, run:\n  ${build}\n`;
+      if (command === 'moments') {
+        const terms = [query, ...(values.term ?? [])];
+        for (const t of terms) if (t.length > 200) throw new UsageError('a query or --term is at most 200 characters');
+        const found = findMoments(view, terms);
+        if (found.terms.length === 0) throw new UsageError('the query has no letters or digits to match');
+        out({ ...coverage, ...found }, `${notice}${momentsText(found.moments, found.terms)}`);
+        return EXIT.ok;
+      }
+      const matches = findPerson(view, query);
+      if (matches.length === 0) {
+        throw new PersonNotFound(
+          `no person page '${query}' in the index of ${server} for ${scopeText(scope)} (${view.sessions.length} sessions, ${view.pages.size} wiki pages indexed). If it exists, run index build first:\n  ${build}`,
+        );
+      }
+      if (matches.length > 1) {
+        throw new CliError(`'${query}' names ${matches.length} person pages; pass one page_id:\n${matches.map((p) => `  ${p.page_id}  ${p.title}${p.aliases.length > 0 ? ` (aliases: ${p.aliases.join(', ')})` : ''}`).join('\n')}`);
+      }
+      const person = matches[0];
+      if (person === undefined) throw new CliError('no person page');
+      const graph = personGraph(view, person);
+      out({ ...coverage, ...graph }, `${notice}${graph.mermaid}`);
+      return EXIT.ok;
+    }
 
     switch (command) {
       case 'login': {
@@ -497,6 +617,68 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
 
 /** Session ids as autologger issues them. */
 const ID_RE = /^[A-Za-z0-9_-]{1,200}$/;
+
+/** The one scope option given: --show <id>, --studio <id> or --all. */
+function parseScope(values: { show?: string; studio?: string; all?: boolean }): Scope {
+  const given = [values.show !== undefined, values.studio !== undefined, values.all === true].filter(Boolean).length;
+  if (given !== 1) throw new UsageError('give one scope: --show <id>, --studio <id> or --all');
+  if (values.show !== undefined) {
+    if (!ID_RE.test(values.show)) throw new UsageError(`--show '${values.show}' is not a show id`);
+    return { kind: 'show', id: values.show };
+  }
+  if (values.studio !== undefined) {
+    if (!ID_RE.test(values.studio)) throw new UsageError(`--studio '${values.studio}' is not a studio id`);
+    return { kind: 'studio', id: values.studio };
+  }
+  return { kind: 'all' };
+}
+
+interface IndexStatus {
+  server: string;
+  index_dir: string;
+  exists: boolean;
+  sessions: number;
+  pages: number;
+  builds: { scope: string; completed_at: string; age_s: number; sessions: number; reads: number }[];
+  pending: { scope: string; started_at: string; sessions: number; done: number } | null;
+}
+
+function indexStatus(index: WikiIndex, now: number): IndexStatus {
+  if (!index.exists()) return { server: index.server, index_dir: index.dir, exists: false, sessions: 0, pages: 0, builds: [], pending: null };
+  const meta = index.meta();
+  return {
+    server: index.server,
+    index_dir: index.dir,
+    exists: true,
+    sessions: index.count('sessions'),
+    pages: index.count('pages'),
+    builds: meta.builds.map((b) => ({ ...b, age_s: Math.max(0, Math.round((now - Date.parse(b.completed_at)) / 1000)) })),
+    pending: meta.pending === undefined ? null : { scope: meta.pending.scope, started_at: meta.pending.started_at, sessions: meta.pending.session_ids.length, done: meta.pending.done.length },
+  };
+}
+
+function age(seconds: number): string {
+  if (seconds < 120) return `${seconds} s`;
+  if (seconds < 7200) return `${Math.round(seconds / 60)} min`;
+  if (seconds < 172_800) return `${Math.round(seconds / 3600)} h`;
+  return `${Math.round(seconds / 86_400)} days`;
+}
+
+function statusText(r: IndexStatus): string {
+  if (!r.exists) return `No index for ${r.server}. Build one with index build --server <url> --show <id> (or --studio <id>, --all).\n`;
+  const lines = [`Index of ${r.server}: ${r.sessions} sessions, ${r.pages} wiki pages (${r.index_dir})`];
+  for (const b of r.builds) lines.push(`  ${b.scope}: built ${b.completed_at} (${age(b.age_s)} ago), ${b.sessions} sessions`);
+  if (r.pending !== null) lines.push(`  ${r.pending.scope}: a build stopped after ${r.pending.done} of ${r.pending.sessions} sessions; run index build again to continue`);
+  return `${lines.join('\n')}\n`;
+}
+
+function momentsText(moments: readonly Moment[], terms: readonly string[]): string {
+  if (moments.length === 0) return `No moments mention ${terms.map((t) => `'${t}'`).join(', ')}.\n`;
+  const lines = moments.map(
+    (m) => `${m.session_date} ${m.session_title || m.session_id} ${m.seconds === null ? '-' : `@${m.seconds}s`} [${m.source}] ${m.snippet}${m.cite === null ? '' : `  ${m.cite}`}`,
+  );
+  return `${moments.length} moment${moments.length === 1 ? '' : 's'} (terms: ${terms.join(', ')}):\n${lines.join('\n')}\n`;
+}
 
 /** `--map <source>=<target>` pairs, each source once. */
 function parseMaps(raw: readonly string[]): [string, string][] {

@@ -49,6 +49,9 @@ export interface FakeOptions {
   inputSchemas?: Record<string, Record<string, unknown>>;
   /** Leave these tools out of tools/list (calling them answers "not found"). */
   omitTools?: string[];
+  /** After this many answered read calls in data mode, refuse the next `rateLimitReadTimes` reads with a rate limit. */
+  rateLimitAfterReads?: number;
+  rateLimitReadTimes?: number;
 }
 
 export interface FakeSession {
@@ -59,6 +62,20 @@ export interface FakeSession {
   categories?: { id: string; label: string }[];
   events: Record<string, unknown>[];
   topics: Record<string, unknown>[];
+  /** Transcript paragraphs (list_transcript_paragraphs). */
+  paragraphs?: Record<string, unknown>[];
+  /** get_session's revision (default 1); a test raises it to play a write to the session. */
+  revision?: number;
+  /** get_session's and list_sessions' date (default 2026-11-19). */
+  date?: string;
+  /** Left out of list_sessions (autologger's hidden sessions). */
+  hidden?: boolean;
+}
+
+export interface FakeStudio {
+  studio_id: string;
+  name: string;
+  shows: { show_id: string; name: string; can_access?: boolean }[];
 }
 
 export interface FakePage {
@@ -76,6 +93,8 @@ export interface FakePage {
 export interface FakeData {
   sessions: FakeSession[];
   pages: FakePage[];
+  /** list_studios / list_shows; default one studio 'st_1' with every session's show. */
+  studios?: FakeStudio[];
 }
 
 interface Grant {
@@ -119,13 +138,13 @@ const READ_TOOLS = [
   {
     name: 'list_shows',
     description: "A studio's shows.",
-    inputSchema: { type: 'object', properties: { studio_id: { type: 'string' } }, required: ['studio_id'] },
+    inputSchema: strict({ studio_id: { type: 'string' }, cursor: { type: 'string' }, limit: { type: 'integer' } }, ['studio_id']),
     annotations: { readOnlyHint: true },
   },
   {
     name: 'list_sessions',
     description: "A show's sessions.",
-    inputSchema: { type: 'object', properties: { show_id: { type: 'string' } }, required: ['show_id'] },
+    inputSchema: strict({ show_id: { type: 'string' }, cursor: { type: 'string' }, limit: { type: 'integer' }, include_hidden: { type: 'boolean' } }, ['show_id']),
     annotations: { readOnlyHint: true },
   },
   {
@@ -149,7 +168,7 @@ const READ_TOOLS = [
   {
     name: 'list_transcript_paragraphs',
     description: "A session's transcript paragraphs.",
-    inputSchema: { type: 'object', properties: { session_id: { type: 'string' } } },
+    inputSchema: strict({ session_id: { type: 'string' }, cursor: { type: 'string' }, limit: { type: 'integer' } }, ['session_id']),
     annotations: { readOnlyHint: true },
   },
   {
@@ -227,6 +246,8 @@ export class FakeAutologger {
   readonly counts = { registrations: 0, refreshes: 0, revocations: 0, reuses: 0 };
   /** Data mode: write tool calls answered (any outcome), successful writes, rate-limit refusals. */
   readonly writeCounts = { attempted: 0, succeeded: 0, rateLimited: 0, failed500: 0 };
+  /** Data mode: read tool calls answered (not rate limited), and reads refused with a rate limit. */
+  readonly readCounts = { answered: 0, rateLimited: 0 };
   private nextId = 1;
 
   constructor(options: FakeOptions = {}) {
@@ -584,7 +605,31 @@ export class FakeAutologger {
       }
     }
 
+    const afterReads = this.options.rateLimitAfterReads;
+    if (afterReads !== undefined && this.readCounts.answered >= afterReads && this.readCounts.rateLimited < (this.options.rateLimitReadTimes ?? 1)) {
+      this.readCounts.rateLimited++;
+      return text(`Rate limit exceeded; retry in ${this.options.rateLimitRetryS ?? 7} s.`);
+    }
+    this.readCounts.answered++;
+    const studios = (): FakeStudio[] =>
+      data.studios ?? [{ studio_id: 'st_1', name: 'Studio', shows: [...new Set(data.sessions.map((x) => x.show_id))].map((id) => ({ show_id: id, name: `Show ${id}` })) }];
     switch (name) {
+      case 'list_studios':
+        return ok({ items: studios().map((st) => ({ studio_id: st.studio_id, name: st.name, role: 'owner' })), total: studios().length });
+      case 'list_shows': {
+        const st = studios().find((x) => x.studio_id === args.studio_id);
+        if (st === undefined) return text('Studio not found');
+        return ok(page(st.shows.map((sh) => ({ show_id: sh.show_id, name: sh.name, show_code: sh.show_id, can_access: sh.can_access !== false }))));
+      }
+      case 'list_sessions': {
+        const rows = data.sessions.filter((x) => x.show_id === args.show_id && (x.hidden !== true || args.include_hidden === true));
+        return ok(page(rows.map((x) => ({ session_id: x.session_id, title: x.title ?? x.session_id, date: x.date ?? '2026-11-19', archived: false, hidden: x.hidden === true }))));
+      }
+      case 'list_transcript_paragraphs': {
+        const s = session(args.session_id);
+        if (s === undefined) return text('Session not found');
+        return ok(page(s.paragraphs ?? []));
+      }
       case 'get_session': {
         const s = session(args.session_id);
         if (s === undefined) return text('Session not found');
@@ -593,10 +638,10 @@ export class FakeAutologger {
           show_id: s.show_id,
           studio_id: 'st_1',
           title: s.title ?? s.session_id,
-          date: '2026-11-19',
+          date: s.date ?? '2026-11-19',
           fps: 25,
-          counts: { events: s.events.length, words: 0, paragraphs: 0, topics: s.topics.length, wiki_pages: associated(s).length },
-          revision: 1,
+          counts: { events: s.events.length, words: 0, paragraphs: (s.paragraphs ?? []).length, topics: s.topics.length, wiki_pages: associated(s).length },
+          revision: s.revision ?? 1,
         });
       }
       case 'list_events':
