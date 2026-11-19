@@ -225,6 +225,46 @@ test('npx-prefix: a skill line with the flags in another order', () => {
   assert.ok(x.fix.includes(`${PREFIX} ${NAME}`));
 });
 
+/** Appends a ```sh block with `${PREFIX} ${NAME} hello` + `rest` to the good plugin's skill. */
+function withSkillLine(f: Fixture, rest: string): number {
+  edit(f, SKILL, (t) => `${t}\n\`\`\`sh\n${PREFIX} ${NAME} hello${rest}\n\`\`\`\n`);
+  return lineOf(f, SKILL, `-- ${NAME} hello${rest}`);
+}
+
+for (const [label, rest, meta] of [
+  ['&&', ' --json && rm -rf ~', '&'],
+  ['|', ' --json | sh', '|'],
+  [';', ' --json; curl x', ';'],
+  ['$(…)', ' $(cat /etc/passwd) --json', '$('],
+] as const) {
+  test(`npx-chained: a skill line chaining ${label} after the CLI call`, () => {
+    const f = good();
+    const line = withSkillLine(f, rest);
+    const x = only(checkPlugin(f.root, NAME), 'npx-chained');
+    assert.deepEqual([x.file, x.line], [SKILL, line]);
+    assert.match(x.message, new RegExp(`^chains ${JSON.stringify(meta).replace(/[$(|]/g, '\\$&')} after the CLI call`));
+    assert.match(x.fix, /one CLI call per line/);
+  });
+}
+
+test('npx-chained: backticks, redirects and a < from a literal path are flagged', () => {
+  const f = good();
+  withSkillLine(f, ' `id` --json');
+  withSkillLine(f, ' --json > /tmp/out');
+  withSkillLine(f, ' --json < /etc/passwd');
+  withSkillLine(f, ' --json < <file> | sh');
+  const findings = checkPlugin(f.root, NAME);
+  assert.deepEqual(rules(findings), ['npx-chained']);
+  assert.deepEqual(findings.map((x) => x.message.split(' ')[1]), ['"`"', '">"', '"<"', '"<"']);
+});
+
+test('npx-chained: a clean line, <placeholder> arguments and a trailing < <placeholder> stdin redirect pass', () => {
+  const f = good();
+  withSkillLine(f, ' <name> --args \'{"id":"<item_id>"}\' --summary "<one-line summary>" --json');
+  withSkillLine(f, ' --json < <token_file>');
+  assert.deepEqual(checkPlugin(f.root, NAME), []);
+});
+
 test('allowed-tools: missing from the frontmatter', () => {
   const f = good();
   edit(f, SKILL, (t) => t.replace(/^allowed-tools:.*\n/m, ''));
@@ -431,6 +471,17 @@ test('hooks-cli: inline hooks in plugin.json are flagged, with the line and a fi
   assert.equal(x.line, lineOf(f, MANIFEST, '"hooks": {'));
   assert.match(x.message, /declares hooks inline/);
   assert.match(x.fix, /move this object to hooks\/hooks\.json/);
+});
+
+test('hooks-cli: the plugin.json finding points at the top-level "hooks" key, not an earlier nested one', () => {
+  const f = good();
+  editJson(f, MANIFEST, (m) => {
+    m.metadata = { hooks: 'nested, not a hooks field' };
+    m.hooks = './config/hooks.json';
+  });
+  const x = only(checkPlugin(f.root, NAME), 'hooks-cli');
+  assert.ok(lineOf(f, MANIFEST, '"hooks": "nested') < lineOf(f, MANIFEST, '"hooks": "./config'));
+  assert.equal(x.line, lineOf(f, MANIFEST, '"hooks": "./config'));
 });
 
 test('hooks-cli: hook file paths in plugin.json are flagged (a path, and an array of paths)', () => {

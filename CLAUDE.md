@@ -113,7 +113,11 @@ npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>
   case because a local-folder package needs no network. The end-to-end test checks both.
 - Put the exact command lines in ` ```sh ` blocks in the SKILL.md, starting with `npx `. The template's
   end-to-end test (`test/cli.test.ts`) extracts and runs every such line, so a skill whose command
-  does not work fails `npm test`.
+  does not work fails `npm test`. Each line is one CLI call with plain arguments: nothing chained,
+  piped, substituted or redirected after the prefix (`;`, `&`, `|`, backtick, `<`, `>`, `$(`), since
+  the test runs it and `allowed-tools` pre-approves its prefix. `<placeholder>` words are fine, as is
+  one trailing `< <placeholder>` that feeds a file the user named to the CLI's stdin
+  (`plugin-builder check` rule `npx-chained`).
 - `allowed-tools` in the skill frontmatter allows that prefix (`Bash(npx --yes --offline
   --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>:*)`). A CLI with commands that act on
   the machine (run a Makefile, start containers) pre-approves only its read-only commands instead,

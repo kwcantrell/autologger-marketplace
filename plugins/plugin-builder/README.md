@@ -49,6 +49,7 @@ or not inside a marketplace checkout. On a non-zero exit stdout is empty and the
 | `npx-quoted-root` | every skill `npx` line has `--package="${CLAUDE_PLUGIN_ROOT}"`, double-quoted |
 | `npx-bin-name` | every skill `npx` line runs the plugin's own bin |
 | `npx-prefix` | every skill `npx` line starts with the exact prefix (flags and their order) |
+| `npx-chained` | every skill `npx` line is one CLI call with plain arguments: `;`, `&`, `|`, a backtick, `$(`, `>`, `<` or a newline after the prefix and bin is flagged (the same check as `hooks-cli`). `<placeholder>` words are not redirects, and one trailing ` < <placeholder>` (a file the user named, redirected into the CLI's stdin, as autologger-mcp's `import-tokens` does) is allowed; a pipe, a mid-line `<` or a `<` from a literal path is not |
 | `allowed-tools` | the frontmatter `allowed-tools` has `Bash(<prefix> <bin>:*)`, or per-command `Bash(<prefix> <bin> <command>:*)` rules |
 | `tests-present` | `test/` has at least one `*.test.ts` |
 | `e2e-test` | a test reads `SKILL.md` and runs its lines through `npx` with `CLAUDE_PLUGIN_ROOT` set |
