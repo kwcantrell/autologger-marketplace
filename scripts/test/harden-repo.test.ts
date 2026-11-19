@@ -18,6 +18,7 @@ after(() => rmSync(scratch, { recursive: true, force: true }));
 const REPO = 'example-owner/example-repo';
 // The default repo (used in dry-run only).
 const DEFAULT_REPO = 'kwcantrell/autologger-marketplace';
+
 const CI = '.github/workflows/ci.yml@main';
 
 /** The state read from the real repo on 2026-11-19, with the CI workflow merged. */
@@ -46,6 +47,30 @@ function initialState(overrides: Partial<FakeState> = {}): FakeState {
 }
 
 let fixtures = 0;
+/**
+ * The repos a run of the script could target: every explicit `--repo <x>` or `--repo=<x>`, else
+ * the fixture's own repo. All of them are checked, so the guard does not depend on which value
+ * parseArgs keeps.
+ */
+function targetRepos(args: string[], fixtureRepo: string): string[] {
+  const repos: string[] = [];
+  args.forEach((arg, i) => {
+    if (arg === '--repo') repos.push(args[i + 1] ?? '');
+    else if (arg.startsWith('--repo=')) repos.push(arg.slice('--repo='.length));
+  });
+  return repos.length > 0 ? repos : [fixtureRepo];
+}
+
+/** Guard: an --apply run must never target the real repo (the script's default or the named one). */
+function assertApplySafe(args: string[], fixtureRepo: string): void {
+  if (!args.includes('--apply')) return;
+  for (const target of targetRepos(args, fixtureRepo)) {
+    if (target === DEFAULT_REPO || target !== fixtureRepo) {
+      throw new Error(`test guard: refusing an --apply run against '${target}'; it may only target the fake repo '${fixtureRepo}'`);
+    }
+  }
+}
+
 interface Fixture {
   run: (...args: string[]) => { status: number | null; stdout: string; stderr: string };
   state: () => FakeState;
@@ -73,6 +98,7 @@ function fixture(state: FakeState): Fixture {
       .map((l) => JSON.parse(l) as FakeCall);
   return {
     run: (...args) => {
+      assertApplySafe(args, state.repo);
       // Every case targets the made-up repo unless it is a dry run of the default repo or names its own --repo.
       const target = state.repo === DEFAULT_REPO || args.includes('--repo') ? [] : ['--repo', state.repo];
       const r = spawnSync(process.execPath, [script, ...args, ...target], { encoding: 'utf8', env, cwd: dir });
@@ -397,7 +423,7 @@ test('--repo picks the target repo', () => {
 });
 
 test('bad arguments exit 2 without calling gh', () => {
-  const f = fixture(initialState({ repo: DEFAULT_REPO }));
+  const f = fixture(initialState({ repo: REPO }));
   for (const args of [['--apply', '--dry-run'], ['--nope'], ['--repo', 'not-a-repo'], ['--repo', 'a/b/c'], ['extra'], ['--repo']]) {
     const r = f.run(...args);
     assert.equal(r.status, 2, `${args.join(' ')}: ${r.stderr}`);
@@ -408,4 +434,18 @@ test('bad arguments exit 2 without calling gh', () => {
   const help = f.run('--help');
   assert.equal(help.status, 0);
   assert.match(help.stdout, /^Usage: node scripts\/harden-repo\.ts/);
+});
+
+test('the fixture guard refuses an --apply run that would reach the real repo', () => {
+  assert.throws(() => assertApplySafe(['--apply'], DEFAULT_REPO), /refusing an --apply run/);
+  assert.throws(() => assertApplySafe(['--apply', '--repo', DEFAULT_REPO], REPO), /refusing an --apply run/);
+  assert.throws(() => assertApplySafe(['--apply', '--repo', 'other/repo'], REPO), /refusing an --apply run/);
+  assert.throws(() => assertApplySafe(['--apply', `--repo=${DEFAULT_REPO}`], REPO), /refusing an --apply run/);
+  assert.throws(() => assertApplySafe(['--apply', '--repo', REPO, `--repo=${DEFAULT_REPO}`], REPO), /refusing an --apply run/);
+  assert.doesNotThrow(() => assertApplySafe(['--apply'], REPO));
+  assert.doesNotThrow(() => assertApplySafe(['--apply', '--repo', REPO], REPO));
+  assert.doesNotThrow(() => assertApplySafe([], DEFAULT_REPO), 'a dry run of the default repo is fine');
+  const f = fixture(initialState({ repo: DEFAULT_REPO }));
+  assert.throws(() => f.run('--apply'), /refusing an --apply run/);
+  assert.equal(f.calls().length, 0);
 });
