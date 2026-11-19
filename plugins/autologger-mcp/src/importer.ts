@@ -303,7 +303,7 @@ function timecodeCheck(entry: Entry, created: CreatedItem, input: PlanInput): { 
   const fps = validRate(row.frame_rate) ? row.frame_rate : (entry.target.target_fps ?? entry.sourceFps);
   if (fps !== undefined && rowFrames(row, fps) === want.frames) return { done: 'created by an earlier run (state file), at the source timecode' };
   if (!accepts(input.tools.get(TIMECODE_FIX_TOOL), 'timecode')) {
-    return { done: `created by an earlier run (state file); its timecode differs from the source's, and the target's ${TIMECODE_FIX_TOOL} takes no timecode` };
+    return { skip: `created by an earlier run; its timecode on the target differs from the source's, and the target's ${TIMECODE_FIX_TOOL} takes no timecode (autologger-2 before 4d2b1a37), so it cannot be set` };
   }
   return { fix: { row, timecode: want.text } };
 }

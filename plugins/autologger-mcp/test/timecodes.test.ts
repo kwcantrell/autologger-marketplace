@@ -322,3 +322,34 @@ test('--help describes the take handling, frame_rate_mismatch and fix-timecode',
   assert.equal(help.code, 0);
   for (const text of ['recording takes are created', 'frame_rate_mismatch', 'fix-timecode']) assert.ok(help.stdout.includes(text), text);
 });
+
+test('a target too old to take a timecode: take rows and timecode fixes are skipped with the reason, nothing written', async () => {
+  const s = await setup(24, 24);
+  assert.equal((await s.run(...s.args('--confirm'))).code, 0);
+  for (const e of s.t1.events) Object.assign(e, { timecode: '00:00:00:01', timecode_total_frames: 1 });
+  const old = await fake({
+    data: s.target.options.data as FakeData,
+    inputSchemas: {
+      update_event: {
+        type: 'object',
+        properties: Object.fromEntries(['session_id', 'event_id', 'category', 'message', 'wall_time_utc', 'timecode_hms', 'version'].map((k) => [k, {}])),
+        required: ['session_id', 'event_id', 'category', 'message', 'wall_time_utc', 'version'],
+        additionalProperties: false,
+      },
+    },
+  });
+  const configDir = tempConfigDir();
+  const run = (...argv: string[]) => cli({ configDir }, ...argv);
+  assert.equal((await run('login', '--server', old.base, '--write')).code, 0);
+  // The same state file, now recorded against the old target's URL.
+  const stateFile = `${s.snapshot}.import-state.json`;
+  const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+  state.targets[old.base] = state.targets[s.target.base];
+  writeFileSync(stateFile, JSON.stringify(state));
+  const dry = JSON.parse((await run('import', '--server', old.base, '--snapshot', s.snapshot, '--map', 'S1=T1', '--json')).stdout);
+  assert.equal(dry.plan.fix_timecode, 0);
+  assert.equal(dry.plan.skip, COPIED.length + 2);
+  const item = dry.items.find((i: { source_id: string }) => i.source_id === 'in1');
+  assert.match(item.reason, /update_event takes no timecode .*cannot be set/);
+  assert.deepEqual(old.calls.filter((c) => c.tool === 'update_event' || c.tool === 'create_event'), []);
+});

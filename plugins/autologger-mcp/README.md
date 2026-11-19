@@ -259,6 +259,8 @@ answered; category, message and wall time are sent unchanged (a take row's categ
 `internal`). Nothing is created twice. A version conflict (someone edited the event meanwhile) or a
 take row refused because the session is recording is reported in `failed` for that event and not
 retried in that run; the next rerun reads the versions again. The result counts `timecodes_fixed`.
+On a target whose `update_event` takes no `timecode` (autologger-2 before `4d2b1a37`) these events
+are listed as `skip` with that reason instead: update the local stack first.
 
 Neither file holds a token, and content from the source is only ever sent as tool arguments: it
 never selects a tool, a server or a file.
