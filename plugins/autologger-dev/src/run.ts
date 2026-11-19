@@ -7,8 +7,8 @@ import { doctor, formatDoctor } from './doctor.ts';
 import { messageOf, UsageError } from './errors.ts';
 import { DEFAULT_SERVER, type Env, type Fetch, resolveServer } from './http.ts';
 import { type Runner, spawnRunner } from './runner.ts';
-import { parseSlot, slotServer } from './slot.ts';
-import { defaultCaFile, redactor, resolveCheckout, secretValues } from './stack.ts';
+import { devPort, parseSlot, slotServer } from './slot.ts';
+import { defaultCaFile, readOverrides, redactor, resolveCheckout, secretValues } from './stack.ts';
 import { formatStatus, status } from './status.ts';
 import { formatUp, planUp, runUp, STEPS } from './up.ts';
 
@@ -32,14 +32,16 @@ export interface Io {
 export const USAGE = `Usage: ${CLI_NAME} <command> [options]
 
 Brings up a local autologger dev stack (kwcantrell/autologger-2) in HTTPS mode and connects Claude
-to its MCP server at ${DEFAULT_SERVER}/mcp, or to dev slot N's at https://localhost:2N787/mcp.
+to its MCP server at ${DEFAULT_SERVER}/mcp (https://localhost:<DEV_PORT>/mcp when
+overrides.env sets DEV_PORT), or to dev slot N's at https://localhost:2N787/mcp.
 
 Commands:
   doctor [--repo <path>] [--slot <N>] [--server <url>]
                  Check what is missing: the checkout, docker, make, Node, the local OpenBao
                  container, .env.openbao.dev, the Google client and CUSTOM_DASHBOARDS_ENABLED in
                  overrides.env (set, placeholder, quoted or padded only, never values),
-                 NODE_EXTRA_CA_CERTS and the dev server. Each check is ok, missing or fail, with a one-line fix. Exit 0 when it ran.
+                 NODE_EXTRA_CA_CERTS and the dev server. Each check is ok, missing or fail, with a one-line fix.
+                 An invalid DEV_PORT in overrides.env is a one-line note. Exit 0 when it ran.
   up --repo <path> [--slot <N>] [--dry-run]
                  Run, in the checkout and only as needed: ${STEPS['dev-bao'].command},
                  ${STEPS['dev-bao-set'].command}, then ${STEPS['dev-up'].command}.
@@ -63,12 +65,16 @@ Options:
   --repo <path>    autologger-2 checkout (default: $AUTOLOGGER_REPO; for doctor only, else the
                    current directory). up and ca need --repo or $AUTOLOGGER_REPO, and refuse a
                    checkout whose origin remote is not github.com/kwcantrell/autologger-2.
-  --slot <N>       autologger dev slot N, one digit 0-9 (ADR 0038; default 0, the stack on
-                   ${DEFAULT_SERVER}). Slot N's server is https://localhost:2N787; up and ca pass
-                   DEV_SLOT=N to make dev-up and make dev-ca (nothing for slot 0). The local OpenBao
-                   and the dev CA are shared by every slot.
-  --server <url>   dev server (default: --slot's server if given, else $AUTOLOGGER_URL, else
-                   ${DEFAULT_SERVER}); https://, or http:// to localhost/127.0.0.1/[::1]
+  --slot <N>       autologger dev slot N, one digit 0-9 (ADR 0038; default 0, the default stack).
+                   Slot 0's server is https://localhost:<DEV_PORT> when overrides.env sets DEV_PORT
+                   to a port (digits only, 1-65535, no quotes or spaces), else ${DEFAULT_SERVER}.
+                   Slot N's server is https://localhost:2N787 (DEV_PORT never applies); up and ca
+                   pass DEV_SLOT=N to make dev-up and make dev-ca (nothing for slot 0). The local
+                   OpenBao and the dev CA are shared by every slot.
+  --server <url>   dev server (default: --slot's server if given, else $AUTOLOGGER_URL, else slot
+                   0's server); https://, or http:// to localhost/127.0.0.1/[::1]. With --slot it
+                   must be that slot's own server (same origin), else exit 2: the MCP server name
+                   and the fixes name the slot, so they must be about the server checked.
   --json           Print machine-readable JSON on stdout
   -h, --help       Show this help
   --version        Print the CLI version
@@ -194,19 +200,33 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
   const io = { stdout: (t: string) => rawIo.stdout(scrub(t)), stderr: (t: string) => rawIo.stderr(scrub(t)) };
   const json = values.json;
   const out = (value: unknown, text: string): void => io.stdout(json ? `${JSON.stringify(value)}\n` : text);
-  // --server wins; else --slot's own server; else $AUTOLOGGER_URL, else the default stack.
-  const server = (): string => (values.server === undefined && values.slot !== undefined ? slotServer(slot) : resolveServer(values.server, env));
+  // Slot 0's server follows DEV_PORT in overrides.env (slot N's never does); only a valid port is kept.
+  const port = devPort(readOverrides(env));
+  const slotOrigin = slotServer(slot, port);
+  // --server wins; else --slot's own server; else $AUTOLOGGER_URL, else the default (slot 0's) stack.
+  // --server and --slot together must name the same origin: everything the command prints for the
+  // slot (the MCP server name, fixes like `up --slot N`) would otherwise be about another stack.
+  const server = (): string => {
+    if (values.server !== undefined) {
+      const origin = resolveServer(values.server, env);
+      if (values.slot !== undefined && origin !== slotOrigin) {
+        throw new UsageError(`--server ${origin} is not dev slot ${slot}'s server (${slotOrigin}); pass --slot ${slot} alone for that slot, or --server alone for another server`);
+      }
+      return origin;
+    }
+    return values.slot !== undefined ? slotOrigin : resolveServer(undefined, env, slotOrigin);
+  };
 
   try {
     switch (command) {
       case 'doctor': {
-        const report = await doctor({ env, runner, fetch: fetchFn, checkout, server: server(), slot });
+        const report = await doctor({ env, runner, fetch: fetchFn, checkout, server: server(), slot, devPort: port });
         out(report, formatDoctor(report));
         return EXIT.ok;
       }
       case 'up': {
         const progress = lineWriter(io.stderr);
-        const ctx = { env, runner, checkout, slot, progress: progress.push, endOutput: progress.flush };
+        const ctx = { env, runner, checkout, slot, devPort: port, progress: progress.push, endOutput: progress.flush };
         const plan = await planUp(ctx);
         for (const w of plan.warnings) io.stderr(`${CLI_NAME}: warning: ${w}\n`);
         if (values['dry-run']) {

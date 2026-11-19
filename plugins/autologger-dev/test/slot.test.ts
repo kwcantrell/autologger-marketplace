@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EXIT } from '../src/run.ts';
-import { googleRedirect, mcpServerName, parseSlot, slotEnv, slotServer } from '../src/slot.ts';
+import { devPort, googleRedirect, mcpServerName, parseSlot, slotEnv, slotServer } from '../src/slot.ts';
 import { answering, cli, fakeRunner, fixture, GOOD_OVERRIDES, INHERITED, untrusted } from './helpers.ts';
 
 /** fetch that answers 401 and records every URL it was asked for. */
@@ -149,7 +149,7 @@ test('ca --slot 6 names the slot\'s command and up in its failure message', asyn
   assert.match(stderr, /DEV_HTTPS=1 DEV_SLOT=6 make dev-ca failed \(exit 2\); is the stack up in HTTPS mode\? Run autologger-dev up --slot 6 first\n$/);
 });
 
-test('status --slot N probes https://localhost:2N787 over $AUTOLOGGER_URL; --server still wins', async () => {
+test('status --slot N probes https://localhost:2N787 over $AUTOLOGGER_URL; --server with --slot must be that slot\'s server', async () => {
   const env = { HOME: '/nonexistent', AUTOLOGGER_URL: 'https://elsewhere.example' };
   let fetchFn = recording();
   let r = await cli({ env, fetch: fetchFn }, 'status', '--slot', '1', '--json');
@@ -159,9 +159,16 @@ test('status --slot N probes https://localhost:2N787 over $AUTOLOGGER_URL; --ser
   assert.equal((JSON.parse(r.stdout) as { server: string; slot: number }).slot, 1);
 
   fetchFn = recording();
-  r = await cli({ env, fetch: fetchFn }, 'status', '--slot', '9', '--server', 'https://localhost:9999', '--json');
+  r = await cli({ env, fetch: fetchFn }, 'status', '--slot', '9', '--server', 'https://localhost:29787/', '--json');
   assert.equal(r.code, EXIT.ok, r.stderr);
-  assert.equal(fetchFn.urls[0], 'https://localhost:9999/');
+  assert.equal(fetchFn.urls[0], 'https://localhost:29787/');
+
+  // Another server with --slot 9 is refused (exit 2), nothing fetched: its fixes would name slot 9.
+  fetchFn = recording();
+  r = await cli({ env, fetch: fetchFn }, 'status', '--slot', '9', '--server', 'https://localhost:9999', '--json');
+  assert.equal(r.code, EXIT.usage);
+  assert.equal(r.stdout, '');
+  assert.deepEqual(fetchFn.urls, []);
 
   fetchFn = recording();
   r = await cli({ env, fetch: fetchFn }, 'status', '--slot', '0', '--json');
@@ -218,9 +225,37 @@ test('connect --slot 3 prints the slot\'s /mcp URL, an MCP server name for the s
   assert.match(report.steps[0] ?? '', /^Write the dev CA first: autologger-dev ca --slot 3 /);
   const text = await cli({ env: f.env }, 'connect', '--slot', '3');
   assert.match(text.stdout, /^To connect Claude to https:\/\/localhost:23787\/mcp /);
-  // --server still wins over --slot; the name still says which slot.
-  const explicit = JSON.parse((await cli({ env: f.env }, 'connect', '--slot', '3', '--server', 'https://localhost:9999', '--json')).stdout) as Record<string, unknown>;
-  assert.equal(explicit.claude_mcp_add, 'claude mcp add --transport http autologger-dev-3 https://localhost:9999/mcp');
+});
+
+test('connect --slot 3 --server <slot 3\'s URL> names the MCP server autologger-dev-3', async () => {
+  const f = fixture();
+  for (const url of ['https://localhost:23787', 'https://localhost:23787/', 'https://LOCALHOST:23787/mcp']) {
+    const { code, stdout, stderr } = await cli({ env: f.env }, 'connect', '--slot', '3', '--server', url, '--json');
+    assert.equal(code, EXIT.ok, stderr);
+    const report = JSON.parse(stdout) as Record<string, unknown> & { steps: string[] };
+    assert.equal(report.server, 'https://localhost:23787', url);
+    assert.equal(report.claude_mcp_add, 'claude mcp add --transport http autologger-dev-3 https://localhost:23787/mcp', url);
+    assert.match(report.steps[0] ?? '', /^Write the dev CA first: autologger-dev ca --slot 3 /);
+  }
+});
+
+test('--slot 3 --server https://example.test is a usage error (exit 2) for connect, status and doctor: no slot-3 name or fix for another server', async () => {
+  const f = fixture({ overrides: GOOD_OVERRIDES });
+  for (const argv of [['connect'], ['status'], ['doctor', '--repo', f.repo]]) {
+    for (const server of ['https://example.test', 'http://localhost:23787', 'https://127.0.0.1:23787', 'https://localhost:8787']) {
+      const runner = fakeRunner();
+      const fetchFn = recording();
+      const { code, stdout, stderr } = await cli({ env: f.env, runner, fetch: fetchFn }, ...argv, '--slot', '3', '--server', server, '--json');
+      assert.equal(code, EXIT.usage, `${argv[0]} ${server}`);
+      assert.equal(stdout, '');
+      assert.match(stderr, /^autologger-dev: --server \S+ is not dev slot 3's server \(https:\/\/localhost:23787\); pass --slot 3 alone for that slot, or --server alone for another server\n/);
+      assert.deepEqual(fetchFn.urls, []);
+      assert.deepEqual(runner.calls, []);
+    }
+  }
+  // --server alone is still any server, named autologger-dev (slot 0's fixes), as before.
+  const alone = JSON.parse((await cli({ env: f.env }, 'connect', '--server', 'https://example.test', '--json')).stdout) as Record<string, unknown>;
+  assert.equal(alone.claude_mcp_add, 'claude mcp add --transport http autologger-dev https://example.test/mcp');
 });
 
 test('--slot 0 gives exactly the output of no --slot (the JSON has slot 0 either way)', async () => {
@@ -235,4 +270,144 @@ test('--slot 0 gives exactly the output of no --slot (the JSON has slot 0 either
       if (json.length > 0) assert.equal((JSON.parse(plain.stdout) as { slot: number }).slot, 0);
     }
   }
+});
+
+// Slot 0's DEV_PORT (overrides.env, as compose-run.mjs passes the dev secret's DEV_PORT to compose).
+
+const read = (text: string) => ({ state: 'read' as const, values: new Map(Object.entries({ DEV_PORT: text })) });
+
+test('devPort: digits only, 1-65535, read verbatim; anything else is invalid and keeps no value', () => {
+  assert.deepEqual(devPort({ state: 'absent' }), { state: 'not set' });
+  assert.deepEqual(devPort({ state: 'unreadable' }), { state: 'not set' });
+  assert.deepEqual(devPort({ state: 'read', values: new Map() }), { state: 'not set' });
+  assert.deepEqual(devPort(read('')), { state: 'not set' });
+  for (const [text, port] of [['9787', 9787], ['1', 1], ['65535', 65535], ['08787', 8787]] as const) assert.deepEqual(devPort(read(text)), { state: 'set', port }, text);
+  for (const bad of ['0', '65536', '70000', '123456', 'abc', '"9787"', "'9787'", ' 9787', '9787 ', '-1', '+9787', '9787.0', '1e4', '0x10', '９７８７']) {
+    assert.deepEqual(devPort(read(bad)), { state: 'invalid' }, bad);
+  }
+});
+
+test('slotServer: slot 0 follows a valid DEV_PORT, slot N never does', () => {
+  const set = { state: 'set', port: 9787 } as const;
+  assert.equal(slotServer(0, set), 'https://localhost:9787');
+  assert.equal(slotServer(0, { state: 'invalid' }), 'https://localhost:8787');
+  assert.equal(slotServer(0, { state: 'not set' }), 'https://localhost:8787');
+  assert.equal(slotServer(2, set), 'https://localhost:22787');
+  assert.equal(googleRedirect(0, set), 'https://localhost:9787/auth/google/callback');
+  assert.equal(googleRedirect(2, set), 'https://localhost:22787/auth/google/callback');
+});
+
+const withPort = (line: string) => fixture({ overrides: `${GOOD_OVERRIDES}${line}\n` });
+
+test('DEV_PORT=9787 in overrides.env: status, connect and doctor default to https://localhost:9787', async () => {
+  const f = withPort('DEV_PORT=9787');
+  for (const slotArgs of [[], ['--slot', '0']]) {
+    let fetchFn = recording();
+    const st = await cli({ env: f.env, fetch: fetchFn }, 'status', ...slotArgs, '--json');
+    assert.equal(st.code, EXIT.ok, st.stderr);
+    assert.equal(fetchFn.urls[0], 'https://localhost:9787/');
+    assert.equal((JSON.parse(st.stdout) as { server: string }).server, 'https://localhost:9787');
+
+    const co = JSON.parse((await cli({ env: f.env }, 'connect', ...slotArgs, '--json')).stdout) as Record<string, unknown>;
+    assert.equal(co.claude_mcp_add, 'claude mcp add --transport http autologger-dev https://localhost:9787/mcp');
+    assert.equal(co.autologger_mcp_login, 'autologger-mcp login --server https://localhost:9787');
+
+    fetchFn = recording();
+    const doc = await cli({ env: f.env, runner: fakeRunner(), fetch: fetchFn }, 'doctor', '--repo', f.repo, ...slotArgs, '--json');
+    assert.equal(doc.code, EXIT.ok, doc.stderr);
+    assert.deepEqual(fetchFn.urls, ['https://localhost:9787/']);
+    const report = JSON.parse(doc.stdout) as { server: string; notes: string[] };
+    assert.equal(report.server, 'https://localhost:9787');
+    assert.deepEqual(report.notes, []);
+  }
+});
+
+test('DEV_PORT=9787: the Google redirect in doctor\'s fix and up\'s warning uses it', async () => {
+  const f = fixture({ overrides: 'GOOGLE_CLIENT_ID=REPLACE_ME\nDEV_PORT=9787\n' });
+  const doc = JSON.parse((await cli({ env: f.env, runner: fakeRunner() }, 'doctor', '--repo', f.repo, '--json')).stdout) as { checks: { name: string; fix: string | null }[] };
+  assert.match(doc.checks.find((c) => c.name === 'google_client')?.fix ?? '', /redirect https:\/\/localhost:9787\/auth\/google\/callback/);
+  const up = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--dry-run', '--repo', f.repo, '--json');
+  assert.equal(up.code, EXIT.ok, up.stderr);
+  assert.match((JSON.parse(up.stdout) as { warnings: string[] }).warnings.join('\n'), /authorized redirect https:\/\/localhost:9787\/auth\/google\/callback/);
+  // Slot N's redirect never follows DEV_PORT.
+  const up2 = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--dry-run', '--repo', f.repo, '--slot', '2', '--json');
+  assert.match((JSON.parse(up2.stdout) as { warnings: string[] }).warnings.join('\n'), /authorized redirect https:\/\/localhost:22787\/auth\/google\/callback/);
+});
+
+test('DEV_PORT unset: the default server stays https://localhost:8787', async () => {
+  for (const f of [fixture({ overrides: GOOD_OVERRIDES }), withPort('DEV_PORT='), fixture()]) {
+    const fetchFn = recording();
+    const st = await cli({ env: f.env, fetch: fetchFn }, 'status', '--json');
+    assert.equal(st.code, EXIT.ok, st.stderr);
+    assert.equal(fetchFn.urls[0], 'https://localhost:8787/');
+    const doc = JSON.parse((await cli({ env: f.env, runner: fakeRunner(), fetch: answering(401) }, 'doctor', '--repo', f.repo, '--json')).stdout) as { server: string; notes: string[] };
+    assert.equal(doc.server, 'https://localhost:8787');
+    assert.deepEqual(doc.notes, []);
+  }
+});
+
+test('an invalid DEV_PORT falls back to https://localhost:8787 and doctor says so in one line naming the key, never the value', async () => {
+  for (const bad of ['not-a-port-value', '"9787"', "'9787'", ' 9787', '9787 ', '70000', '0']) {
+    const f = withPort(`DEV_PORT=${bad}`);
+    const fetchFn = recording();
+    const st = await cli({ env: f.env, fetch: fetchFn }, 'status', '--json');
+    assert.equal(fetchFn.urls[0], 'https://localhost:8787/', bad);
+    const co = JSON.parse((await cli({ env: f.env }, 'connect', '--json')).stdout) as { server: string };
+    assert.equal(co.server, 'https://localhost:8787', bad);
+
+    const json = await cli({ env: f.env, runner: fakeRunner(), fetch: answering(401) }, 'doctor', '--repo', f.repo, '--json');
+    const report = JSON.parse(json.stdout) as { server: string; notes: string[] };
+    assert.equal(report.server, 'https://localhost:8787', bad);
+    assert.deepEqual(report.notes, [
+      `DEV_PORT in ${f.stateDir}/overrides.env is not a port number (digits only, 1-65535, no quotes or spaces), so slot 0's server falls back to https://localhost:8787`,
+    ]);
+    const text = await cli({ env: f.env, runner: fakeRunner(), fetch: answering(401) }, 'doctor', '--repo', f.repo);
+    const notes = text.stdout.split('\n').filter((l) => l.includes('DEV_PORT'));
+    assert.deepEqual(notes, [`note: ${report.notes[0] ?? ''}`], bad);
+    assert.match(text.stdout, /^autologger dev stack: .* -> https:\/\/localhost:8787\nnote: DEV_PORT /);
+    // The value itself is never printed ('0' is too short to look for: it is in every path and port).
+    if (bad !== '0') for (const out of [st.stdout, st.stderr, json.stdout, json.stderr, text.stdout, text.stderr]) assert.equal(out.includes(bad.trim()), false, bad);
+  }
+});
+
+test('--slot 2 ignores DEV_PORT (22787, no note even when DEV_PORT is invalid)', async () => {
+  for (const line of ['DEV_PORT=9787', 'DEV_PORT=bogus']) {
+    const f = withPort(line);
+    const fetchFn = recording();
+    await cli({ env: f.env, fetch: fetchFn }, 'status', '--slot', '2', '--json');
+    assert.equal(fetchFn.urls[0], 'https://localhost:22787/');
+    const co = JSON.parse((await cli({ env: f.env }, 'connect', '--slot', '2', '--json')).stdout) as Record<string, unknown>;
+    assert.equal(co.claude_mcp_add, 'claude mcp add --transport http autologger-dev-2 https://localhost:22787/mcp');
+    const doc = JSON.parse((await cli({ env: f.env, runner: fakeRunner(), fetch: answering(401) }, 'doctor', '--repo', f.repo, '--slot', '2', '--json')).stdout) as { server: string; notes: string[] };
+    assert.equal(doc.server, 'https://localhost:22787');
+    assert.deepEqual(doc.notes, []);
+  }
+});
+
+test('precedence with DEV_PORT: --server, then --slot, then $AUTOLOGGER_URL, then https://localhost:<DEV_PORT>', async () => {
+  const f = withPort('DEV_PORT=9787');
+  const env = { ...f.env, AUTOLOGGER_URL: 'https://elsewhere.example' };
+  const first = async (...argv: string[]): Promise<string | undefined> => {
+    const fetchFn = recording();
+    const r = await cli({ env, fetch: fetchFn }, 'status', ...argv, '--json');
+    assert.equal(r.code, EXIT.ok, r.stderr);
+    return fetchFn.urls[0];
+  };
+  // --server wins over $AUTOLOGGER_URL and DEV_PORT.
+  assert.equal(await first('--server', 'https://example.test'), 'https://example.test/');
+  // --server with --slot: the slot's own server (DEV_PORT for slot 0) is accepted.
+  assert.equal(await first('--slot', '0', '--server', 'https://localhost:9787'), 'https://localhost:9787/');
+  // --slot wins over $AUTOLOGGER_URL; slot 0's server is DEV_PORT's.
+  assert.equal(await first('--slot', '0'), 'https://localhost:9787/');
+  assert.equal(await first('--slot', '2'), 'https://localhost:22787/');
+  // $AUTOLOGGER_URL wins over DEV_PORT.
+  assert.equal(await first(), 'https://elsewhere.example/');
+  // DEV_PORT is the default when neither is given.
+  const fetchFn = recording();
+  await cli({ env: f.env, fetch: fetchFn }, 'status', '--json');
+  assert.equal(fetchFn.urls[0], 'https://localhost:9787/');
+  // With DEV_PORT set, --slot 0 --server https://localhost:8787 names another stack: refused.
+  const r = await cli({ env, fetch: recording() }, 'status', '--slot', '0', '--server', 'https://localhost:8787', '--json');
+  assert.equal(r.code, EXIT.usage);
+  assert.match(r.stderr, /is not dev slot 0's server \(https:\/\/localhost:9787\)/);
 });

@@ -25,10 +25,10 @@ export function allowedUrl(raw: string): URL | null {
   return null;
 }
 
-/** `--server`, else `AUTOLOGGER_URL`, else the dev stack; returned as an origin. */
-export function resolveServer(option: string | undefined, env: Env): string {
+/** `--server`, else `AUTOLOGGER_URL`, else the dev stack (`fallback`); returned as an origin. */
+export function resolveServer(option: string | undefined, env: Env, fallback = DEFAULT_SERVER): string {
   const fromEnv = env.AUTOLOGGER_URL !== undefined && env.AUTOLOGGER_URL !== '' ? env.AUTOLOGGER_URL : undefined;
-  const raw = option ?? fromEnv ?? DEFAULT_SERVER;
+  const raw = option ?? fromEnv ?? fallback;
   const url = allowedUrl(raw);
   if (url === null) {
     const source = option !== undefined ? '--server' : fromEnv !== undefined ? 'AUTOLOGGER_URL' : 'default server';
