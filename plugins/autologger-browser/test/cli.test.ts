@@ -3,11 +3,14 @@
 //
 // Only fakes run here: `certutil`, `agent-browser` and `chromium` on PATH are shell scripts (certutil
 // keeps its state in the database folder; agent-browser logs its arguments and stdin), HOME is a temp
-// dir holding a fixture CA. No real browser is started and no real NSS database is touched.
+// dir holding a fixture CA. No real browser is started and no real NSS database is touched. doctor's
+// two TLS probes go to a closed port on 127.0.0.1 (AUTOLOGGER_BROWSER_TEST_PROBE_ORIGIN, test only),
+// never to a dev stack on this machine (localhost:8787, dashboards.localhost).
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { createServer as createTcpServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -80,6 +83,18 @@ env.npm_config_offline = 'true';
 env.PATH = `${bin}:${process.env.PATH ?? ''}`;
 env.HOME = home;
 env.FAKE_AB_LOG = abLog;
+delete env.LOCAL_BAO_DIR;
+
+// A port nothing listens on: bound, then closed, so the probe is refused at once.
+const closedPort = await new Promise<number>((resolve) => {
+  const server = createTcpServer();
+  server.listen(0, '127.0.0.1', () => {
+    const { port } = server.address() as AddressInfo;
+    server.close(() => resolve(port));
+  });
+});
+const PROBE_ORIGIN = `https://127.0.0.1:${closedPort}`;
+env.AUTOLOGGER_BROWSER_TEST_PROBE_ORIGIN = PROBE_ORIGIN;
 
 function skillCommands(): string[] {
   const text = readFileSync(join(pluginRoot, SKILL), 'utf8');
@@ -119,8 +134,22 @@ test('every skill command line runs from a fresh copy in order (doctor, setup, s
       assert.equal(report.flags[0], '--session');
     }
     if (command.includes(' doctor ')) {
-      const report = JSON.parse(stdout) as { checks: Array<{ name: string; status: string }> };
+      const report = JSON.parse(stdout) as { slot: number; ok: boolean; checks: Array<{ name: string; status: string; detail: string; fix: string | null }> };
+      assert.equal(report.slot, 0);
+      assert.equal(typeof report.ok, 'boolean');
+      for (const c of report.checks) {
+        assert.equal(typeof c.detail, 'string');
+        assert.ok(['ok', 'missing', 'fail'].includes(c.status), c.name);
+        assert.equal(c.fix === null, c.status === 'ok', c.name);
+      }
       assert.equal(report.checks.find((c) => c.name === 'certutil')?.status, 'ok');
+      // Both probes went to the test origin only, and found nothing there.
+      for (const name of ['app_tls', 'runtime_tls']) {
+        const check = report.checks.find((c) => c.name === name);
+        assert.equal(check?.status, 'fail', name);
+        assert.equal(check?.detail, `${PROBE_ORIGIN} cannot be reached (ECONNREFUSED)`);
+      }
+      assert.ok(!stdout.includes('localhost:8787') && !stdout.includes('dashboards.localhost'), stdout);
     }
     assert.ok(!stdout.includes(TOKEN) && !stderr.includes(TOKEN), `${command} printed the token`);
   }

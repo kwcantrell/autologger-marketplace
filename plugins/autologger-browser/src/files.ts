@@ -1,7 +1,7 @@
 // File operations on this plugin's own folder: directories are created mode 700 and never followed
 // through a symlink, and the launcher is replaced atomically.
 import { randomBytes } from 'node:crypto';
-import { chmodSync, type Stats, closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, renameSync, symlinkSync, unlinkSync, writeSync } from 'node:fs';
+import { chmodSync, type Stats, closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, renameSync, statSync, symlinkSync, unlinkSync, writeSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { CliError } from './errors.ts';
 
@@ -26,6 +26,39 @@ export function ensurePrivateDir(path: string): void {
     throw new CliError(`refusing to use ${path}: it is ${stat.isSymbolicLink() ? 'a symlink' : 'not a directory'}; this plugin only uses a real directory there`);
   }
   chmodSync(path, 0o700);
+}
+
+/**
+ * `mkdir -p` one level at a time: creates each missing directory of `path` with mode 700, and
+ * throws when an existing component is not a directory. Not `mkdirSync(path, { recursive: true })`:
+ * on Node 24 that never returns when mkdir keeps failing with ENOENT although the parent exists (as
+ * under /proc), so setup would hang; here that ENOENT is thrown. An existing component may be a
+ * symlink to a directory (a symlinked HOME is normal); this plugin's own folders below are checked
+ * by ensurePrivateDir, which refuses symlinks.
+ */
+export function ensureDirs(path: string): void {
+  const mkdir = (dir: string): void => {
+    try {
+      mkdirSync(dir, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      let stat: Stats;
+      try {
+        stat = statSync(dir);
+      } catch {
+        throw new CliError(`refusing to use ${dir}: it is a broken symlink, not a directory`);
+      }
+      if (!stat.isDirectory()) throw new CliError(`refusing to use ${dir}: it is not a directory`);
+    }
+  };
+  try {
+    mkdir(path);
+  } catch (error) {
+    const parent = dirname(path);
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || parent === path) throw error;
+    ensureDirs(parent);
+    mkdir(path);
+  }
 }
 
 /** True when `path` is a regular file holding exactly `text`. */
