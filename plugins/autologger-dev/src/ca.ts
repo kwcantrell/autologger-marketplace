@@ -1,7 +1,7 @@
 // ca: fetches the HTTPS-mode dev stack's root CA certificate (`DEV_HTTPS=1 make dev-ca`), checks it
 // is exactly one public PEM certificate, and writes it where NODE_EXTRA_CA_CERTS can point.
 import { X509Certificate } from 'node:crypto';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { CliError } from './errors.ts';
 import { type Env, shellQuote } from './http.ts';
@@ -49,9 +49,55 @@ export interface CaContext {
   diagnostics: (text: string) => void;
 }
 
+/** An existing file larger than this is not a CA certificate `ca` wrote. */
+const MAX_EXISTING_BYTES = 64 * 1024;
+
+/**
+ * Why `ca` may not write `path`, or null when it may: it does not exist, or it is a regular file
+ * holding exactly one PEM certificate (an earlier `ca` run's file, which is replaced). A directory,
+ * symlink, other special file or any other content is refused, so an unrelated file is never
+ * clobbered. The file's text is never put in a message.
+ */
+export function outRefusal(path: string): string | null {
+  let stat;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : `it cannot be inspected (${(error as NodeJS.ErrnoException).code ?? 'error'})`;
+  }
+  if (stat.isSymbolicLink()) return 'it is a symlink';
+  if (stat.isDirectory()) return 'it is a directory';
+  if (!stat.isFile()) return 'it is not a regular file';
+  if (stat.size > MAX_EXISTING_BYTES) return 'it exists and is not a single PEM certificate';
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (error) {
+    return `it exists and cannot be read (${(error as NodeJS.ErrnoException).code ?? 'error'})`;
+  }
+  return singleCertificate(text).ok ? null : 'it exists and is not a single PEM certificate';
+}
+
+function refuseOut(path: string, why: string): CliError {
+  return new CliError(`refusing to write ${path}: ${why}; only a missing file or an existing single-certificate file is replaced. Nothing was written; pass another --out`);
+}
+
+/** Writes `pem` to `path` (mode 644) without following a symlink planted there since the check. */
+function writeCertificate(path: string, pem: string): void {
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o644);
+  try {
+    fchmodSync(fd, 0o644);
+    writeSync(fd, pem);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export async function fetchCa(ctx: CaContext): Promise<CaReport> {
   const { checkout } = ctx;
   await verifyCheckout(checkout, ctx.runner, ctx.env);
+  const before = outRefusal(ctx.out);
+  if (before !== null) throw refuseOut(ctx.out, before);
   const result = await ctx.runner('make', ['dev-ca'], { cwd: checkout.path, env: childEnv(ctx.env, { DEV_HTTPS: '1' }), timeoutMs: 120_000 });
   if (result.error === 'ENOENT') throw new CliError('make is not on PATH');
   if (result.stderr !== '') ctx.diagnostics(result.stderr.endsWith('\n') ? result.stderr : `${result.stderr}\n`);
@@ -63,11 +109,13 @@ export async function fetchCa(ctx: CaContext): Promise<CaReport> {
   const found = singleCertificate(result.stdout);
   if (!found.ok) throw new CliError(`refusing the output of ${CA_COMMAND}: ${found.reason}; nothing was written`);
 
+  const after = outRefusal(ctx.out);
+  if (after !== null) throw refuseOut(ctx.out, after);
   try {
     mkdirSync(dirname(ctx.out), { recursive: true });
-    writeFileSync(ctx.out, found.pem, { mode: 0o644 });
-    chmodSync(ctx.out, 0o644);
+    writeCertificate(ctx.out, found.pem);
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw refuseOut(ctx.out, 'it is a symlink');
     throw new CliError(`cannot write ${ctx.out}: ${(error as Error).message}`);
   }
   return {
