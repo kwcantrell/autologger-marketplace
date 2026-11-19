@@ -37,8 +37,8 @@ Commands:
   doctor [--repo <path>] [--server <url>]
                  Check what is missing: the checkout, docker, make, Node, the local OpenBao
                  container, .env.openbao.dev, the Google client and CUSTOM_DASHBOARDS_ENABLED in
-                 overrides.env (set, placeholder or quoted only, never values), NODE_EXTRA_CA_CERTS and the
-                 dev server. Each check is ok, missing or fail, with a one-line fix. Exit 0 when it ran.
+                 overrides.env (set, placeholder, quoted or padded only, never values),
+                 NODE_EXTRA_CA_CERTS and the dev server. Each check is ok, missing or fail, with a one-line fix. Exit 0 when it ran.
   up --repo <path> [--dry-run]
                  Run, in the checkout and only as needed: ${STEPS['dev-bao'].command},
                  ${STEPS['dev-bao-set'].command}, then ${STEPS['dev-up'].command}.
@@ -164,8 +164,20 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
   // No value from the OpenBao state directory or .env.openbao.dev may leave this process, whoever
   // printed it (make and docker included): scrub every write on the way out. The files are read
   // again for each write, because a make step (make dev-bao) can write a new secret and print it
-  // in the same step; by the time its output reaches us the file is already on disk.
-  const scrub = (text: string): string => redactor(secretValues(env, checkout.path))(text);
+  // in the same step; by the time its output reaches us the file is already on disk. A value seen
+  // once stays hidden for the rest of the run, even after a step replaces or removes it.
+  const hidden = new Set<string>();
+  let secrets: string[] = [];
+  const learnSecrets = (): void => {
+    const before = hidden.size;
+    for (const value of secretValues(env, checkout.path)) hidden.add(value);
+    if (hidden.size !== before) secrets = [...hidden].sort((a, b) => b.length - a.length);
+  };
+  learnSecrets();
+  const scrub = (text: string): string => {
+    learnSecrets();
+    return redactor(secrets)(text);
+  };
   const io = { stdout: (t: string) => rawIo.stdout(scrub(t)), stderr: (t: string) => rawIo.stderr(scrub(t)) };
   const json = values.json;
   const out = (value: unknown, text: string): void => io.stdout(json ? `${JSON.stringify(value)}\n` : text);
@@ -180,7 +192,7 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
       }
       case 'up': {
         const progress = lineWriter(io.stderr);
-        const ctx = { env, runner, checkout, progress: progress.push };
+        const ctx = { env, runner, checkout, progress: progress.push, endOutput: progress.flush };
         const plan = await planUp(ctx);
         for (const w of plan.warnings) io.stderr(`${CLI_NAME}: warning: ${w}\n`);
         if (values['dry-run']) {

@@ -3,7 +3,7 @@
 // failure. The CLI's own output never contains them (no [redacted] needed); when make or docker
 // print one, it is scrubbed on the way out.
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { EXIT } from '../src/run.ts';
@@ -154,4 +154,51 @@ test('a quoted secret value (with or without its quotes) appears in no output of
       }
     }
   }
+});
+
+for (const [file, write] of [
+  ['secret_id', (f: { stateDir: string }, v: string) => writeFileSync(join(f.stateDir, 'secret_id'), `${v}\n`)],
+  ['secrets.json', (f: { stateDir: string }, v: string) => writeFileSync(join(f.stateDir, 'secrets.json'), JSON.stringify({ JWT_SECRET: v }))],
+  ['.env.openbao.dev', (f: { repo: string }, v: string) => writeFileSync(join(f.repo, '.env.openbao.dev'), `BAO_SECRET_ID=${v}\n`)],
+] as const) {
+  test(`a secret a step replaces in ${file} stays hidden when a later step prints the old value`, async () => {
+    for (const json of [[], ['--json']]) {
+      const f = fixture({ credentials: false, secrets: false });
+      const old = `old-${file}-value-0123456789abcdef`;
+      const replacement = `new-${file}-value-fedcba9876543210`;
+      write(f, old);
+      const runner = fakeRunner({
+        'docker container': { code: 1, stderr: 'No such container' },
+        'make dev-bao': () => {
+          write(f, replacement);
+          return { code: 0, stdout: 'rotated\n' };
+        },
+        'make dev-bao-set': { code: 0, stdout: `still had ${old}\nand ${replacement}\n` },
+        'make dev-up': { code: 1, stderr: `boot refused ${old}` },
+      });
+      const outcome = await cli({ env: f.env, runner }, 'up', '--repo', f.repo, ...json);
+      assert.equal(outcome.code, EXIT.failure);
+      for (const v of [old, replacement]) assert.ok(!(outcome.stdout + outcome.stderr).includes(v), outcome.stderr);
+      assert.match(outcome.stderr, /still had \[redacted\]\nand \[redacted\]\n/);
+      assert.match(outcome.stderr, /boot refused \[redacted\]\n/);
+    }
+  });
+}
+
+test('a secret removed from the state files by a step stays hidden for the rest of the run', async () => {
+  const f = fixture({ credentials: false, secrets: false });
+  const old = 'removed-secret-value-0123456789abcdef';
+  writeFileSync(join(f.stateDir, 'secrets.json'), JSON.stringify({ JWT_SECRET: old }));
+  const runner = fakeRunner({
+    'docker container': { code: 1, stderr: 'No such container' },
+    'make dev-bao': () => {
+      rmSync(join(f.stateDir, 'secrets.json'));
+      return { code: 0 };
+    },
+    'make dev-up': { code: 0, stdout: `gone but printed ${old}\n` },
+  });
+  const outcome = await cli({ env: f.env, runner }, 'up', '--repo', f.repo);
+  assert.equal(outcome.code, EXIT.ok, outcome.stderr);
+  assert.ok(!(outcome.stdout + outcome.stderr).includes(old));
+  assert.match(outcome.stderr, /gone but printed \[redacted\]\n/);
 });

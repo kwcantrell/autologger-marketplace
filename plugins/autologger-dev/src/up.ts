@@ -21,6 +21,7 @@ import {
   OVERRIDES_FILE,
   QUOTES_WHY,
   readOverrides,
+  SPACES_WHY,
   stateDir,
   verifyCheckout,
 } from './stack.ts';
@@ -56,7 +57,7 @@ export interface UpReport {
   repo: string;
   dry_run: boolean;
   steps: PlannedStep[];
-  /** 'placeholder' also covers not set and quoted values (the warnings say which). */
+  /** 'placeholder' also covers not set, quoted and padded values (the warnings say which). */
   google_client: 'set' | 'placeholder';
   warnings: string[];
 }
@@ -67,6 +68,11 @@ export interface UpContext {
   checkout: Checkout;
   /** Receives the make output (and the step headers) as it arrives. */
   progress: (text: string) => void;
+  /**
+   * Called after each step: ends a last line of its output that had no newline, so the next step's
+   * header starts on a line of its own.
+   */
+  endOutput: () => void;
 }
 
 export async function planUp(ctx: UpContext): Promise<UpReport> {
@@ -100,7 +106,9 @@ export async function planUp(ctx: UpContext): Promise<UpReport> {
         ? `${DASHBOARDS_KEY}=1 is already in ${overridesPath}`
         : dashboards === 'quoted'
           ? `${DASHBOARDS_KEY} is quoted in ${overridesPath} (${QUOTES_WHY}, so it is not 1); this rewrites it unquoted, and /mcp needs it`
-          : `${DASHBOARDS_KEY} is not 1 in ${overridesPath}; /mcp needs it`,
+          : dashboards === 'padded'
+            ? `${DASHBOARDS_KEY} has spaces around its value in ${overridesPath} (${SPACES_WHY}, so it is not exactly 1); this rewrites it without them, and /mcp needs it`
+            : `${DASHBOARDS_KEY} is not 1 in ${overridesPath}; /mcp needs it`,
     status: 'planned',
   });
   steps.push({ id: 'dev-up', command: STEPS['dev-up'].command, run: true, reason: 'migrate, build and start the stack in HTTPS mode', status: 'planned' });
@@ -108,10 +116,14 @@ export async function planUp(ctx: UpContext): Promise<UpReport> {
 
   const google = overrides.state === 'unreadable' ? null : googleClient(values);
   const warnings: string[] = [];
-  const quoted = google === null ? [] : googleKeysIn(google, 'quoted');
-  if (quoted.length > 0) {
+  for (const [state, what, why, fix] of [
+    ['quoted', 'wrapped in quotes', QUOTES_WHY, 'Remove the quotes'],
+    ['padded', 'surrounded by spaces', SPACES_WHY, 'Remove the spaces'],
+  ] as const) {
+    const keys = google === null ? [] : googleKeysIn(google, state);
+    if (keys.length === 0) continue;
     warnings.push(
-      `${quoted.join(' and ')} in ${overridesPath} ${quoted.length > 1 ? 'are' : 'is'} wrapped in quotes, and ${QUOTES_WHY}, so Google will reject the client: the stack will come up, but Google sign-in (and so the MCP sign-in) will not work. Remove the quotes, then run make dev-bao and up again.`,
+      `${keys.join(' and ')} in ${overridesPath} ${keys.length > 1 ? 'are' : 'is'} ${what}, and ${why}, so Google will reject the client: the stack will come up, but Google sign-in (and so the MCP sign-in) will not work. ${fix}, then run make dev-bao and up again.`,
     );
   }
   const unset = google === null ? [] : [...googleKeysIn(google, 'placeholder'), ...googleKeysIn(google, 'not set')];
@@ -135,6 +147,7 @@ export async function runUp(ctx: UpContext, report: UpReport): Promise<UpReport>
       env: childEnv(ctx.env, { ...spec.env }),
       onOutput: ctx.progress,
     });
+    ctx.endOutput();
     if (result.code !== 0) {
       step.status = 'failed';
       for (const later of report.steps) if (later.status === 'planned') later.status = 'not run';
