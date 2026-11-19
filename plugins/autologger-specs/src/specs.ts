@@ -1,7 +1,7 @@
 // which / stale / lint / new: the logic of autologger's `specs` and `specs-with-code` gates
 // (scripts/lib/check_change.py), as plain functions over a checkout.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { byCodePoint, globRe, matches } from './glob.ts';
 import { CommandError, SPECS_DIR, git, gitZ, loadLifecycle, loadLifecycleAt, specPathMap, stringList, tracked } from './repo.ts';
 import type { Repo } from './repo.ts';
@@ -284,6 +284,28 @@ export function specPathsEntry(name: string, covers: readonly string[]): string 
   return `    ${name}:\n${globs.map((g) => `    - ${yamlScalar(g)}\n`).join('')}`;
 }
 
+/**
+ * Creates `dir` and any missing parents, one level at a time. Not the recursive form of mkdirSync:
+ * on Node 24 that never returns when mkdir keeps failing with ENOENT under an existing parent (as under
+ * /proc). Here ENOENT is thrown, and so is a component that exists but is not a directory.
+ */
+export function makeDirs(dir: string): void {
+  try {
+    mkdirSync(dir);
+    return;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') {
+      if (statSync(dir).isDirectory()) return;
+      throw new CommandError(`${dir} exists and is not a directory`);
+    }
+    const parent = dirname(dir);
+    if (code !== 'ENOENT' || parent === dir) throw error;
+    makeDirs(parent);
+  }
+  mkdirSync(dir);
+}
+
 export function newSpec(repo: Repo, name: string, covers: readonly string[]): NewSpecResult {
   if (!SPEC_NAME_RE.test(name) || name.length > SPEC_NAME_MAX) {
     throw new ArgumentError(`spec name '${name}' must be kebab-case (${SPEC_NAME_RE.source}), at most ${SPEC_NAME_MAX} characters`);
@@ -298,7 +320,7 @@ export function newSpec(repo: Repo, name: string, covers: readonly string[]): Ne
   const files = tracked(repo.root);
   const unmatched = covers.filter((g) => !files.some((f) => globRe(g).test(f)));
   const mapped = specPathMap(loadLifecycle(repo.root)).has(name);
-  mkdirSync(join(repo.root, SPECS_DIR), { recursive: true });
+  makeDirs(join(repo.root, SPECS_DIR));
   writeFileSync(abs, specTemplate(name), { flag: 'wx' });
   return { file, entry: specPathsEntry(name, covers), covers: [...covers], unmatched, mapped };
 }
