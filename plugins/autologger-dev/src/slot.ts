@@ -24,7 +24,7 @@ export function parseSlot(option: string | undefined): number {
 export const DEV_PORT_KEY = 'DEV_PORT';
 
 /**
- * Slot 0's DEV_PORT from overrides.env: 'set' with the port (the value verbatim is digits only and
+ * Slot 0's DEV_PORT from overrides.env: 'set' with the port (the value verbatim is digits only, no leading zero and
  * 1-65535), 'not set' (no line, an empty value, or overrides.env absent or unreadable) or 'invalid'
  * (anything else: non-numeric, quoted, padded, out of range). Only a valid port is ever kept.
  */
@@ -33,9 +33,22 @@ export type DevPort = { state: 'set'; port: number } | { state: 'not set' } | { 
 export function devPort(overrides: OverridesRead): DevPort {
   const value = overrides.state === 'read' ? overrides.values.get(DEV_PORT_KEY) : undefined;
   if (value === undefined || value === '') return { state: 'not set' };
-  if (!/^[0-9]{1,5}$/.test(value)) return { state: 'invalid' };
+  // compose-run.mjs (docker/scripts/compose-run.mjs, the published-port check): /^[1-9][0-9]{0,4}$/ and <= 65535,
+  // so a leading zero (08787) or 0 is refused there and invalid here.
+  if (!/^[1-9][0-9]{0,4}$/.test(value)) return { state: 'invalid' };
   const port = Number(value);
   return port >= 1 && port <= 65535 ? { state: 'set', port } : { state: 'invalid' };
+}
+
+/** The host port the CLI expects the slot's app on: slot 0's valid DEV_PORT else 8787; slot N's 2N787. */
+export function expectedPort(slot: number, port: DevPort = { state: 'not set' }): number {
+  if (slot !== 0) return Number(`2${slot}787`);
+  return port.state === 'set' ? port.port : 8787;
+}
+
+/** The slot's app container (compose container_name; app-gate shares its network namespace and ports). */
+export function appContainer(slot: number): string {
+  return slot === 0 ? 'autologger-dev-app' : `autologger-dev-${slot}-app`;
 }
 
 /**

@@ -199,7 +199,7 @@ export function formatUp(report: UpReport): string {
     const mark = s.status === 'skipped' ? 'skip' : report.dry_run ? 'run ' : s.status;
     lines.push(`  [${mark}] ${s.command}  (${s.reason})`);
   }
-  for (const w of report.warnings) lines.push(`Warning: ${w}`);
+  // Warnings are not repeated here: in text mode run.ts prints each once, on stderr, as the other warnings.
   if (!report.dry_run) lines.push(`Next: ${cliCommand('ca', report.slot)}, then ${cliCommand('connect', report.slot)}.`);
   return `${lines.join('\n')}\n`;
 }

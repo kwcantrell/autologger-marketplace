@@ -281,8 +281,8 @@ test('devPort: digits only, 1-65535, read verbatim; anything else is invalid and
   assert.deepEqual(devPort({ state: 'unreadable' }), { state: 'not set' });
   assert.deepEqual(devPort({ state: 'read', values: new Map() }), { state: 'not set' });
   assert.deepEqual(devPort(read('')), { state: 'not set' });
-  for (const [text, port] of [['9787', 9787], ['1', 1], ['65535', 65535], ['08787', 8787]] as const) assert.deepEqual(devPort(read(text)), { state: 'set', port }, text);
-  for (const bad of ['0', '65536', '70000', '123456', 'abc', '"9787"', "'9787'", ' 9787', '9787 ', '-1', '+9787', '9787.0', '1e4', '0x10', '９７８７']) {
+  for (const [text, port] of [['9787', 9787], ['1', 1], ['65535', 65535], ['8787', 8787]] as const) assert.deepEqual(devPort(read(text)), { state: 'set', port }, text);
+  for (const bad of ['0', '08787', '00', '01', '65536', '70000', '123456', 'abc', '"9787"', "'9787'", ' 9787', '9787 ', '-1', '+9787', '9787.0', '1e4', '0x10', '９７８７']) {
     assert.deepEqual(devPort(read(bad)), { state: 'invalid' }, bad);
   }
 });
@@ -347,7 +347,7 @@ test('DEV_PORT unset: the default server stays https://localhost:8787', async ()
 });
 
 test('an invalid DEV_PORT falls back to https://localhost:8787 and doctor says so in one line naming the key, never the value', async () => {
-  for (const bad of ['not-a-port-value', '"9787"', "'9787'", ' 9787', '9787 ', '70000', '0']) {
+  for (const bad of ['not-a-port-value', '"9787"', "'9787'", ' 9787', '9787 ', '70000', '0', '08787']) {
     const f = withPort(`DEV_PORT=${bad}`);
     const fetchFn = recording();
     const st = await cli({ env: f.env, fetch: fetchFn }, 'status', '--json');
