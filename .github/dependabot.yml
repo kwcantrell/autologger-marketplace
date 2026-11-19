@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # The root dev tooling (typescript, @types/node). Plugins have no dependencies of their own.
+  # One group per ecosystem: each weekly run opens at most one version-update PR.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns: ["*"]
+  # Keeps the SHA-pinned actions in .github/workflows current; Dependabot updates the SHA and the
+  # version comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
