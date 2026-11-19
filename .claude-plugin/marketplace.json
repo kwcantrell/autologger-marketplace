@@ -41,6 +41,11 @@
       "name": "plugin-discover",
       "source": "./plugins/plugin-discover",
       "description": "Finds the installed plugin or skill that fits an autologger task, offers to install a fitting autologger-marketplace plugin that is not installed yet, and points at plugin-advisor when nothing fits: a local, deterministic catalog and matcher, a mode setting and a guarded install, plus a prompt hook that hints at it."
+    },
+    {
+      "name": "autologger-clips",
+      "source": "./plugins/autologger-clips",
+      "description": "Clips autologger moments into OpenReel video timelines (FCPXML/OTIO) and playlist compilations: maps session time to video time, keeps a session-to-video map, fetches YouTube sources with yt-dlp, and runs the OpenReel web editor."
     }
   ]
 }

@@ -1,6 +1,6 @@
 {
   "name": "plugin-advisor",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "description": "CLI for the plugin-advisor Claude Code plugin; run by its skills via npx.",
   "type": "module",

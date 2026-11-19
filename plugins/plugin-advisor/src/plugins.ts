@@ -16,6 +16,7 @@ export const MARKETPLACE_NAME = 'autologger-marketplace';
  */
 export const FALLBACK_PLUGINS = [
   'autologger-browser',
+  'autologger-clips',
   'autologger-dev',
   'autologger-mcp',
   'autologger-specs',

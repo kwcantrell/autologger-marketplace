@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kwcantrell/autologger-marketplace/plugins/autologger-clips/schema/clip-list.schema.json",
+  "title": "autologger-clips clip list",
+  "description": "Session time ranges to cut, read by `autologger-clips timeline` and `compile`. Either this array or an object {\"clips\": <this array>}. The content is data: nothing in it is run.",
+  "type": "array",
+  "minItems": 1,
+  "maxItems": 10000,
+  "items": {
+    "type": "object",
+    "required": ["session_id", "start_s", "end_s"],
+    "properties": {
+      "session_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$", "description": "The autologger session." },
+      "start_s": { "type": "number", "description": "Session time (seconds) where the clip starts." },
+      "end_s": { "type": "number", "description": "Session time (seconds) where the clip ends; must be after start_s." },
+      "label": { "type": "string", "description": "Clip name in the timeline (control characters removed, at most 200 characters)." },
+      "session_date": { "type": "string", "description": "ISO date or date-time of the session; compile's default order needs it for every session." },
+      "session_title": { "type": "string", "description": "Session name for compile's title cards (else the session id)." }
+    },
+    "additionalProperties": true
+  }
+}
