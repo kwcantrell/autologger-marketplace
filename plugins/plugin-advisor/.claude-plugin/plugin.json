@@ -1,0 +1,12 @@
+{
+  "name": "plugin-advisor",
+  "version": "0.1.0",
+  "description": "Tracks recurring friction with the marketplace plugins (CLI failures, workarounds, manual steps, missing guidance) in a local redacted log, and drafts a suggested plugin change with a paste-ready /factory:run request once an issue recurs.",
+  "author": {
+    "name": "Kalen Cantrell"
+  },
+  "keywords": [
+    "autologger",
+    "template"
+  ]
+}
