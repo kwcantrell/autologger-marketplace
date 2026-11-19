@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { EXIT } from '../src/run.ts';
-import { cli, fakeRunner, fixture, GOOD_OVERRIDES, NOT_FOUND } from './helpers.ts';
+import { cli, fakeRunner, fixture, GOOD_OVERRIDES, INHERITED, NOT_FOUND } from './helpers.ts';
 
 const makeCalls = (runner: ReturnType<typeof fakeRunner>): string[] =>
   runner.calls.filter((c) => c.command === 'make').map((c) => `${c.env?.DEV_HTTPS === '1' ? 'DEV_HTTPS=1 ' : ''}make ${c.args.join(' ')}`);
@@ -118,13 +118,14 @@ test('up never runs a target outside its fixed list and never writes overrides.e
       const f = fixture({ credentials: container === 'true\n', ...(overrides !== undefined ? { overrides } : {}) });
       const runner = fakeRunner({ 'docker container': { stdout: container } });
       // Variables that would point make at a reset, another slot or stage are not passed on.
-      const env = { ...f.env, CONFIRM: 'yes', DEV_SLOT: '3', STAGE_IMAGE_TAG: 'abc', MAKEFLAGS: 'CONFIRM=yes' };
+      const env = { ...f.env, ...INHERITED };
       assert.equal((await cli({ env, runner }, 'up', '--repo', f.repo)).code, EXIT.ok);
       for (const call of makeCalls(runner)) assert.ok(ALLOWED.has(call), call);
       for (const call of runner.calls) {
         assert.doesNotMatch(call.args.join(' '), /reset|down|stage|prod|GOOGLE/);
         if (call.command !== 'make') continue;
-        for (const k of ['CONFIRM', 'DEV_SLOT', 'STAGE_IMAGE_TAG', 'MAKEFLAGS']) assert.equal(call.env?.[k], undefined, k);
+        for (const k of Object.keys(INHERITED)) assert.equal(call.env?.[k], k === 'DEV_HTTPS' && call.args[0] === 'dev-up' ? '1' : undefined, k);
+        assert.equal(call.env?.HOME, f.env.HOME, 'the rest of the environment is passed on');
       }
       const after = overrides === undefined ? undefined : readFileSync(join(f.stateDir, 'overrides.env'), 'utf8');
       assert.equal(after, overrides);

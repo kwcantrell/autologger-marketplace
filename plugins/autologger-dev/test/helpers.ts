@@ -123,6 +123,23 @@ const DEFAULTS: Record<string, Partial<RunResult>> = {
   'git remote': { code: 0, stdout: 'https://github.com/kwcantrell/autologger-2.git\n' },
 };
 
+/**
+ * Variables a caller (an outer make, a stage shell) may have set that must not reach make: they
+ * would point it at another slot, a stage stack or a reset, or add flags and variables to it.
+ */
+export const INHERITED: Record<string, string> = {
+  CONFIRM: 'yes',
+  DEV_SLOT: '3',
+  DEV_HTTPS: '0',
+  EMAIL: 'someone@example.com',
+  STAGE_IMAGE_TAG: 'abc',
+  MAKEFLAGS: 'w -- CONFIRM=yes',
+  GNUMAKEFLAGS: '--print-directory',
+  MFLAGS: '-w',
+  MAKELEVEL: '1',
+  MAKEFILES: '/tmp/evil.mk',
+};
+
 export const NOT_FOUND: Partial<RunResult> = { code: null, error: 'ENOENT' };
 
 /** fetch that answers every request with this status. */
