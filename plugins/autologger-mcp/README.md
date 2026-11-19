@@ -176,7 +176,9 @@ Credentials are per server, so the two sign-ins coexist.
 and `get_wiki_page`, follows every `next_cursor` and every `next_offset`, and writes one JSON
 snapshot (mode 0600, through a temporary file): per session its `get_session` result, all events,
 all topics and the wiki pages associated with it, each with its whole `body_md`. It refuses an
-existing `--out` unless `--force`. `--json` prints the counts per session and in total.
+existing `--out`; `export --force ...` replaces it (`--force` must come right after `export`, so a
+pre-approved `export --server ...` command line can never replace a file). `--out` must end in
+`.json`. `--json` prints the counts per session and in total.
 
 **What is and is not copied.** The MCP write tools create events, topics and wiki pages only. They
 cannot create studios, shows, sessions or transcripts, so `import` copies **into sessions that
@@ -194,8 +196,10 @@ not copied. Per kind:
   `[label](wiki:<page_id>)` links point at the page copied from that source page, and
   `[quote](cite:<session_id>@<seconds>)` at the mapped target session. Links to pages or sessions
   not copied are left as they are and listed in `unresolved_links`. A page that links to a page
-  created after it gets its links fixed with `update_wiki_page` afterwards (`links_fixed`). Every
-  body is checked with `check-links` before it is written.
+  created after it gets its links fixed with `update_wiki_page` afterwards (`links_fixed`), also
+  when that page is created only by a later run (it failed, or its session is mapped later; rerun
+  with every `--map` so the earlier pages are in scope). Every body is checked with `check-links`
+  before it is written.
 
 **Fields.** import reads each write tool's `inputSchema` from the target's `tools/list` (inputs are
 strict) and sends only the fields it accepts; every source field it does not send (such as an

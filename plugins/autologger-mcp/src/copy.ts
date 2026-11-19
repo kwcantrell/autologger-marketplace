@@ -60,8 +60,11 @@ export interface CreatedItem {
   target_session_id: string;
   /** A wiki page's revision after the last write (update_wiki_page needs it). */
   revision?: number;
-  /** A wiki page created with links to pages not created yet: false until they are rewritten. */
-  links_final?: boolean;
+  /**
+   * sha256 (hex) of the wiki body last sent. A later run updates the page when the body, rewritten
+   * with what the target has by then, differs (a linked page created after it, even on a rerun).
+   */
+  body_sha256?: string;
 }
 
 export interface SkippedItem {

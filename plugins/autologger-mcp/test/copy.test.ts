@@ -146,18 +146,44 @@ test('export: every page of each list and every slice of each wiki body, with re
   assert.equal(statSync(out).mode & 0o777, 0o600);
 });
 
-test('export refuses an existing --out unless --force', async () => {
+test('export refuses an existing --out unless export --force (right after export, so the pre-approved form cannot overwrite)', async () => {
   const s = await setup();
   writeFileSync(s.snapshot, 'keep me');
   const refused = await s.run('export', '--server', s.source.base, '--session', 'S1', '--out', s.snapshot, '--json');
   assert.equal(refused.code, 1);
   assert.equal(refused.stdout, '');
-  assert.match(refused.stderr, /already exists; pass --force/);
+  assert.match(refused.stderr, /already exists; run 'export --force \.\.\.' to overwrite it/);
   assert.equal(readFileSync(s.snapshot, 'utf8'), 'keep me');
-  const forced = await s.run('export', '--server', s.source.base, '--session', 'S1', '--out', s.snapshot, '--force', '--json');
+  // The skill pre-approves `export --server ...`: --force anywhere after that is a usage error.
+  s.source.calls.length = 0;
+  for (const at of [3, 7, 9]) {
+    const argv = ['export', '--server', s.source.base, '--session', 'S1', '--out', s.snapshot, '--json'];
+    argv.splice(at, 0, '--force');
+    const late = await s.run(...argv);
+    assert.equal(late.code, 2, argv.join(' '));
+    assert.equal(late.stdout, '');
+    assert.match(late.stderr, /--force must come right after export/);
+  }
+  assert.equal(readFileSync(s.snapshot, 'utf8'), 'keep me');
+  assert.deepEqual(s.source.calls.filter((c) => c.tool !== undefined), [], 'refused before any request');
+  const forced = await s.run('export', '--force', '--server', s.source.base, '--session', 'S1', '--out', s.snapshot, '--json');
   assert.equal(forced.code, 0, forced.stderr);
   assert.equal(JSON.parse(readFileSync(s.snapshot, 'utf8')).sessions.length, 1);
   assert.equal(statSync(s.snapshot).mode & 0o777, 0o600);
+});
+
+test('export writes only a .json --out (never a file a shell reads, such as ~/.bash_aliases)', async () => {
+  const s = await setup();
+  for (const name of ['.bash_aliases', '.bashrc', 'snap', 'snap.json.sh', 'snap.JSON']) {
+    const out = join(s.configDir, name);
+    for (const force of [[], ['--force']]) {
+      const result = await s.run('export', ...force, '--server', s.source.base, '--session', 'S1', '--out', out, '--json');
+      assert.equal(result.code, 2, `${force.join(' ')} ${name}`);
+      assert.equal(result.stdout, '');
+      assert.match(result.stderr, /must be a \.json file/);
+      assert.equal(existsSync(out), false);
+    }
+  }
 });
 
 test('export of a session the source does not have exits 1', async () => {
@@ -351,6 +377,81 @@ test('an interrupted import (the server fails mid-way) resumes on the rerun with
   assert.ok(a?.body_md.includes(`wiki:${b?.page_id})`));
 });
 
+test('a page linking to a page the target refused is fixed on the rerun that creates that page', async () => {
+  // Writes 1-8 are events and topics, 9 is pg_a (which links to pg_b), 10 is pg_b: refused once.
+  const s = await setup({ toolErrorWriteNumber: 10 });
+  const first = await s.run(...importArgs(s, '--confirm'));
+  assert.equal(first.code, 0, first.stderr);
+  const report = JSON.parse(first.stdout);
+  assert.deepEqual(report.created, { events: 5, topics: 3, wiki_pages: 1 });
+  assert.deepEqual(report.failed.map((f: { source_id: string; reason: string }) => [f.source_id, /Internal error\./.test(f.reason)]), [['pg_b', true]]);
+  assert.equal(report.links_fixed, 0);
+  assert.ok(report.unresolved_links.some((u: { link: string }) => u.link === 'wiki:pg_b'));
+  const data = s.target.options.data as FakeData;
+  assert.ok(data.pages.find((p) => p.title === 'Session one')?.body_md.includes('[Jane](wiki:pg_b)'));
+
+  const dry = JSON.parse((await s.run(...importArgs(s))).stdout);
+  assert.equal(dry.plan.fix_links, 1, 'the dry run says pg_a will be fixed');
+  const rerun = await s.run(...importArgs(s, '--confirm'));
+  assert.equal(rerun.code, 0, rerun.stderr);
+  const second = JSON.parse(rerun.stdout);
+  assert.deepEqual(second.created, { events: 0, topics: 0, wiki_pages: 1 });
+  assert.equal(second.links_fixed, 1);
+  assert.deepEqual(second.failed, []);
+  const a = data.pages.find((p) => p.title === 'Session one');
+  const b = data.pages.find((p) => p.title === 'Jane');
+  assert.ok(a !== undefined && b !== undefined);
+  assert.ok(a.body_md.includes(`[Jane](wiki:${b.page_id})`), a.body_md);
+  assert.ok(!a.body_md.includes('wiki:pg_b)'));
+  assert.deepEqual(second.unresolved_links.map((u: { link: string }) => u.link).sort(), ['cite:S9@3', 'wiki:pg_zzz']);
+
+  s.target.calls.length = 0;
+  const third = JSON.parse((await s.run(...importArgs(s, '--confirm'))).stdout);
+  assert.equal(third.links_fixed, 0);
+  assert.deepEqual(writeCalls(s.target), [], 'nothing left to write');
+});
+
+test('a page linking to a page of a session mapped only on a later run is fixed on that run', async () => {
+  // pg_p belongs with S1 (it cites S1) and links to S2's session page, which only S2's export holds.
+  const data: FakeData = {
+    sessions: [
+      { session_id: 'S1', show_id: 'shw_src', events: [], topics: [] },
+      { session_id: 'S2', show_id: 'shw_src', events: [], topics: [] },
+    ],
+    pages: [
+      { page_id: 'pg_p', show_id: 'shw_src', kind: 'person', title: 'Pat', aliases: [], body_md: 'Pat [said](cite:S1@1), see [two](wiki:pg_s2).\n', revision: 1 },
+      { page_id: 'pg_s2', show_id: 'shw_src', kind: 'session', title: 'Session two', aliases: [], body_md: 'Two.\n', revision: 1, session_id: 'S2' },
+    ],
+  };
+  const source = await fake({ data });
+  const target = await fake({ data: targetData() });
+  const configDir = tempConfigDir();
+  const run = (...argv: string[]) => cli({ configDir }, ...argv);
+  assert.equal((await run('login', '--server', source.base)).code, 0);
+  assert.equal((await run('login', '--server', target.base, '--write')).code, 0);
+  const snapshot = join(configDir, 'two.json');
+  files.push(snapshot, `${snapshot}.import-state.json`);
+  const exported = await run('export', '--server', source.base, '--session', 'S1', '--session', 'S2', '--out', snapshot, '--json');
+  assert.equal(exported.code, 0, exported.stderr);
+  assert.deepEqual(JSON.parse(exported.stdout).sessions.map((x: { wiki_pages: number }) => x.wiki_pages), [1, 1]);
+
+  const base = ['import', '--confirm', '--server', target.base, '--snapshot', snapshot, '--json'];
+  const first = JSON.parse((await run(...base, '--map', 'S1=T1')).stdout);
+  assert.deepEqual(first.created, { events: 0, topics: 0, wiki_pages: 1 });
+  assert.deepEqual(first.unresolved_links.map((u: { link: string }) => u.link), ['wiki:pg_s2']);
+  const second = JSON.parse((await run(...base, '--map', 'S1=T1', '--map', 'S2=T2')).stdout);
+  assert.deepEqual(second.created, { events: 0, topics: 0, wiki_pages: 1 });
+  assert.equal(second.links_fixed, 1);
+  assert.deepEqual(second.unresolved_links, []);
+  const pages = (target.options.data as FakeData).pages;
+  const p = pages.find((x) => x.title === 'Pat');
+  const two = pages.find((x) => x.title === 'Session two');
+  assert.ok(p !== undefined && two !== undefined);
+  assert.equal(two.session_id, 'T2');
+  assert.equal(p.body_md, `Pat [said](cite:T1@1), see [two](wiki:${two.page_id}).\n`);
+  assert.deepEqual(checkLinks(p.body_md), []);
+});
+
 test('a wiki title the target already has is skipped, not overwritten, and stays skipped on a rerun', async () => {
   const existing = { page_id: 'pg_old', show_id: 'shw_t', kind: 'person', title: 'Jane', aliases: [], body_md: 'Original.', revision: 4 };
   const s = await setup({ data: targetData([existing]) });
@@ -378,6 +479,8 @@ test('bad import and export arguments are usage errors', async () => {
     ['export', '--out', 'x.json'],
     ['export', '--session', 'S1'],
     ['export', '--session', 'a b', '--out', 'x.json'],
+    ['export', '--session', 'S1', '--out', 'x.txt'],
+    ['export', '--session', 'S1', '--out', 'x.json', '--force'],
   ]) {
     const result = await cli({ configDir }, ...argv);
     assert.equal(result.code, 2, argv.join(' '));

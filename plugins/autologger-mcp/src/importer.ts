@@ -6,9 +6,12 @@
 //   inputSchema accepts (inputs are strict); every source field not sent is reported once.
 // - Wiki bodies get their wiki:/cite: links rewritten to the target's ids. A page that links to a
 //   page created after it is created first and its links fixed with update_wiki_page afterwards.
+//   The state keeps a hash of the body last sent, so a page whose linked page is only created on a
+//   later run (it failed, or its session was mapped later) is fixed then too.
 // - Progress is kept in a state file next to the snapshot after every write, so a rerun creates no
 //   duplicates. Content from the snapshot is only ever sent as tool arguments: it never picks a
 //   tool, a server or a file.
+import { createHash } from 'node:crypto';
 import {
   type Caller,
   callWithRetry,
@@ -153,6 +156,10 @@ function bodyOf(item: Rec): string {
   return typeof item.body_md === 'string' ? item.body_md : '';
 }
 
+export function bodyHash(body: string): string {
+  return createHash('sha256').update(body).digest('hex');
+}
+
 export interface PlanInput {
   snapshot: Snapshot;
   targets: readonly TargetSession[];
@@ -181,13 +188,12 @@ export function plan(input: PlanInput): Plan {
     };
     const created = state.created[key];
     if (created !== undefined) {
-      const fix = entry.kind === 'wiki_pages' && created.links_final === false;
-      if (fix) needed.add(LINK_FIX_TOOL);
+      // Whether its links still need a rewrite is known once every page to create is (below).
       items.push({
         ...base,
         target_session_id: created.target_session_id,
-        action: fix ? 'fix-links' : 'done',
-        reason: fix ? 'created earlier; its links to later pages are still to be rewritten' : 'created by an earlier run (state file)',
+        action: 'done',
+        reason: 'created by an earlier run (state file)',
         target_id: created.target_id,
       });
       continue;
@@ -213,6 +219,29 @@ export function plan(input: PlanInput): Plan {
     needed.add(tool);
     toCreate.add(entry.sourceId);
     items.push({ ...base, action: 'create' });
+  }
+
+  // Pages created by an earlier run whose body, rewritten with what the target will have, changes:
+  // a page they link to is created only now, or was created after their last write.
+  const createdTarget = (id: string): string | undefined => state.created[itemKey('wiki_pages', id)]?.target_id;
+  for (const item of items) {
+    if (item.kind !== 'wiki_pages' || item.action !== 'done') continue;
+    const entry = all.find((e) => e.kind === 'wiki_pages' && e.sourceId === item.source_id);
+    const record = state.created[itemKey('wiki_pages', item.source_id)];
+    if (entry === undefined || record === undefined) continue;
+    let comesNow = false;
+    const rewritten = rewriteLinks(bodyOf(entry.item), {
+      page: (id) => {
+        if (toCreate.has(id) && createdTarget(id) === undefined) comesNow = true;
+        return createdTarget(id);
+      },
+      session: (id) => sourceToTarget.get(id),
+    });
+    if (comesNow || record.body_sha256 !== bodyHash(rewritten.body)) {
+      needed.add(LINK_FIX_TOOL);
+      item.action = 'fix-links';
+      item.reason = 'created earlier; its links to pages created after it are still to be rewritten';
+    }
   }
 
   // Links: which resolve, and which pages will need a second write for links to later pages.
@@ -276,7 +305,6 @@ export async function execute(input: RunInput, thePlan: Plan): Promise<RunResult
   const { state, tools, caller } = input;
   const all = entries(input.snapshot, input.targets);
   const sourceToTarget = new Map(input.targets.map((t) => [t.source_session_id, t.target_session_id]));
-  const pending = new Set(thePlan.items.filter((i) => i.kind === 'wiki_pages' && i.action === 'create').map((i) => i.source_id));
   const result: RunResult = { created: { events: 0, topics: 0, wiki_pages: 0 }, links_fixed: 0, skipped: [], failed: [], unresolved_links: [] };
 
   const pageTarget = (id: string): string | undefined => state.created[itemKey('wiki_pages', id)]?.target_id;
@@ -289,29 +317,21 @@ export async function execute(input: RunInput, thePlan: Plan): Promise<RunResult
     const tool = CREATE_TOOL[item.kind];
     const c = candidate(entry);
     if ('skip' in c) continue;
-    let forward = false;
+    let sentHash: string | undefined;
     if (item.kind === 'wiki_pages') {
-      const rewritten = rewriteLinks(bodyOf(entry.item), {
-        page: (id) => {
-          const target = pageTarget(id);
-          if (target === undefined && pending.has(id)) forward = true;
-          return target;
-        },
-        session: (id) => sourceToTarget.get(id),
-      });
+      const rewritten = rewriteLinks(bodyOf(entry.item), { page: pageTarget, session: (id) => sourceToTarget.get(id) });
       const problems = checkLinks(rewritten.body);
       if (problems.length > 0) {
-        pending.delete(item.source_id);
         result.failed.push({ kind: item.kind, source_id: item.source_id, reason: `its body fails check-links (${problems.map((p) => `${p.line}:${p.column} ${p.text}`).join('; ')})` });
         continue;
       }
       c.args.body_md = rewritten.body;
+      sentHash = bodyHash(rewritten.body);
     }
     const { args } = fit(c.args, inputShape(tools.get(tool)));
     const answer = await callWithRetry(caller, tool, args);
     const key = itemKey(item.kind, item.source_id);
     if (answer.isError === true) {
-      pending.delete(item.source_id);
       const message = resultText(answer);
       const taken = TAKEN_RE.exec(message);
       if (item.kind === 'wiki_pages' && taken !== null) {
@@ -329,21 +349,23 @@ export async function execute(input: RunInput, thePlan: Plan): Promise<RunResult
     const record: CreatedItem = { target_id: id, target_session_id: item.target_session_id };
     if (item.kind === 'wiki_pages') {
       if (revision !== undefined) record.revision = revision;
-      record.links_final = !forward;
-      pending.delete(item.source_id);
+      if (sentHash !== undefined) record.body_sha256 = sentHash;
     }
     state.created[key] = record;
     input.save();
     result.created[item.kind]++;
   }
 
-  // Pages whose links named pages that did not exist yet: rewrite them now.
-  for (const [key, record] of Object.entries(state.created)) {
-    if (!key.startsWith('wiki_pages:') || record.links_final !== false) continue;
-    const sourceId = key.slice('wiki_pages:'.length);
-    const entry = all.find((e) => e.kind === 'wiki_pages' && e.sourceId === sourceId);
-    if (entry === undefined) continue;
+  // Pages whose links named pages that did not exist when they were last written (in this run or
+  // an earlier one): rewrite them now. Only pages of the mapped sessions, whose cite: links resolve.
+  for (const entry of all) {
+    if (entry.kind !== 'wiki_pages') continue;
+    const sourceId = entry.sourceId;
+    const record = state.created[itemKey('wiki_pages', sourceId)];
+    if (record === undefined) continue;
     const rewritten = rewriteLinks(bodyOf(entry.item), { page: pageTarget, session: (id) => sourceToTarget.get(id) });
+    const hash = bodyHash(rewritten.body);
+    if (record.body_sha256 === hash) continue;
     if (!tools.has(LINK_FIX_TOOL)) throw new CliError(`the target server has no ${LINK_FIX_TOOL} tool, needed to fix the links of copied wiki pages`);
     const { args } = fit({ page_id: record.target_id, expected_revision: record.revision, body_md: rewritten.body }, inputShape(tools.get(LINK_FIX_TOOL)));
     const answer = await callWithRetry(caller, LINK_FIX_TOOL, args);
@@ -353,7 +375,7 @@ export async function execute(input: RunInput, thePlan: Plan): Promise<RunResult
     }
     const { revision } = createdId('wiki_pages', answer.structuredContent);
     record.revision = revision ?? (record.revision === undefined ? undefined : record.revision + 1);
-    record.links_final = true;
+    record.body_sha256 = hash;
     input.save();
     result.links_fixed++;
   }

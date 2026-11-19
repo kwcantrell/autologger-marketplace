@@ -43,6 +43,8 @@ export interface FakeOptions {
   rateLimitRetryS?: number;
   /** Answer the write call with this 1-based number HTTP 500, once, writing nothing. */
   failWriteNumber?: number;
+  /** Answer the write call with this 1-based number the tool error `Internal error.`, once, writing nothing. */
+  toolErrorWriteNumber?: number;
   /** Replace these tools' inputSchema in tools/list (and in the strict input check). */
   inputSchemas?: Record<string, Record<string, unknown>>;
   /** Leave these tools out of tools/list (calling them answers "not found"). */
@@ -491,6 +493,7 @@ export class FakeAutologger {
         this.writeCounts.failed500++;
         return 'http500';
       }
+      if (this.options.toolErrorWriteNumber === this.writeCounts.attempted) return text('Internal error.');
       const after = this.options.rateLimitAfterWrites;
       if (after !== undefined && this.writeCounts.succeeded >= after && this.writeCounts.rateLimited < (this.options.rateLimitTimes ?? 1)) {
         this.writeCounts.rateLimited++;

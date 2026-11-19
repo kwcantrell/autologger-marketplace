@@ -60,10 +60,12 @@ Commands:
                                (--json: the raw MCP result).
   check-links <file|->         Report [[...]] links and malformed wiki:/cite: links in a wiki body
                                (Markdown); exit 1 if any are found.
-  export --session <id> [--session <id> ...] --out <file> [--force]
+  export --session <id> [--session <id> ...] --out <file.json> [--no-wait]
                                Read sessions from the server (read tools only) into a JSON snapshot
-                               (mode 0600): each session's get_session, all events, topics and wiki
-                               pages with whole bodies. Refuses an existing --out unless --force.
+                               (mode 0600; --out must end in .json): each session's get_session,
+                               all events, topics and wiki pages with whole bodies. Refuses an
+                               existing --out; 'export --force ...' replaces it (--force must come
+                               right after export). A rate limit is waited out (--no-wait: stop).
   import --snapshot <file> --map <source_session>=<target_session> [--map ...] [--no-wait]
                                Plan copying the snapshot's events, topics and wiki pages into
                                existing sessions of the server (the target): a dry run that writes
@@ -366,9 +368,15 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
         const sessionIds = values.session ?? [];
         if (sessionIds.length === 0) throw new UsageError('export needs --session <id> (one or more)');
         for (const id of sessionIds) if (!ID_RE.test(id)) throw new UsageError(`--session '${id}' is not a session id`);
-        if (values.out === undefined || values.out === '') throw new UsageError('export needs --out <file>');
+        // A pre-approved `export --server ...` command line must never be able to replace a file.
+        if (values.force && argv[argv.indexOf('export') + 1] !== '--force') {
+          throw new UsageError('--force must come right after export: export --force --server <url> --session <id> --out <file.json>');
+        }
+        if (values.out === undefined || values.out === '') throw new UsageError('export needs --out <file.json>');
+        // Only a .json name: a new file can never be one a shell or a desktop session reads (~/.bash_aliases).
+        if (!values.out.endsWith('.json')) throw new UsageError(`--out '${values.out}' must be a .json file`);
         const outPath = resolvePath(values.out);
-        if (!values.force && existsSync(outPath)) throw new CliError(`${outPath} already exists; pass --force to overwrite it`);
+        if (!values.force && existsSync(outPath)) throw new CliError(`${outPath} already exists; run 'export --force ...' to overwrite it`);
         const client = connect(ctx);
         await client.initialize();
         const snapshot = await exportSessions(caller(client, values['no-wait']), server, sessionIds, ctx.now(), warn);

@@ -1,7 +1,7 @@
 ---
 name: seed-dev-stack
 description: Seeds a local autologger dev stack with realistic session data copied from another autologger server (such as stage, https://stage.nrvo.ai) through MCP - exports sessions' events, topics and wiki pages into a snapshot file, shows the import plan, and after the user confirms writes them into existing sessions of the local stack. Use when the user wants test or demo data on their local autologger, asks to copy, seed, clone or import sessions from stage or another server, or to resume such an import.
-allowed-tools: Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp status:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp tools:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp export:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp import --snapshot:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp check-links:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp --help:*)
+allowed-tools: Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp status:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp tools:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp export --server:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp import --snapshot:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp check-links:*), Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autologger-mcp --help:*)
 ---
 
 # Seeding a local dev stack from another server
@@ -47,8 +47,10 @@ npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autolo
 ```
 
 It prints the counts per session (`events`, `topics`, `wiki_pages`). The snapshot (mode 0600)
-holds the sessions' data and no tokens. It refuses an existing `--out` file; only pass `--force`
-when the user agrees to replace it.
+holds the sessions' data and no tokens. `<snapshot_file>` must end in `.json`. It refuses an
+existing `--out` file: pick a new name, or, only when the user agrees to replace that file, run
+the same command with `--force` right after `export` (`export --force --server ...`), which asks
+for permission.
 
 ## 3. Show the plan, then ask
 

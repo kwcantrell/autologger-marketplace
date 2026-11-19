@@ -149,7 +149,7 @@ test('every skill calls the CLI only through the shared npx invocation', () => {
     for (const command of commands) assert.ok(command.startsWith(`${INVOCATION} `), command);
     // Every command line is pre-approved except import-tokens, which writes credentials, and
     // import --confirm, which writes session data: no rule (in any skill) may cover them, so Claude
-    // has to ask first.
+    // has to ask first. Neither may export --force, which replaces a file.
     const prefixes = allowedPrefixes(skill);
     assert.ok(prefixes.length > 0 && prefixes.every((p) => p.startsWith(`${INVOCATION} `)), skill);
     for (const command of commands) {
@@ -159,6 +159,7 @@ test('every skill calls the CLI only through the shared npx invocation', () => {
     }
     assert.ok(!prefixes.some((p) => `${INVOCATION} import-tokens --json`.startsWith(p)), `${skill} pre-approves import-tokens`);
     assert.ok(!prefixes.some((p) => `${INVOCATION} import --confirm --snapshot x --json`.startsWith(p)), `${skill} pre-approves import --confirm`);
+    assert.ok(!prefixes.some((p) => `${INVOCATION} export --force --server x --json`.startsWith(p)), `${skill} pre-approves export --force`);
   }
   assert.ok(skillCommands('sign-in').some((c) => c.startsWith(`${INVOCATION} import-tokens `)), 'the sign-in skill shows import-tokens');
   assert.equal(existsSync(join(pluginRoot, 'node_modules')), false);

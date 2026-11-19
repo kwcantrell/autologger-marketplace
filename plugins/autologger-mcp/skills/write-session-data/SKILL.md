@@ -10,9 +10,8 @@ Writes go through the `autologger-mcp` CLI and change real data that other peopl
 AI features go through this plugin now (the in-app aichat agents are being retired); the write tools
 below are all it can change: events, topics and wiki pages, never studios, shows, sessions or
 transcripts. To copy data from another server onto a local dev stack, use this plugin's
-`seed-dev-stack` skill. They need a
-sign-in with the `session-data:write` scope; this plugin's `sign-in` skill explains how the user
-gets one (`can_write` in `status --json`).
+`seed-dev-stack` skill. Writes need a sign-in with the `session-data:write` scope; this plugin's
+`sign-in` skill explains how the user gets one (`can_write` in `status --json`).
 
 ## Rules
 
