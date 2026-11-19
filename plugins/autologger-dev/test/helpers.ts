@@ -32,6 +32,10 @@ export const SECRET = 'S3cr3t-value-0f-the-dev-stack-9f8e7d6c';
 export const GOOGLE_SECRET = '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234';
 export const GOOGLE_ID = '123456789-abcdefg.apps.googleusercontent.com';
 
+/** connect's dev_mcp_token (and doctor's google_client fix) for slot 0's default server, word for word. */
+export const DEV_TOKEN_8787 =
+  "get import_tokens_command from autologger-mcp's `status --server https://localhost:8787 --json` (the autologger-mcp sign-in skill runs it; it is the whole make dev-mcp-token line, piped into autologger-mcp's import-tokens in its full npx form) and run that line in the autologger-2 checkout with the user's email for <address>";
+
 export const TEST_CA = readFileSync(new URL('./fixtures/test-ca.crt', import.meta.url), 'utf8');
 
 export interface FixtureOptions {

@@ -59,9 +59,10 @@ Commands:
   connect [--slot <N>] [--server <url>]
                  Print (never run) what is left to connect Claude: the NODE_EXTRA_CA_CERTS export,
                  claude mcp add --transport http autologger-dev <server>/mcp (autologger-dev-N for
-                 slot N), autologger-mcp login, or, with no Google client needed,
-                 make dev-mcp-token EMAIL=<address> (DEV_SLOT=N for slot N) piped into
-                 autologger-mcp import-tokens --server <server>.
+                 slot N), autologger-mcp login, or, with no Google client needed, where to
+                 get autologger-mcp's import_tokens_command (its status --server <server> --json:
+                 make dev-mcp-token EMAIL=<address> piped into its import-tokens) to run in the
+                 checkout (DEV_SLOT=N in front for slot N).
 
 Options:
   --repo <path>    autologger-2 checkout (default: $AUTOLOGGER_REPO; for doctor only, else the
@@ -222,7 +223,20 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
   try {
     switch (command) {
       case 'doctor': {
-        const report = await doctor({ env, runner, fetch: fetchFn, checkout, server: server(), slot, devPort: port });
+        // dev_port compares the stack against the server this command really uses, so it needs to
+        // know when that came from --server or AUTOLOGGER_URL rather than the slot.
+        const fromEnv = values.slot === undefined && env.AUTOLOGGER_URL !== undefined && env.AUTOLOGGER_URL !== '';
+        const serverOverride = values.server !== undefined ? '--server' : fromEnv ? 'AUTOLOGGER_URL' : undefined;
+        const report = await doctor({
+          env,
+          runner,
+          fetch: fetchFn,
+          checkout,
+          server: server(),
+          slot,
+          devPort: port,
+          ...(serverOverride !== undefined ? { serverOverride } : {}),
+        });
         out(report, formatDoctor(report));
         return EXIT.ok;
       }

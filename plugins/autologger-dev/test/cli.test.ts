@@ -240,7 +240,10 @@ test('connect --json through npx prints the commands for the user', async () => 
   const report = JSON.parse(stdout) as Record<string, unknown>;
   assert.equal(report.claude_mcp_add, 'claude mcp add --transport http autologger-dev https://localhost:8787/mcp');
   assert.equal(report.autologger_mcp_login, 'autologger-mcp login --server https://localhost:8787');
-  assert.equal(report.dev_mcp_token, 'make dev-mcp-token EMAIL=<address> | autologger-mcp import-tokens --server https://localhost:8787');
+  assert.equal(
+    report.dev_mcp_token,
+    "get import_tokens_command from autologger-mcp's `status --server https://localhost:8787 --json` (the autologger-mcp sign-in skill runs it; it is the whole make dev-mcp-token line, piped into autologger-mcp's import-tokens in its full npx form) and run that line in the autologger-2 checkout with the user's email for <address>",
+  );
 });
 
 test('an unknown command through npx exits 2 with the message on stderr', async () => {

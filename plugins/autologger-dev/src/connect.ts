@@ -24,20 +24,25 @@ export interface ConnectReport {
   claude_mcp_add: string;
   autologger_mcp_login: string;
   /**
-   * Connects without Google sign-in: autologger's dev-only make dev-mcp-token (run in the checkout,
-   * DEV_SLOT=N for slot N) piped into autologger-mcp import-tokens for this server.
+   * Connects without Google sign-in: where to get autologger-mcp's import_tokens_command for this
+   * server (make dev-mcp-token piped into import-tokens) and how to run it (DEV_SLOT=N for slot N).
    */
   dev_mcp_token: string;
   steps: string[];
 }
 
 /**
- * The line that mints MCP tokens for a dev-stack user and imports them into autologger-mcp, with no
- * Google OAuth client: autologger's `make dev-mcp-token` (dev only; `DEV_SLOT=N` for slot N) piped
- * into `autologger-mcp import-tokens`, so the tokens never reach the screen.
+ * How to connect without a Google OAuth client: autologger's dev-only `make dev-mcp-token` piped into
+ * autologger-mcp's `import-tokens`, so the tokens never reach the screen. The plugins share no code
+ * and autologger-dev cannot know where autologger-mcp is installed, so this points at the whole line
+ * autologger-mcp prints itself as `import_tokens_command` (its full npx form, reusing a stored client
+ * with CLIENT_ID=), rather than a bare `autologger-mcp`, which is not on PATH for a plugin install.
  */
 export function devMcpTokenCommand(server: string, slot: number): string {
-  return `${slotPrefix(slot)}make dev-mcp-token EMAIL=<address> | autologger-mcp import-tokens --server ${shellQuote(server)}`;
+  const s = shellQuote(server);
+  return `get import_tokens_command from autologger-mcp's \`status --server ${s} --json\` (the autologger-mcp sign-in skill runs it; it is the whole make dev-mcp-token line, piped into autologger-mcp's import-tokens in its full npx form) and run that line in the autologger-2 checkout with the user's email for <address>${
+    slot === 0 ? '' : ` and \`${slotPrefix(slot)}\` in front of make`
+  }`;
 }
 
 function readableFile(path: string | undefined): boolean {
@@ -72,7 +77,7 @@ export function connect(env: Env, server: string, slot = 0): ConnectReport {
     `Or use the autologger-mcp plugin instead: \`${login}\` (run it yourself in a terminal; it opens a browser to sign in with Google).`,
   );
   steps.push(
-    `Or, with no Google sign-in (the stack's Google client may stay a placeholder), use the autologger-mcp plugin with a dev token: in the autologger-2 checkout run \`${devToken}\` with your email (run it yourself; it creates that dev-stack account and an MCP grant, and pipes the tokens into autologger-mcp without showing them).`,
+    `Or, with no Google sign-in (the stack's Google client may stay a placeholder), use the autologger-mcp plugin with a dev token: ${devToken} (run it yourself; it creates that dev-stack account and an MCP grant, and pipes the tokens into autologger-mcp without showing them).`,
   );
   return {
     server,

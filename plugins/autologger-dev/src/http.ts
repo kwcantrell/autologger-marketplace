@@ -25,6 +25,15 @@ export function allowedUrl(raw: string): URL | null {
   return null;
 }
 
+/** Whether a server origin is on this machine (localhost, 127.0.0.1 or [::1]). */
+export function isLoopback(server: string): boolean {
+  try {
+    return LOOPBACK_HOSTS.has(new URL(server).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** `--server`, else `AUTOLOGGER_URL`, else the dev stack (`fallback`); returned as an origin. */
 export function resolveServer(option: string | undefined, env: Env, fallback = DEFAULT_SERVER): string {
   const fromEnv = env.AUTOLOGGER_URL !== undefined && env.AUTOLOGGER_URL !== '' ? env.AUTOLOGGER_URL : undefined;

@@ -7,7 +7,7 @@ import type { Check } from '../src/doctor.ts';
 import type { RunResult } from '../src/runner.ts';
 import { dashboardsState, googleClient, isDashboardsOn, isPadded, isQuoted, isQuotedAndPadded, parseEnvText } from '../src/stack.ts';
 import { EXIT } from '../src/run.ts';
-import { answering, cli, type CliOptions, fakeRunner, fixture, GOOD_OVERRIDES, GOOGLE_ID, GOOGLE_SECRET, NOT_FOUND, untrusted } from './helpers.ts';
+import { answering, cli, type CliOptions, DEV_TOKEN_8787, fakeRunner, fixture, GOOD_OVERRIDES, GOOGLE_ID, GOOGLE_SECRET, NOT_FOUND, untrusted } from './helpers.ts';
 
 const NAMES = [
   'checkout',
@@ -152,10 +152,11 @@ test('doctor google_client and custom_dashboards: placeholders, absent file, unr
   assert.match(checks.get('google_client')?.detail ?? '', /GOOGLE_CLIENT_ID is placeholder, GOOGLE_CLIENT_SECRET is placeholder/);
   assert.match(checks.get('google_client')?.fix ?? '', /https:\/\/localhost:8787\/auth\/google\/callback/);
   // A missing Google client does not block MCP: the fix names the dev-token path (slot 0, no DEV_SLOT).
-  assert.match(
+  assert.ok(
+    (checks.get('google_client')?.fix ?? '').endsWith(`; MCP can still be connected without a Google client: ${DEV_TOKEN_8787} (autologger's dev-only dev-mcp-token; see autologger-dev connect)`),
     checks.get('google_client')?.fix ?? '',
-    /; MCP can still be connected without a Google client: the user runs `make dev-mcp-token EMAIL=<address> \| autologger-mcp import-tokens --server https:\/\/localhost:8787` with their email in the checkout \(autologger's dev-only dev-mcp-token; see autologger-dev connect\)$/,
   );
+
   assert.equal(checks.get('custom_dashboards')?.status, 'missing');
   assert.match(checks.get('custom_dashboards')?.fix ?? '', /CUSTOM_DASHBOARDS_ENABLED=1/);
 
@@ -313,7 +314,8 @@ test('doctor: both Google keys quoted, or one quoted and one not set, gets every
   assert.equal(c?.status, 'fail');
   assert.deepEqual(c?.keys, { GOOGLE_CLIENT_ID: 'quoted', GOOGLE_CLIENT_SECRET: 'quoted' });
   assert.match(c?.fix ?? '', /remove the quotes around the value of GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in /);
-  assert.match(c?.fix ?? '', /MCP can still be connected without a Google client: .*make dev-mcp-token EMAIL=<address>/);
+  assert.match(c?.fix ?? '', /MCP can still be connected without a Google client: get import_tokens_command from autologger-mcp's `status --server https:\/\/localhost:8787 --json`/);
+  assert.doesNotMatch(c?.fix ?? '', /autologger-mcp import-tokens/);
   const half = fixture({ overrides: `GOOGLE_CLIENT_ID="${GOOGLE_ID}"\nGOOGLE_CLIENT_SECRET=""\n` });
   c = (await doctorChecks({ env: half.env }, '--repo', half.repo)).checks.get('google_client');
   assert.equal(c?.status, 'fail');
@@ -595,4 +597,50 @@ test('doctor dev_port: --slot N reads autologger-dev-N-app and expects 2N787, ne
   assert.equal(bad?.status, 'fail');
   assert.match(bad?.detail ?? '', /autologger-dev-3-app publishes its app on port 8787, but this command uses port 23787/);
   assert.match(bad?.fix ?? '', /autologger-dev up --slot 3/);
+});
+
+// dev_port against a server from AUTOLOGGER_URL or --server: that server's port on localhost, else skipped.
+test('doctor dev_port: AUTOLOGGER_URL=https://localhost:9999 with the stack publishing 9999 is ok', async () => {
+  const h = healthy();
+  const env = { ...h.env, AUTOLOGGER_URL: 'https://localhost:9999' };
+  const c = await devPortCheck({ ...h, env }, portRunner(() => ({ stdout: '127.0.0.1:9999\n' })));
+  assert.equal(c?.status, 'ok');
+  assert.equal(c?.detail, 'autologger-dev-app publishes its app on port 9999, the port this command uses');
+  // The same through --server.
+  const viaOption = await devPortCheck(h, portRunner(() => ({ stdout: '127.0.0.1:9999\n' })), '--server', 'https://localhost:9999');
+  assert.equal(viaOption?.status, 'ok');
+});
+
+test('doctor dev_port: an overriding localhost server on another port than the stack publishes is a fail naming its source', async () => {
+  const h = healthy();
+  const env = { ...h.env, AUTOLOGGER_URL: 'https://localhost:9999' };
+  const c = await devPortCheck({ ...h, env }, portRunner(() => ({ stdout: '127.0.0.1:8787\n' })));
+  assert.equal(c?.status, 'fail');
+  assert.equal(c?.detail, 'autologger-dev-app publishes its app on port 8787, but this command uses port 9999 (https://localhost:9999, from AUTOLOGGER_URL)');
+  assert.equal(c?.fix, "point AUTOLOGGER_URL at the stack's port (https://localhost:8787), or leave it out to use slot 0's server");
+  const viaOption = await devPortCheck(h, portRunner(() => ({ stdout: '127.0.0.1:8787\n' })), '--server', 'https://127.0.0.1:9999');
+  assert.equal(viaOption?.status, 'fail');
+  assert.match(viaOption?.detail ?? '', /this command uses port 9999 \(https:\/\/127\.0\.0\.1:9999, from --server\)$/);
+});
+
+test('doctor dev_port: a non-local server from AUTOLOGGER_URL or --server is skipped without asking docker', async () => {
+  const h = healthy();
+  for (const [opts, extra, source] of [
+    [{ ...h, env: { ...h.env, AUTOLOGGER_URL: 'https://autologger.example' } }, [], 'AUTOLOGGER_URL'],
+    [h, ['--server', 'https://autologger.example'], '--server'],
+  ] as const) {
+    const runner = portRunner(() => ({ stdout: '127.0.0.1:8787\n' }));
+    const c = await devPortCheck(opts, runner, ...extra);
+    assert.equal(c?.status, 'ok');
+    assert.equal(c?.detail, `skipped: server overridden (${source} names https://autologger.example, not a localhost server, so the stack's published port does not apply)`);
+    assert.equal(runner.calls.some((x) => x.args[0] === 'port'), false, 'docker port not run');
+  }
+});
+
+test('doctor dev_port: --slot wins over AUTOLOGGER_URL, which then does not override the slot port', async () => {
+  const h = healthy();
+  const env = { ...h.env, AUTOLOGGER_URL: 'https://autologger.example' };
+  const c = await devPortCheck({ ...h, env }, portRunner(() => ({ stdout: '127.0.0.1:23787\n' })), '--slot', '3');
+  assert.equal(c?.status, 'ok');
+  assert.equal(c?.detail, 'autologger-dev-3-app publishes its app on port 23787, the port this command uses');
 });

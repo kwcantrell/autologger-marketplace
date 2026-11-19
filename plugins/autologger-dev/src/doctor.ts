@@ -5,9 +5,9 @@
 import { accessSync, constants, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { devMcpTokenCommand } from './connect.ts';
-import { DEFAULT_SERVER, type Env, type Fetch, probe } from './http.ts';
+import { DEFAULT_SERVER, type Env, type Fetch, isLoopback, probe } from './http.ts';
 import type { Runner } from './runner.ts';
-import { appContainer, cliCommand, DEV_PORT_KEY, type DevPort, expectedPort, googleRedirect } from './slot.ts';
+import { appContainer, cliCommand, DEV_PORT_KEY, type DevPort, expectedPort, googleRedirect, slotServer } from './slot.ts';
 import { stepFor } from './up.ts';
 import {
   type Checkout,
@@ -57,6 +57,11 @@ export interface DoctorContext {
   slot?: number;
   /** Slot 0's DEV_PORT from overrides.env (not set when left out). */
   devPort?: DevPort;
+  /**
+   * Where `server` came from when it was not the slot's own server: `--server` or `AUTOLOGGER_URL`.
+   * dev_port then compares against that server's port (localhost) or is skipped (any other host).
+   */
+  serverOverride?: '--server' | 'AUTOLOGGER_URL';
 }
 
 export interface DoctorReport {
@@ -156,7 +161,7 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
     // Google sign-in is only one way in: MCP can still be connected with a dev token.
     if (!google.ok) {
       fixes.push(
-        `MCP can still be connected without a Google client: the user runs \`${devMcpTokenCommand(ctx.server, slot)}\` with their email in the checkout (autologger's dev-only dev-mcp-token; see autologger-dev connect)`,
+        `MCP can still be connected without a Google client: ${devMcpTokenCommand(ctx.server, slot)} (autologger's dev-only dev-mcp-token; see autologger-dev connect)`,
       );
     }
     checks.push({
@@ -248,8 +253,15 @@ function caCheck(env: Env, slot: number): Check {
  * OpenBao dev secret, which overrides.env seeds through make dev-bao; the CLI never reads that
  * secret, so the published port is the only source for what the stack really uses. Not running or
  * docker unreachable is skipped (ok, saying so): the docker, openbao and dev_server checks report those.
+ * A server from --server or AUTOLOGGER_URL is what this command really uses: on localhost its port is
+ * the one to compare; on any other host the stack's published port says nothing about it (skipped).
  */
 async function portCheck(ctx: DoctorContext, slot: number, overridesPath: string): Promise<Check> {
+  const override = ctx.serverOverride;
+  const overridden = override !== undefined && ctx.server !== slotServer(slot, ctx.devPort);
+  if (overridden && !isLoopback(ctx.server)) {
+    return ok('dev_port', `skipped: server overridden (${override} names ${ctx.server}, not a localhost server, so the stack's published port does not apply)`);
+  }
   const container = appContainer(slot);
   const r = await ctx.runner('docker', ['port', container, '8443/tcp'], { env: ctx.env, timeoutMs: 15_000 });
   if (r.error !== undefined) return ok('dev_port', `skipped: docker could not be run (${r.error === 'ENOENT' ? 'not on PATH' : r.error})`);
@@ -260,8 +272,15 @@ async function portCheck(ctx: DoctorContext, slot: number, overridesPath: string
   }
   const published = /:(\d{1,5})\s*$/m.exec(r.stdout)?.[1];
   if (published === undefined) return ok('dev_port', `skipped: ${container} publishes no port for its app`);
-  const want = expectedPort(slot, ctx.devPort);
+  const want = overridden ? portOf(ctx.server) : expectedPort(slot, ctx.devPort);
   if (Number(published) === want) return ok('dev_port', `${container} publishes its app on port ${want}, the port this command uses`);
+  if (overridden) {
+    return fail(
+      'dev_port',
+      `${container} publishes its app on port ${published}, but this command uses port ${want} (${ctx.server}, from ${override})`,
+      `point ${override} at the stack's port (${new URL(ctx.server).protocol}//${new URL(ctx.server).hostname}:${published}), or leave it out to use slot ${slot}'s server`,
+    );
+  }
   return fail(
     'dev_port',
     `${container} publishes its app on port ${published}, but this command uses port ${want}`,
@@ -269,6 +288,12 @@ async function portCheck(ctx: DoctorContext, slot: number, overridesPath: string
       ? `re-run make dev-bao and ${cliCommand('up', slot)} so the stack takes ${DEV_PORT_KEY} from ${overridesPath}, or correct ${DEV_PORT_KEY} in ${overridesPath} to ${published}`
       : `re-run ${cliCommand('up', slot)} (a slot's port is fixed by its number, ${want})`,
   );
+}
+
+/** The port of an origin, with the scheme's default when the URL leaves it out. */
+function portOf(server: string): number {
+  const url = new URL(server);
+  return url.port !== '' ? Number(url.port) : url.protocol === 'https:' ? 443 : 80;
 }
 
 async function serverCheck(ctx: DoctorContext, slot: number): Promise<Check> {

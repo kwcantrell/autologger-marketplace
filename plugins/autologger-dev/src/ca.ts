@@ -1,7 +1,7 @@
 // ca: fetches the HTTPS-mode dev stack's root CA certificate (`DEV_HTTPS=1 make dev-ca`), checks it
 // is exactly one public PEM certificate, and writes it where NODE_EXTRA_CA_CERTS can point.
 import { randomBytes, X509Certificate } from 'node:crypto';
-import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
 import { CliError } from './errors.ts';
 import { type Env, shellQuote } from './http.ts';
@@ -124,7 +124,7 @@ export function writeCertificate(path: string, pem: string, ops: WriteOps = FS_O
   let firstCreated: string | undefined;
   let done = false;
   try {
-    firstCreated = mkdirSync(dir, { recursive: true });
+    firstCreated = makeDirs(dir);
     const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
     created = true;
     try {
@@ -154,8 +154,43 @@ export function writeCertificate(path: string, pem: string, ops: WriteOps = FS_O
 }
 
 /**
- * Removes `dir` and its parents up to and including `firstCreated` (the first folder
- * `mkdirSync(dir, { recursive: true })` created), deepest first, each only if it is empty; it stops
+ * `mkdir -p` one level at a time; returns the first (top-most) folder it created, or undefined when
+ * `dir` already existed. Not `mkdirSync(dir, { recursive: true })`: on Node 24 (seen on 24.22.2) that
+ * never returns when mkdir keeps failing with ENOENT although the parent exists, as it does under
+ * /proc. Walking up by hand throws that ENOENT instead. An existing path that is not a directory
+ * fails with ENOTDIR. When it fails after creating parents, it removes them again.
+ */
+export function makeDirs(dir: string): string | undefined {
+  const mkdir = (path: string): boolean => {
+    try {
+      mkdirSync(path);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      if (!statSync(path).isDirectory()) {
+        throw Object.assign(new Error(`ENOTDIR: not a directory, mkdir '${path}'`), { code: 'ENOTDIR', path });
+      }
+      return false;
+    }
+  };
+  try {
+    return mkdir(dir) ? dir : undefined;
+  } catch (error) {
+    const parent = dirname(dir);
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || parent === dir) throw error;
+    const first = makeDirs(parent);
+    try {
+      return mkdir(dir) ? (first ?? dir) : first;
+    } catch (inner) {
+      if (first !== undefined) removeCreatedDirs(parent, first);
+      throw inner;
+    }
+  }
+}
+
+/**
+ * Removes `dir` and its parents up to and including `firstCreated` (the first folder makeDirs
+ * created), deepest first, each only if it is empty; it stops
  * at the first that cannot be removed. Folders above `firstCreated` existed before and are never
  * touched.
  */
