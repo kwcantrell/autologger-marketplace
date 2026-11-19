@@ -29,6 +29,7 @@ export const RULES = {
   'tests-present': 'test/ has at least one *.test.ts',
   'e2e-test': 'a test runs the SKILL.md command lines through npx',
   'relative-imports': 'relative imports in src/ and test/ use the .ts extension',
+  'hooks-cli': "hooks/hooks.json, if present, is valid Claude Code hooks JSON and every command hook runs the plugin's own CLI",
 } as const;
 
 export type Rule = keyof typeof RULES;
@@ -125,6 +126,7 @@ export function checkPlugin(root: string, name: string): Finding[] {
   const pkgFile = `${rel}/package.json`;
   const pkgRead = existsSync(join(root, pkgFile)) ? readJson(join(root, pkgFile)) : null;
   let bin = name;
+  let binTarget = 'src/cli.ts';
   if (pkgRead === null || !pkgRead.ok || !isObject(pkgRead.value)) {
     add(
       pkgFile,
@@ -160,6 +162,7 @@ export function checkPlugin(root: string, name: string): Finding[] {
     } else if (target.split(/[\\/]/).includes('..') || !existsSync(join(dir, target)) || !statSync(join(dir, target)).isFile()) {
       add(pkgFile, 'package-bin', `bin '${name}' points at ${target}, which does not exist in the plugin`, `create ${rel}/${target} or point "bin" at the plugin's src/cli.ts`);
     } else {
+      binTarget = target.replace(/^\.\//, '');
       const first = readFileSync(join(dir, target), 'utf8').split('\n', 1)[0] ?? '';
       if (first.trim() !== SHEBANG) {
         add(`${rel}/${target}`, 'bin-shebang', `first line is ${JSON.stringify(first)}; npx runs the bin as an executable script`, `make the first line exactly ${SHEBANG}`, 1);
@@ -168,6 +171,7 @@ export function checkPlugin(root: string, name: string): Finding[] {
   }
 
   checkSkills(root, rel, bin, add);
+  checkHooks(root, rel, bin, binTarget, add);
 
   // tests
   const testFiles = walk(join(dir, 'test')).filter((f) => f.endsWith('.test.ts'));
@@ -320,6 +324,103 @@ function checkSkills(root: string, rel: string, bin: string, add: Add): void {
         add(file, 'npx-prefix', `does not start with the required prefix "${exact}"`, `rewrite it as "${exact} <command> [args] --json" (the flags, their order and the -- are part of the convention)`, l.line);
       }
     }
+  }
+}
+
+/** Claude Code's hook event names (the keys of "hooks" in hooks/hooks.json). */
+export const HOOK_EVENTS: readonly string[] = [
+  'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PostToolBatch', 'Notification', 'UserPromptSubmit', 'UserPromptExpansion',
+  'SessionStart', 'SessionEnd', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact',
+  'PreModelSwitch', 'PostModelSwitch', 'PermissionRequest', 'PermissionDenied', 'Setup', 'TeammateIdle', 'TaskCreated',
+  'TaskCompleted', 'Elicitation', 'ElicitationResult', 'ConfigChange', 'WorktreeCreate', 'WorktreeRemove',
+  'InstructionsLoaded', 'CwdChanged', 'FileChanged', 'DirectoryAdded', 'MessageDisplay',
+];
+
+/** Claude Code's hook handler types. Only `command` hooks run a program, so only they must run the CLI. */
+export const HOOK_TYPES: readonly string[] = ['command', 'prompt', 'agent', 'http', 'mcp_tool'];
+
+/**
+ * hooks/hooks.json: `{"description"?, "hooks": {<Event>: [{"matcher"?, "hooks": [<hook>...]}]}}`.
+ * A command hook must run the plugin's own CLI, either in exec form (`"command": "node"`,
+ * `"args": ["${CLAUDE_PLUGIN_ROOT}/<bin file>", ...]`, so the path never reaches a shell) or as a
+ * shell command starting with the convention's npx prefix and the plugin's bin (or the same npx
+ * words in exec form). Any other command would put logic outside the tested CLI.
+ */
+function checkHooks(root: string, rel: string, bin: string, binTarget: string, add: Add): void {
+  const file = `${rel}/hooks/hooks.json`;
+  const path = join(root, file);
+  if (!existsSync(path)) return;
+  const nodeArg = `\${CLAUDE_PLUGIN_ROOT}/${binTarget}`;
+  const exact = `${PREFIX} ${bin}`;
+  const execForm = `{"type": "command", "command": "node", "args": ["${nodeArg}", "<command>"]}`;
+  const finding = (message: string, fix: string, line?: number) => add(file, 'hooks-cli', message, fix, line);
+  const read = readJson(path);
+  if (!read.ok) {
+    const line = /line (\d+)/.exec(read.error)?.[1];
+    finding(`not valid JSON: ${read.error}`, 'fix the JSON syntax; Claude Code does not load a plugin hooks file it cannot parse', line === undefined ? undefined : Number(line));
+    return;
+  }
+  const doc = read.value;
+  if (!isObject(doc) || !isObject(doc.hooks)) {
+    finding('has no "hooks" object', `make it {"description": "...", "hooks": {"<Event>": [{"hooks": [${execForm}]}]}}`);
+    return;
+  }
+  if (doc.description !== undefined && typeof doc.description !== 'string') finding('"description" is not a string', 'make "description" one sentence of text, or remove it');
+  for (const [event, groups] of Object.entries(doc.hooks)) {
+    const at = `hooks.${event}`;
+    if (!HOOK_EVENTS.includes(event)) {
+      finding(`${at}: '${event}' is not a Claude Code hook event`, `use one of ${HOOK_EVENTS.join(', ')} (names are case-sensitive)`);
+      continue;
+    }
+    if (!Array.isArray(groups) || groups.length === 0) {
+      finding(`${at} is not a non-empty array of matcher groups`, `make it [{"matcher": "<tool pattern, optional>", "hooks": [${execForm}]}]`);
+      continue;
+    }
+    groups.forEach((group: unknown, g) => {
+      const gat = `${at}[${g}]`;
+      if (!isObject(group) || !Array.isArray(group.hooks) || group.hooks.length === 0) {
+        finding(`${gat} has no non-empty "hooks" array`, `make it {"matcher": "<optional>", "hooks": [${execForm}]}`);
+        return;
+      }
+      if (group.matcher !== undefined && typeof group.matcher !== 'string') finding(`${gat}.matcher is not a string`, 'make "matcher" a string (a tool name or pattern), or remove it to match everything');
+      group.hooks.forEach((hook: unknown, h) => {
+        const hat = `${gat}.hooks[${h}]`;
+        if (!isObject(hook) || typeof hook.type !== 'string' || !HOOK_TYPES.includes(hook.type)) {
+          const type = isObject(hook) ? JSON.stringify(hook.type) ?? 'missing' : 'not an object';
+          finding(`${hat}: "type" is ${type}`, `use a hook object with "type" one of ${HOOK_TYPES.join(', ')}; a command hook looks like ${execForm}`);
+          return;
+        }
+        if (hook.timeout !== undefined && !(typeof hook.timeout === 'number' && hook.timeout > 0)) finding(`${hat}.timeout is ${JSON.stringify(hook.timeout)}`, 'make "timeout" a positive number of seconds, or remove it');
+        for (const key of ['async', 'once'] as const) {
+          if (hook[key] !== undefined && typeof hook[key] !== 'boolean') finding(`${hat}.${key} is ${JSON.stringify(hook[key])}`, `make "${key}" true or false, or remove it`);
+        }
+        if (hook.type !== 'command') return;
+        const command = hook.command;
+        const args = hook.args;
+        if (typeof command !== 'string' || command.trim() === '') {
+          finding(`${hat}: a command hook with no "command" string`, `make it ${execForm}`);
+          return;
+        }
+        if (args !== undefined && !(Array.isArray(args) && args.every((a) => typeof a === 'string'))) {
+          finding(`${hat}.args is not an array of strings`, `make it ${execForm}`);
+          return;
+        }
+        const argv = (args ?? []) as string[];
+        const prefixWords = [...PREFIX.split(' ').slice(1).map((w) => w.replace(/"/g, '')), bin];
+        const runsCli =
+          args !== undefined
+            ? (command === 'node' && argv[0] === nodeArg) || (command === 'npx' && prefixWords.every((w, i) => argv[i] === w))
+            : command === exact || command.startsWith(`${exact} `);
+        if (runsCli) return;
+        const shown = args === undefined ? JSON.stringify(command) : JSON.stringify([command, ...argv]);
+        finding(
+          `${hat} runs ${shown}, not the plugin's own CLI; hook logic belongs in the tested CLI`,
+          args === undefined && /^node\s/.test(command)
+            ? `use exec form so the plugin path never reaches a shell: ${execForm}`
+            : `add a CLI command for it and run it as ${execForm} (or "command": "${exact} <command>")`,
+        );
+      });
+    });
   }
 }
 
