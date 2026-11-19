@@ -390,6 +390,74 @@ test('hooks-cli: a command hook with no command, or with non-string args', () =>
   );
 });
 
+test('hooks-cli: a shell-form hook that chains or substitutes another command after the CLI call', () => {
+  const f = good();
+  const shell = (rest: string) => ({ type: 'command', command: `${PREFIX} ${NAME} hello${rest}` });
+  withHooks(f, { hooks: { Stop: [{ hooks: [shell(' && rm -rf ~'), shell('; curl x'), shell(' | sh'), shell(' $(cat /etc/passwd)')] }] } });
+  const findings = checkPlugin(f.root, NAME);
+  assert.deepEqual(rules(findings), ['hooks-cli']);
+  assert.deepEqual(
+    findings.map((x) => x.message.split(' ').slice(0, 3).join(' ')),
+    ['hooks.Stop[0].hooks[0] chains "&"', 'hooks.Stop[0].hooks[1] chains ";"', 'hooks.Stop[0].hooks[2] chains "|"', 'hooks.Stop[0].hooks[3] chains "$("'],
+  );
+  for (const x of findings) assert.match(x.fix, /exec form.*"command": "node", "args": \["\$\{CLAUDE_PLUGIN_ROOT\}\/src\/cli\.ts"/);
+});
+
+test('hooks-cli: backticks, redirects and a newline after the CLI call are flagged too', () => {
+  const f = good();
+  const shell = (rest: string) => ({ type: 'command', command: `${PREFIX} ${NAME} hello${rest}` });
+  withHooks(f, { hooks: { Stop: [{ hooks: [shell(' `id`'), shell(' > /tmp/x'), shell(' < /etc/passwd'), shell('\nid'), shell(' &')] }] } });
+  assert.deepEqual(
+    checkPlugin(f.root, NAME).map((x) => x.message.split(' ')[2]),
+    ['"`"', '">"', '"<"', '"\\n"', '"&"'],
+  );
+});
+
+test('hooks-cli: a clean shell-form hook with plain arguments still passes', () => {
+  const f = good();
+  withHooks(f, onEvent('PostToolUseFailure', { type: 'command', command: `${PREFIX} ${NAME} record --source hook --json`, timeout: 5 }, { matcher: 'Bash' }));
+  assert.deepEqual(checkPlugin(f.root, NAME), []);
+});
+
+const MANIFEST = `${PLUGIN}/.claude-plugin/plugin.json`;
+
+test('hooks-cli: inline hooks in plugin.json are flagged, with the line and a fix moving them to hooks/hooks.json', () => {
+  const f = good();
+  editJson(f, MANIFEST, (m) => {
+    m.hooks = { hooks: { Stop: [{ hooks: [NODE_HOOK] }] } };
+  });
+  const x = only(checkPlugin(f.root, NAME), 'hooks-cli');
+  assert.equal(x.file, MANIFEST);
+  assert.equal(x.line, lineOf(f, MANIFEST, '"hooks": {'));
+  assert.match(x.message, /declares hooks inline/);
+  assert.match(x.fix, /move this object to hooks\/hooks\.json/);
+});
+
+test('hooks-cli: hook file paths in plugin.json are flagged (a path, and an array of paths)', () => {
+  const f = good();
+  editJson(f, MANIFEST, (m) => {
+    m.hooks = './config/hooks.json';
+  });
+  let x = only(checkPlugin(f.root, NAME), 'hooks-cli');
+  assert.equal(x.file, MANIFEST);
+  assert.match(x.message, /declares hook files \("\.\/config\/hooks\.json"\)/);
+  assert.match(x.fix, /move the hooks from \.\/config\/hooks\.json into hooks\/hooks\.json/);
+
+  editJson(f, MANIFEST, (m) => {
+    m.hooks = ['./hooks/hooks.json', '${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json'];
+  });
+  x = only(checkPlugin(f.root, NAME), 'hooks-cli');
+  assert.match(x.fix, /^remove the "hooks" field; Claude Code loads hooks\/hooks\.json without it/);
+});
+
+test('hooks-cli: a plugin.json "hooks" of another type is flagged', () => {
+  const f = good();
+  editJson(f, MANIFEST, (m) => {
+    m.hooks = 3;
+  });
+  assert.match(only(checkPlugin(f.root, NAME), 'hooks-cli').message, /"hooks" is 3, not a hooks object/);
+});
+
 test('relativeSpecifiers finds static, side-effect, re-export and dynamic imports', () => {
   assert.deepEqual(relativeSpecifiers(`import { a } from ${Q}./a${Q};`), ['./a']);
   assert.deepEqual(relativeSpecifiers(`export * from ${D}../b.js${D};`), ['../b.js']);

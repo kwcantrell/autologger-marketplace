@@ -29,7 +29,7 @@ export const RULES = {
   'tests-present': 'test/ has at least one *.test.ts',
   'e2e-test': 'a test runs the SKILL.md command lines through npx',
   'relative-imports': 'relative imports in src/ and test/ use the .ts extension',
-  'hooks-cli': "hooks/hooks.json, if present, is valid Claude Code hooks JSON and every command hook runs the plugin's own CLI",
+  'hooks-cli': "hooks/hooks.json, if present, is valid Claude Code hooks JSON and every command hook runs the plugin's own CLI, unchained; plugin.json declares no hooks",
 } as const;
 
 export type Rule = keyof typeof RULES;
@@ -107,6 +107,9 @@ export function checkPlugin(root: string, name: string): Finding[] {
       add(manifestFile, 'plugin-manifest', `not a JSON object${manifest.ok ? '' : `: ${manifest.error}`}`, 'make it a JSON object with name, version and description');
     } else if (manifest.value.name !== name) {
       add(manifestFile, 'plugin-manifest', `name is ${JSON.stringify(manifest.value.name)}, but the folder is plugins/${name}`, `set "name": "${name}" (or rename the folder to match)`);
+    }
+    if (manifest.ok && isObject(manifest.value) && manifest.value.hooks !== undefined) {
+      checkManifestHooks(manifestFile, readFileSync(manifestPath, 'utf8'), manifest.value.hooks, add);
     }
   }
 
@@ -327,7 +330,39 @@ function checkSkills(root: string, rel: string, bin: string, add: Add): void {
   }
 }
 
-/** Claude Code's hook event names (the keys of "hooks" in hooks/hooks.json). */
+/**
+ * A `hooks` field in plugin.json (an inline hooks object, a path to a hooks file, or an array of
+ * paths) is always flagged rather than resolved: the convention keeps a plugin's hooks in exactly
+ * one place, hooks/hooks.json, which Claude Code loads on its own and `checkHooks` validates.
+ */
+function checkManifestHooks(file: string, text: string, hooks: unknown, add: Add): void {
+  const index = text.split('\n').findIndex((l) => /^\s*"hooks"\s*:/.test(l));
+  const line = index === -1 ? undefined : index + 1;
+  const finding = (message: string, fix: string) => add(file, 'hooks-cli', message, fix, line);
+  const paths = typeof hooks === 'string' ? [hooks] : Array.isArray(hooks) && hooks.length > 0 && hooks.every((h) => typeof h === 'string') ? (hooks as string[]) : null;
+  if (paths !== null) {
+    const isDefault = (p: string) => p.replace(/^(\$\{CLAUDE_PLUGIN_ROOT\}\/|\.\/)/, '') === 'hooks/hooks.json';
+    const others = paths.filter((p) => !isDefault(p));
+    finding(
+      `"hooks" declares hook files (${paths.map((p) => JSON.stringify(p)).join(', ')}); plugin-builder checks hooks only in hooks/hooks.json`,
+      others.length === 0
+        ? 'remove the "hooks" field; Claude Code loads hooks/hooks.json without it'
+        : `move the hooks from ${others.join(', ')} into hooks/hooks.json and remove the "hooks" field`,
+    );
+  } else if (isObject(hooks)) {
+    finding(
+      '"hooks" declares hooks inline; plugin-builder checks hooks only in hooks/hooks.json',
+      'move this object to hooks/hooks.json (as {"description": "...", "hooks": {<Event>: [...]}}) and remove the "hooks" field',
+    );
+  } else {
+    finding(`"hooks" is ${JSON.stringify(hooks)}, not a hooks object or hook file paths`, 'remove the "hooks" field and put the plugin\'s hooks in hooks/hooks.json');
+  }
+}
+
+/**
+ * Claude Code's hook event names (the keys of "hooks" in hooks/hooks.json), taken from Claude Code
+ * 2.1.328 (`claude --version`) on 2026-11-19. A newer event is flagged until it is added here.
+ */
 export const HOOK_EVENTS: readonly string[] = [
   'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PostToolBatch', 'Notification', 'UserPromptSubmit', 'UserPromptExpansion',
   'SessionStart', 'SessionEnd', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact',
@@ -335,6 +370,9 @@ export const HOOK_EVENTS: readonly string[] = [
   'TaskCompleted', 'Elicitation', 'ElicitationResult', 'ConfigChange', 'WorktreeCreate', 'WorktreeRemove',
   'InstructionsLoaded', 'CwdChanged', 'FileChanged', 'DirectoryAdded', 'MessageDisplay',
 ];
+
+/** Shell metacharacters that would chain or redirect another command after a shell-form hook's CLI call. */
+const SHELL_META = /[;&|`<>\n\r]|\$\(/;
 
 /** Claude Code's hook handler types. Only `command` hooks run a program, so only they must run the CLI. */
 export const HOOK_TYPES: readonly string[] = ['command', 'prompt', 'agent', 'http', 'mcp_tool'];
@@ -411,6 +449,14 @@ function checkHooks(root: string, rel: string, bin: string, binTarget: string, a
           args !== undefined
             ? (command === 'node' && argv[0] === nodeArg) || (command === 'npx' && prefixWords.every((w, i) => argv[i] === w))
             : command === exact || command.startsWith(`${exact} `);
+        const chained = args === undefined && runsCli ? SHELL_META.exec(command.slice(exact.length)) : null;
+        if (chained !== null) {
+          finding(
+            `${hat} chains ${JSON.stringify(chained[0])} after the CLI call in a shell command; only the npx prefix, the plugin's bin, its command and plain arguments are allowed`,
+            `put the extra logic in the CLI and use exec form, which runs no shell: ${execForm}`,
+          );
+          return;
+        }
         if (runsCli) return;
         const shown = args === undefined ? JSON.stringify(command) : JSON.stringify([command, ...argv]);
         finding(
