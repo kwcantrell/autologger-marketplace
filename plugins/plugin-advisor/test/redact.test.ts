@@ -684,8 +684,10 @@ test('an escaped key or value does not take text that the other rules read (job 
     ['\\"cookie\\":Authorization=\nzqg7k', 'zqg7k'],
     ['\\"session\\":mysqldump\n-pzq3jagw', 'zq3jagw'],
     ['\\"token\\":token="zq3sviw\n"', 'zq3sviw'],
-    // An escaped opening quote with a plain closing one is not an escaped value: `"session"` is a key.
+    // After a plain key, escaped quotes are read as before: `"session"` is a key.
     ['secret:\\"session"=zq1kor', 'zq1kor'],
+    ['secret:\\"\\"session"=zq1kor', 'zq1kor'],
+    ['secret:\\"x\\"session"=zq1kor', 'zq1kor'],
   ]) {
     assert.ok(!cleanSummary(input!).includes(secret!), `${JSON.stringify(input)}: ${JSON.stringify(cleanSummary(input!))}`);
   }

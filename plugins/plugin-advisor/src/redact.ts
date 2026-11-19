@@ -75,9 +75,8 @@ const ESCAPED_KEY_SEP = new RegExp(`(?<!\\\\)(\\\\+["'])[0-9.-]*([A-Za-z_][A-Za-
  * `u'...'`), or a bare run of value characters, where a `]` ends it unless it closes a marker or more
  * value follows. Sticky: it is tried only right after a key's separator. */
 const KEY_VALUE = /([bBuUrR]{0,2})(?:"([^"\n]*)"|'([^'\n]*)')|((?:\[redacted\]|\](?=[^\s"'&;,)}\]])|[^\s"'&;,)}\]])+)/y;
-/** A quoted value whose quotes are escaped (`\"abc\"`), tried before `KEY_VALUE`. It counts only when
- * the closing quote has the same escape as the opening one; otherwise the value is read by `KEY_VALUE`
- * as before (`\"session"=x` is a backslash and then the key `"session"`). */
+/** A quoted value whose quotes are escaped (`\"abc\"`), tried before `KEY_VALUE` after an escaped key
+ * only. It counts only when the closing quote has the same escape as the opening one. */
 const ESCAPED_VALUE = /([bBuUrR]{0,2})(\\+)(?:"([^"\n]*)"|'([^'\n]*)')/y;
 
 /** The escaped quoted value at `at`, redacted, with its length; or undefined when there is none. */
@@ -99,9 +98,10 @@ function escapedValue(text: string, at: number): [string, number] | undefined {
  * ordinary key the scan goes on inside its value, so `failed: password=x` and `error=token=abc` are
  * redacted, with no recursion and in linear time however many `a=a=...` segments a line holds.
  * `keySep` is `KEY_SEP` or `ESCAPED_KEY_SEP`; its groups are the key's opening quote, the key and the
- * separator. With `quotedOnly`, a value that is not quoted is left alone.
+ * separator. With `escaped`, a value may have escaped quotes and a value that is not quoted is left
+ * alone.
  */
-function scanKeyValues(text: string, keySep: RegExp, quotedOnly: boolean): string {
+function scanKeyValues(text: string, keySep: RegExp, escaped: boolean): string {
   let out = '';
   let done = 0;
   keySep.lastIndex = 0;
@@ -113,12 +113,12 @@ function scanKeyValues(text: string, keySep: RegExp, quotedOnly: boolean): strin
     const cookieHeader = q === undefined && /^(set-)?cookie$/i.test(key) && /^[ \t]*:[ \t]*$/.test(sep);
     let replaced: string;
     let end: number;
-    const escaped = escapedValue(text, at);
-    if (escaped !== undefined) {
-      end = at + escaped[1];
+    const quoted = escaped ? escapedValue(text, at) : undefined;
+    if (quoted !== undefined) {
+      end = at + quoted[1];
       keySep.lastIndex = end;
       if (cookieHeader) continue;
-      replaced = escaped[0];
+      replaced = quoted[0];
     } else {
       KEY_VALUE.lastIndex = at;
       const v = KEY_VALUE.exec(text);
@@ -129,7 +129,7 @@ function scanKeyValues(text: string, keySep: RegExp, quotedOnly: boolean): strin
       if (cookieHeader) continue;
       if (dq !== undefined) replaced = keep(dq) ? value : `${prefix}"${REDACTED}"`;
       else if (sq !== undefined) replaced = keep(sq) ? value : `${prefix}'${REDACTED}'`;
-      else if (quotedOnly) continue;
+      else if (escaped) continue;
       else replaced = keep(bare ?? '') ? value : REDACTED;
     }
     out += text.slice(done, at) + replaced;
@@ -147,7 +147,8 @@ function redactKeyValues(text: string): string {
  * run after every other rule so that it only adds to what they redact. In `redactKeyValues`'s place,
  * or with bare values, it would take text the rules after that read: in `{\"session\": mysql -p x}`
  * the value `mysql` is the name the `-p` rule looks for, and in `\"cookie\":Authorization=` the value
- * is a key whose value is on the next line until `cleanSummary` joins the lines.
+ * is a key whose value is on the next line until `cleanSummary` joins the lines. Escaped values are
+ * read here only, for the same reason: `secret:\"\"session"=x` is a key `"session"` to the other rules.
  */
 function redactEscapedKeyValues(text: string): string {
   return scanKeyValues(text, ESCAPED_KEY_SEP, true);
