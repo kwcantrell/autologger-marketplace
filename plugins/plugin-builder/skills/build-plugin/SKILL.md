@@ -33,7 +33,10 @@ build step first.
 3. Write the skills in `skills/<skill>/SKILL.md`: say when to use the skill and which command to run.
    Every command line goes in a ` ```sh ` block and starts with the exact prefix from `CLAUDE.md`
    (`npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>`), and the
-   frontmatter `allowed-tools` allows that prefix. Name arguments as `<placeholder>`s.
+   frontmatter `allowed-tools` allows that prefix. A CLI with commands that act on the machine (run a
+   Makefile, start containers, write outside its own state) pre-approves only its read-only commands
+   instead, one rule each (`Bash(<prefix> <name> <command>:*)`, comma-separated), so the rest prompt;
+   `plugins/autologger-dev` is the example. Name arguments as `<placeholder>`s.
 
 4. Write the tests in `test/`: unit tests that call `run()` with a fake `Io`, and the end-to-end test
    (start from the template's `test/cli.test.ts`) that runs every skill's command lines through npx
