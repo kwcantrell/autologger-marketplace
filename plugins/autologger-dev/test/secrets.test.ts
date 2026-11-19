@@ -3,6 +3,8 @@
 // failure. The CLI's own output never contains them (no [redacted] needed); when make or docker
 // print one, it is scrubbed on the way out.
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { EXIT } from '../src/run.ts';
 import { answering, cli, fakeRunner, fixture, GOOD_OVERRIDES, GOOGLE_ID, GOOGLE_SECRET, type Outcome, SECRET, untrusted } from './helpers.ts';
@@ -69,6 +71,23 @@ test('a secret printed by make (up and ca, success and failure) is scrubbed befo
     assertClean('ca', ca);
     assert.match(ca.stderr, /secret_id \[redacted\]/);
   }
+});
+
+test('a secret that make dev-bao generates during up is scrubbed from the output after it', async () => {
+  const f = fixture({ credentials: false, secrets: false, overrides: GOOD_OVERRIDES });
+  const fresh = 'freshly-generated-secret-0123456789abcdef';
+  const runner = fakeRunner({
+    'docker container': { code: 1, stderr: 'No such container' },
+    'make dev-bao': () => {
+      writeFileSync(join(f.stateDir, 'secrets.json'), JSON.stringify({ JWT_SECRET: fresh }));
+      return { code: 0, stdout: 'generated secrets.json\n' };
+    },
+    'make dev-up': { code: 1, stderr: `boot refused JWT_SECRET=${fresh}\n` },
+  });
+  const outcome = await cli({ env: f.env, runner }, 'up', '--repo', f.repo);
+  assert.equal(outcome.code, EXIT.failure);
+  assert.ok(!outcome.stderr.includes(fresh), outcome.stderr);
+  assert.match(outcome.stderr, /boot refused JWT_SECRET=\[redacted\]/);
 });
 
 test('a secret passed as an argument value never comes back in an error', async () => {

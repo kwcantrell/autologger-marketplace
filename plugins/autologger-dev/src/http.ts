@@ -65,7 +65,9 @@ export async function probe(fetchFn: Fetch, url: string, init: RequestInit = {},
       return { ok: false, kind: 'tls', message: `the TLS certificate of ${origin} is not trusted (${code})` };
     }
     if ((error as Error).name === 'TimeoutError') return { ok: false, kind: 'timeout', message: `${origin} did not answer within ${timeoutMs / 1000} s` };
-    return { ok: false, kind: 'unreachable', message: `cannot reach ${origin}: ${clip(cause?.message ?? code ?? (error as Error).message)}` };
+    // An empty message is common (undici's AggregateError for localhost on both ::1 and 127.0.0.1).
+    const why = [cause?.message, code, (error as Error).message].find((m) => m !== undefined && m !== '') ?? 'unknown error';
+    return { ok: false, kind: 'unreachable', message: `cannot reach ${origin}: ${clip(why)}` };
   }
 }
 

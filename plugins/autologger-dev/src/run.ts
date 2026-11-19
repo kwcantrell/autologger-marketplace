@@ -151,7 +151,10 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
 
   // No value from the OpenBao state directory or .env.openbao.dev may leave this process, whoever
   // printed it (make and docker included): scrub every write on the way out.
-  const scrub = redactor(secretValues(env, checkout.path));
+  let scrub = redactor(secretValues(env, checkout.path));
+  const refreshSecrets = (): void => {
+    scrub = redactor(secretValues(env, checkout.path));
+  };
   const io = { stdout: (t: string) => rawIo.stdout(scrub(t)), stderr: (t: string) => rawIo.stderr(scrub(t)) };
   const json = values.json;
   const out = (value: unknown, text: string): void => io.stdout(json ? `${JSON.stringify(value)}\n` : text);
@@ -166,7 +169,7 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
       }
       case 'up': {
         const progress = lineWriter(io.stderr);
-        const ctx = { env, runner, checkout, progress: progress.push };
+        const ctx = { env, runner, checkout, progress: progress.push, refreshSecrets };
         const plan = await planUp(ctx);
         for (const w of plan.warnings) io.stderr(`${CLI_NAME}: warning: ${w}\n`);
         if (values['dry-run']) {
@@ -176,6 +179,7 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
         try {
           await runUp(ctx, plan);
         } finally {
+          refreshSecrets();
           progress.flush();
         }
         out(plan, formatUp(plan));

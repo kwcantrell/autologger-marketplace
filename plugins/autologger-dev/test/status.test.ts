@@ -110,6 +110,12 @@ test('status: the server comes from --server, else AUTOLOGGER_URL, else https://
   await cli({ fetch: fake }, 'status');
   await cli({ fetch: fake, env: { AUTOLOGGER_URL: 'http://localhost:9' } }, 'status');
   assert.deepEqual(seen, ['https://localhost:8787/', 'http://localhost:9/']);
+  // undici's AggregateError for localhost has an empty message: the code is shown instead.
+  const aggregate: typeof fetch = async () => {
+    throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new AggregateError([], ''), { code: 'ECONNREFUSED' }) });
+  };
+  const r = JSON.parse((await cli({ fetch: aggregate }, 'status', '--json')).stdout) as StatusReport;
+  assert.equal(r.error, 'cannot reach https://localhost:8787: ECONNREFUSED');
   for (const bad of ['http://example.com', 'ftp://localhost', 'https://user:pw@localhost']) {
     const r = await cli({ fetch: fake }, 'status', '--server', bad);
     assert.equal(r.code, EXIT.usage, bad);
