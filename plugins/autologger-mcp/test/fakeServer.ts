@@ -52,6 +52,10 @@ export interface FakeOptions {
   /** After this many answered read calls in data mode, refuse the next `rateLimitReadTimes` reads with a rate limit. */
   rateLimitAfterReads?: number;
   rateLimitReadTimes?: number;
+  /** Data mode: called before each write tool runs (after the scope check), e.g. to play a concurrent edit. */
+  beforeWrite?: (data: FakeData, tool: string, args: Record<string, unknown>) => void;
+  /** Data mode: called after each successful write, to observe the target between writes. */
+  afterWrite?: (data: FakeData, tool: string) => void;
 }
 
 export interface FakeSession {
@@ -70,6 +74,10 @@ export interface FakeSession {
   date?: string;
   /** Left out of list_sessions (autologger's hidden sessions). */
   hidden?: boolean;
+  /** get_session's fps and the frame rate of its timecodes (default 25). */
+  fps?: number;
+  /** The transport is rolling: take rows are refused. */
+  rolling?: boolean;
 }
 
 export interface FakeStudio {
@@ -111,8 +119,28 @@ function strict(properties: Record<string, unknown>, required: string[]): Record
 /** The write tools' inputs as autologger-2 declares them (server/src/dashboards/mcpWriteTools.ts). */
 const WRITE_SCHEMAS: Record<string, Record<string, unknown>> = {
   create_event: strict(
-    { session_id: { type: 'string' }, category: { type: 'string' }, message: { type: 'string' }, metadata: { type: 'object' }, marked_at_utc: { type: ['string', 'null'] } },
+    {
+      session_id: { type: 'string' },
+      category: { type: 'string' },
+      message: { type: 'string' },
+      metadata: { type: 'object' },
+      marked_at_utc: { type: ['string', 'null'] },
+      timecode: { type: 'string' },
+    },
     ['session_id', 'category', 'message'],
+  ),
+  update_event: strict(
+    {
+      session_id: { type: 'string' },
+      event_id: { type: 'string' },
+      category: { type: 'string' },
+      message: { type: 'string' },
+      wall_time_utc: { type: 'string' },
+      timecode_hms: { type: 'string' },
+      timecode: { type: 'string' },
+      version: { type: 'integer' },
+    },
+    ['session_id', 'event_id', 'category', 'message', 'wall_time_utc', 'version'],
   ),
   create_topic: strict(
     { session_id: { type: 'string' }, session_time: { type: 'string' }, duration_sec: { type: 'number' }, topic_level: { type: 'integer' }, summary: { type: 'string' } },
@@ -210,6 +238,59 @@ const WRITE_TOOLS = WRITE_TOOL_NAMES.map((name) => ({
   inputSchema: WRITE_SCHEMAS[name] ?? { type: 'object' },
   annotations: { readOnlyHint: false, destructiveHint: name.startsWith('delete') },
 }));
+
+// autologger's timecode math (packages/domain/src/timecode.ts): frames counted at the rounded
+// rate, `;` the separator at 29.97; and its take rules (packages/session-core/src/recordedTakes.ts).
+export const TAKE_ROW_ROLLING_TEXT =
+  'Writing a take row (Recording N Started/Stopped) is refused while this session is actively recording; stop the recording and try again. Nothing was written.';
+const TAKE_MESSAGE_TEXT = 'A take row\'s message must stay "Recording N Started" or "Recording N Stopped". Nothing was written.';
+const TAKE_RE = /^Recording (\d+) (Started|Stopped)$/;
+const fpsInt = (fps: number): number => Math.max(1, Math.round(Math.round(fps * 1000) / 1000));
+export function fakeTotalFrames(text: string, fps: number): number | null {
+  const m = /^(\d{2}):(\d{2}):(\d{2})[:;](\d{2})$/.exec(text);
+  if (m === null) return null;
+  const [h, mi, s, f] = [m[1], m[2], m[3], m[4]].map(Number) as [number, number, number, number];
+  if (h > 23 || mi > 59 || s > 59 || f >= fpsInt(fps)) return null;
+  return ((h * 60 + mi) * 60 + s) * fpsInt(fps) + f;
+}
+export function fakeFormat(total: number, fps: number): string {
+  const r = fpsInt(fps);
+  const p2 = (n: number): string => String(n).padStart(2, '0');
+  const sep = Math.abs(fps - 29.97) < 0.001 * 29.97 ? ';' : ':';
+  return `${p2(Math.floor(total / r / 3600) % 24)}:${p2(Math.floor(total / r / 60) % 60)}:${p2(Math.floor(total / r) % 60)}${sep}${p2(total % r)}`;
+}
+export const isTakeRow = (e: Record<string, unknown>): boolean => String(e.category).toLowerCase() === 'internal' && TAKE_RE.test(String(e.message));
+/** The closed takes: walls and frames of each Started/Stopped pair, FIFO per N in wall order. */
+export function fakeTakes(events: Record<string, unknown>[]): { startMs: number; stopMs: number; startTf: number; stopTf: number }[] {
+  const marks = events
+    .filter(isTakeRow)
+    .map((e) => {
+      const m = TAKE_RE.exec(String(e.message)) as RegExpExecArray;
+      return { ord: Number(m[1]), start: m[2] === 'Started', ms: Date.parse(String(e.wall_time_utc)), tf: Number(e.timecode_total_frames), id: String(e.event_id) };
+    })
+    .sort((a, b) => a.ms - b.ms || (a.start === b.start ? a.id.localeCompare(b.id) : a.start ? -1 : 1));
+  const open = new Map<number, typeof marks>();
+  const takes: { startMs: number; stopMs: number; startTf: number; stopTf: number }[] = [];
+  for (const x of marks) {
+    const q = open.get(x.ord) ?? [];
+    open.set(x.ord, q);
+    if (x.start) q.push(x);
+    else {
+      const st = q.shift();
+      if (st !== undefined) takes.push({ startMs: st.ms, stopMs: x.ms, startTf: st.tf, stopTf: x.tf });
+    }
+  }
+  return takes;
+}
+/** Take rows of `events` whose ordinal has more Started than Stopped rows: the web app's open-take check. */
+export function openTakes(events: Record<string, unknown>[]): number[] {
+  const count = new Map<number, number>();
+  for (const e of events.filter(isTakeRow)) {
+    const m = TAKE_RE.exec(String(e.message)) as RegExpExecArray;
+    count.set(Number(m[1]), (count.get(Number(m[1])) ?? 0) + (m[2] === 'Started' ? 1 : -1));
+  }
+  return [...count].filter(([, n]) => n > 0).map(([ord]) => ord);
+}
 
 const token = (prefix: string): string => `${prefix}${randomBytes(32).toString('base64url')}`;
 
@@ -515,6 +596,7 @@ export class FakeAutologger {
         return 'http500';
       }
       if (this.options.toolErrorWriteNumber === this.writeCounts.attempted) return text('Internal error.');
+      this.options.beforeWrite?.(data, name, args);
       const after = this.options.rateLimitAfterWrites;
       if (after !== undefined && this.writeCounts.succeeded >= after && this.writeCounts.rateLimited < (this.options.rateLimitTimes ?? 1)) {
         this.writeCounts.rateLimited++;
@@ -522,8 +604,11 @@ export class FakeAutologger {
       }
       const done = (out: Record<string, unknown>): Record<string, unknown> => {
         this.writeCounts.succeeded++;
+        this.options.afterWrite?.(data, name);
         return ok(out);
       };
+      const invalidTimecode = (fps: number) =>
+        text(`Invalid timecode: use HH:MM:SS:FF, or HH:MM:SS;FF for drop-frame, with hours below 24, minutes and seconds below 60 and frames below ${fpsInt(fps)} at this session's ${Math.round(fps * 1000) / 1000} fps. Nothing was written.`);
       const id = (prefix: string) => `${prefix}${this.nextId++}`;
       switch (name) {
         case 'create_event': {
@@ -538,17 +623,70 @@ export class FakeAutologger {
           if (cat === undefined) {
             return text(`Unknown category. Send a category id or name. Nothing was written. Valid categories: ${cats.map((c) => `${c.label} (${c.id})`).join(', ') || 'none'}, or internal.`);
           }
+          const fps = s.fps ?? 25;
+          const wall = String(args.marked_at_utc ?? '2026-11-19T12:00:00.000Z');
+          let tf: number;
+          if (typeof args.timecode === 'string') {
+            const parsed = fakeTotalFrames(args.timecode, fps);
+            if (parsed === null) return invalidTimecode(fps);
+            tf = parsed;
+          } else {
+            // Inside a closed take: the take's timecode at that instant; else the transport
+            // position, which is 0 on these stopped sessions.
+            const ms = Date.parse(wall);
+            const hit = fakeTakes(s.events).filter((t) => ms >= t.startMs && ms <= t.stopMs).pop();
+            tf = hit === undefined ? 0 : Math.min(hit.stopTf, hit.startTf + Math.trunc(((ms - hit.startMs) / 1000) * fps));
+          }
           const row = {
             event_id: id('ev_'),
-            wall_time_utc: args.marked_at_utc ?? '2026-11-19T12:00:00.000Z',
+            wall_time_utc: wall,
+            timecode: fakeFormat(tf, fps),
+            frame_rate: fps,
+            timecode_total_frames: tf,
             category: cat.id,
             category_label: cat.label,
             message: args.message,
             metadata: args.metadata ?? {},
             version: 1,
           };
+          if (isTakeRow(row) && s.rolling === true) return text(TAKE_ROW_ROLLING_TEXT);
           s.events.push(row);
           return done(row);
+        }
+        case 'update_event': {
+          const s = session(args.session_id);
+          if (s === undefined) return text('Session not found');
+          const e = s.events.find((x) => x.event_id === args.event_id);
+          if (e === undefined) return text('Event not found.');
+          const fps = s.fps ?? 25;
+          const cats = s.categories ?? [];
+          const storedInternal = String(e.category).toLowerCase() === 'internal';
+          const wanted = String(args.category);
+          let category: string | undefined;
+          if (wanted === 'internal') category = storedInternal ? 'internal' : undefined;
+          else if (!storedInternal) category = (cats.find((c) => c.id === wanted) ?? cats.find((c) => c.label.trim().toLowerCase() === wanted.trim().toLowerCase()))?.id;
+          if (category === undefined) {
+            return text(`Unknown category for this studio profile. Send a category id or name. Nothing was written. Valid categories: ${storedInternal ? 'internal' : cats.map((c) => `${c.label} (${c.id})`).join(', ')}.`);
+          }
+          if (e.version !== args.version) return text(`Version conflict: nothing was written. The current row is ${JSON.stringify(e)}`);
+          const take = isTakeRow(e);
+          if (take && !TAKE_RE.test(String(args.message))) return text(TAKE_MESSAGE_TEXT);
+          if ((take || isTakeRow({ category, message: args.message })) && s.rolling === true) return text(TAKE_ROW_ROLLING_TEXT);
+          let tf: number | null;
+          if (typeof args.timecode === 'string') tf = fakeTotalFrames(args.timecode, fps);
+          else if (typeof args.timecode_hms === 'string') tf = fakeTotalFrames(`${args.timecode_hms}:00`, fps);
+          else return text('timecode_hms or timecode is required.');
+          if (tf === null) return invalidTimecode(fps);
+          Object.assign(e, {
+            category,
+            message: args.message,
+            wall_time_utc: args.wall_time_utc,
+            timecode: fakeFormat(tf, fps),
+            frame_rate: fps,
+            timecode_total_frames: tf,
+            version: Number(e.version) + 1,
+          });
+          return done({ ...e });
         }
         case 'create_topic': {
           const s = session(args.session_id);
@@ -639,7 +777,7 @@ export class FakeAutologger {
           studio_id: 'st_1',
           title: s.title ?? s.session_id,
           date: s.date ?? '2026-11-19',
-          fps: 25,
+          fps: s.fps ?? 25,
           counts: { events: s.events.length, words: 0, paragraphs: (s.paragraphs ?? []).length, topics: s.topics.length, wiki_pages: associated(s).length },
           revision: s.revision ?? 1,
         });

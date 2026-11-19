@@ -65,6 +65,8 @@ export interface CreatedItem {
    * with what the target has by then, differs (a linked page created after it, even on a rerun).
    */
   body_sha256?: string;
+  /** An event's timecode as last sent to the target (create_event or update_event). */
+  timecode?: string;
 }
 
 export interface SkippedItem {
