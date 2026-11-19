@@ -147,6 +147,6 @@ test('tools and call without credentials exit 1 with a "not signed in" message, 
     const result = await cli({ configDir, server: 'https://localhost:8787', fetch: offline }, ...argv);
     assert.equal(result.code, 1);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /^autologger-mcp: not signed in to https:\/\/localhost:8787; run 'autologger-mcp login'/);
+    assert.match(result.stderr, /^autologger-mcp: not signed in to https:\/\/localhost:8787; run npx --yes --offline --loglevel=error --package=\S+ -- autologger-mcp login --server https:\/\/localhost:8787 \(to edit session data, run npx .* login --write --server https:\/\/localhost:8787 instead\)/);
   }
 });

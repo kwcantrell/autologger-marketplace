@@ -23,7 +23,7 @@ Skill:
 
 | Skill | Use |
 | --- | --- |
-| `autologger-dev` | Runs `doctor`, asks you before `up`, writes the CA, checks the endpoint and hands you the steps only you can do (the Google client, the `NODE_EXTRA_CA_CERTS` restart, `claude mcp add`, `autologger-mcp login`, or the `make dev-mcp-token` line that needs no Google client). |
+| `autologger-dev` | Runs `doctor`, asks you before `up`, writes the CA, checks the endpoint and hands you the steps only you can do (the Google client, the `NODE_EXTRA_CA_CERTS` restart, `claude mcp add`, the autologger-mcp `login_command`, or the `make dev-mcp-token` line that needs no Google client). |
 
 ## The setup flow
 
@@ -44,8 +44,8 @@ Skill:
 6. **Trust it** with `NODE_EXTRA_CA_CERTS=<file>` in the environment Claude Code runs in. Node reads
    it only at startup, so restart Claude Code after setting it.
 7. **Connect**: `claude mcp add --transport http autologger-dev https://localhost:8787/mcp`, or the
-   [autologger-mcp](../autologger-mcp/README.md) plugin's `autologger-mcp login --server
-   https://localhost:8787` (run it yourself: it opens a browser). Or, with no Google client at all,
+   [autologger-mcp](../autologger-mcp/README.md) plugin's `login_command` (get it from autologger-mcp's `status --server
+   https://localhost:8787 --json`; run it yourself: it opens a browser). Or, with no Google client at all,
    autologger's dev-only token mint piped into autologger-mcp: get `import_tokens_command` from
    autologger-mcp's `status --server <server> --json` (the autologger-mcp sign-in skill runs it) and
    run that line in the autologger-2 checkout with your email for `<address>` (and `DEV_SLOT=N ` in
@@ -125,7 +125,7 @@ Every command takes `--json` (exactly one JSON value on stdout) and `--help`.
 | `up --repo <path> [--slot <N>] [--dry-run]` | Runs in the checkout, in order and only as needed: `make dev-bao` (container not running or `.env.openbao.dev` missing), `make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1` (not already on: `1`, `true` or `yes` in any case, spaces around it allowed), `DEV_HTTPS=1 make dev-up` (always; `DEV_HTTPS=1 DEV_SLOT=N make dev-up` with `--slot N`). make's output streams to stderr; the first failing step stops it with exit 1 naming the step. Warns (once, on stderr as `autologger-dev: warning: ...`, and in `--json`'s `warnings`; never again on stdout) when the Google client is a placeholder, quoted, padded, or quoted and padded (one warning naming both; the stack still comes up); a quoted `CUSTOM_DASHBOARDS_ENABLED` is rewritten as `1` by `dev-bao-set`. A step's last output line without a newline is ended before the next step's header. `--dry-run` prints the plan and runs nothing. |
 | `ca --repo <path> [--slot <N>] [--out <file>]` | Runs `DEV_HTTPS=1 make dev-ca` (`DEV_HTTPS=1 DEV_SLOT=N make dev-ca` with `--slot N`), refuses (exit 1, nothing written) anything but exactly one valid PEM certificate or anything that looks like a private key, writes it to `--out` (default `~/.autologger-dev/autologger-dev-ca.crt`, mode 644, missing parent folders created and removed again (only those, only if empty) if `ca` then fails, so nothing is left behind, written to a temp file in the same directory and renamed over the target; an existing file there is replaced only if it is a regular file holding one PEM certificate, otherwise exit 1 and it is left unchanged) and prints the `export NODE_EXTRA_CA_CERTS=<path>` line. |
 | `status [--slot <N>] [--server <url>]` | Whether the server answers, whether `<server>/.well-known/oauth-protected-resource` returns JSON naming the resource, and whether `<server>/mcp` exists (any answer but 404). A TLS trust failure is reported as `tls: "untrusted"` with the `ca` / `NODE_EXTRA_CA_CERTS` fix. Exit 0 whenever it ran. |
-| `connect [--slot <N>] [--server <url>]` | Prints, never runs, what is left: the `NODE_EXTRA_CA_CERTS` export (when unset), `claude mcp add --transport http autologger-dev <server>/mcp` (`autologger-dev-N` with `--slot N`; with `--server` too, only for that slot's own URL), the alternative `autologger-mcp login --server <server>`, and (as `dev_mcp_token`) the way in that needs no Google client: get `import_tokens_command` from autologger-mcp's `status --server <server> --json` (the autologger-mcp sign-in skill runs it) and run that line in the autologger-2 checkout with your email for `<address>` (and `DEV_SLOT=N ` in front of make for slot N). autologger-dev cannot compute autologger-mcp's install path, so it never prints a bare `autologger-mcp import-tokens`. When `google_client` is not ok, `doctor`'s fix says the same. |
+| `connect [--slot <N>] [--server <url>]` | Prints, never runs, what is left: the `NODE_EXTRA_CA_CERTS` export (when unset), `claude mcp add --transport http autologger-dev <server>/mcp` (`autologger-dev-N` with `--slot N`; with `--server` too, only for that slot's own URL), the alternative `autologger_mcp_login` (get `login_command` from autologger-mcp's `status --server <server> --json`), and (as `dev_mcp_token`) the way in that needs no Google client: get `import_tokens_command` from autologger-mcp's `status --server <server> --json` (the autologger-mcp sign-in skill runs it) and run that line in the autologger-2 checkout with your email for `<address>` (and `DEV_SLOT=N ` in front of make for slot N). autologger-dev cannot compute autologger-mcp's install path, so it never prints a bare autologger-mcp command. When `google_client` is not ok, `doctor`'s fix says the same. |
 
 Exit codes: 0 success, 1 the command failed, 2 usage error. On a non-zero exit the message is on
 stderr as `autologger-dev: <message>` and stdout is empty.

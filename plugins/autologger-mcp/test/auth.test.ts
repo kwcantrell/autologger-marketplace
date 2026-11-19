@@ -179,7 +179,7 @@ test('a 401 that persists after the refresh fails with a sign-in message, not a 
   server.options.rejectAllBearers = true;
   const result = await cli({ configDir, server: server.base }, 'tools');
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /rejected the access token even after a refresh to http:\/\/127\.0\.0\.1:\d+; run 'autologger-mcp login'/);
+  assert.match(result.stderr, /rejected the access token even after a refresh to http:\/\/127\.0\.0\.1:\d+; run npx --yes --offline --loglevel=error --package=\S+ -- autologger-mcp login --server http:\/\/127\.0\.0\.1:\d+ \(to edit session data, run npx .* login --write --server /);
   assert.equal(server.counts.refreshes, 1);
 });
 
@@ -189,7 +189,7 @@ test('invalid_grant on refresh clears the tokens and tells the user to log in', 
   const result = await cli({ configDir, server: server.base, now: () => Date.now() + 2 * HOUR }, 'tools', '--json');
   assert.equal(result.code, 1);
   assert.equal(result.stdout, '');
-  assert.match(result.stderr, /invalid_grant.*run 'autologger-mcp login'/);
+  assert.match(result.stderr, /invalid_grant.*run npx .* -- autologger-mcp login --server http:\/\/127\.0\.0\.1:\d+ \(to edit/);
   const creds = storedCredentials(configDir, server.base);
   assert.equal(creds.tokens, undefined);
   assert.ok(creds.client !== undefined, 'the client registration is kept');
@@ -304,7 +304,7 @@ test('not signed in to a loopback server: the error and status text name login a
   assert.equal(tools.code, 1);
   assert.equal(tools.stdout, '');
   const lines = tools.stderr.split('\n');
-  assert.match(lines[0] ?? '', /^autologger-mcp: not signed in to http:\/\/127\.0\.0\.1:\d+; run 'autologger-mcp login' \(add --write to edit session data\)$/);
+  assert.match(lines[0] ?? '', /^autologger-mcp: not signed in to http:\/\/127\.0\.0\.1:\d+; run npx --yes --offline --loglevel=error --package=\S+ -- autologger-mcp login --server http:\/\/127\.0\.0\.1:\d+ \(to edit session data, run npx --yes --offline --loglevel=error --package=\S+ -- autologger-mcp login --write --server http:\/\/127\.0\.0\.1:\d+ instead\)$/);
   assert.match(lines[1] ?? '', /^Or, on a local dev stack without Google sign-in, run in the autologger-2 checkout \(your email for <address>; DEV_SLOT=N in front for dev slot N\):$/);
   assert.equal(lines[2], `  ${command}`);
 
@@ -333,7 +333,8 @@ test('not signed in to a non-local server: only login is suggested', async () =>
   };
   const tools = await cli({ configDir, server: 'https://autologger.example', fetch: offline }, 'tools');
   assert.equal(tools.code, 1);
-  assert.equal(tools.stderr, "autologger-mcp: not signed in to https://autologger.example; run 'autologger-mcp login' (add --write to edit session data)\n");
+  assert.match(tools.stderr, /^autologger-mcp: not signed in to https:\/\/autologger\.example; run npx --yes --offline --loglevel=error --package=\S+ -- autologger-mcp login --server https:\/\/autologger\.example \(to edit session data, run npx --yes --offline --loglevel=error --package=\S+ -- autologger-mcp login --write --server https:\/\/autologger\.example instead\)\n$/);
+  assert.doesNotMatch(tools.stderr, /run 'autologger-mcp login'/);
   const text = await cli({ configDir, server: 'https://autologger.example', fetch: offline }, 'status');
   assert.equal(text.code, 0, text.stderr);
   assert.doesNotMatch(text.stdout, /dev-mcp-token/);

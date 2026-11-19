@@ -62,8 +62,8 @@ disabled.
 ### login
 
 ```sh
-autologger-mcp login            # read: scope "dashboards"
-autologger-mcp login --write    # read and edit: "dashboards session-data:write"
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp login            # read: scope "dashboards"
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp login --write    # read and edit: "dashboards session-data:write"
 ```
 
 `login` registers the CLI as a public OAuth client (once per server; the registration is reused),
@@ -73,7 +73,7 @@ approve; the browser is sent back to the CLI, which exchanges the code (PKCE S25
 `iss` checked). It waits up to 300 s (`--timeout <seconds>`). On the consent page you may untick
 "Edit events, topics and wiki pages"; the scope stored and reported is the one actually granted.
 
-Run `login` yourself: it needs your browser. In Claude Code you can type `!` and the command.
+`<plugin dir>` is the installed plugin folder (`status --json` prints the full `login_command`). Run `login` yourself: it needs your browser. In Claude Code you can type `!` and the command.
 
 ### import-tokens (local dev stack, no browser)
 
@@ -83,13 +83,14 @@ and its tokens for a dev-stack user without a Google OAuth client, and prints th
 Pipe it into `import-tokens` to sign in with it:
 
 ```sh
-make dev-mcp-token EMAIL=me@example.com | autologger-mcp import-tokens --server https://localhost:8787
-DEV_SLOT=2 make dev-mcp-token EMAIL=me@example.com SCOPE="dashboards session-data:write" \
-  | autologger-mcp import-tokens --server https://localhost:22787
+make dev-mcp-token EMAIL=me@example.com |
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp import-tokens --server https://localhost:8787
+DEV_SLOT=2 make dev-mcp-token EMAIL=me@example.com SCOPE="dashboards session-data:write" |
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp import-tokens --server https://localhost:22787
 ```
 
 `status --json` prints the whole line for the server as `import_tokens_command`, with the full
-`npx ...` form of `autologger-mcp import-tokens` (the bare name is not on PATH for a plugin install).
+`npx ...` form of the `import-tokens` command (the bare name is not on PATH for a plugin install; `<plugin dir>` above is the installed plugin folder).
 When a client is stored for the server, registered at its current registration endpoint and recent
 enough that the server still keeps it, `status --json` also prints it as `client_id` and the line
 carries `CLIENT_ID=<client_id>`, so repeated imports reuse one client instead of registering a new

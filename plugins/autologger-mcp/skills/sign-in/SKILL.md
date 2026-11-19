@@ -21,8 +21,8 @@ npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- autolo
 
 This reads only the local credentials file. It prints `server`, `signed_in`, `scope`
 (`dashboards` reads; `dashboards session-data:write` can also edit events, topics and wiki pages),
-`can_write`, `access_token_expires_at`, `login_command` / `login_write_command` and, for a local dev
-stack, `import_tokens_command` (below). An expired
+`can_write`, `access_token_expires_at`, `login_command` / `login_write_command` and
+`import_tokens_command` (below). An expired
 access token is fine when `can_refresh` is true: the next call refreshes it.
 
 To also check that the server is reachable and accepts the token:
@@ -54,8 +54,8 @@ EMAIL=<address>` in the user's autologger-2 checkout prints one JSON line with t
 `import-tokens` stores it as the sign-in. Offer this when `login` cannot work on a dev stack (its
 Google client is still a placeholder). It is **the user's step**: the make target creates an
 account and a grant in their dev stack. Give them `import_tokens_command` from `status --json`,
-the whole line to run in their autologger-2 checkout: `make dev-mcp-token EMAIL=<address> | npx ...
-autologger-mcp import-tokens --server <server>`. When a client is stored for the server (shown as
+the whole line to run in their autologger-2 checkout: `make dev-mcp-token EMAIL=<address>` piped into the full npx `import-tokens --server <server>`
+command. When a client is stored for the server (shown as
 `client_id`), the line carries `CLIENT_ID=<client_id>` so the dev stack reuses that client instead of
 registering another (it caps registered clients). They put their email for `<address>` (put
 `DEV_SLOT=N ` before `make` for dev slot N; add `SCOPE="dashboards session-data:write"` after the

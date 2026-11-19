@@ -13,7 +13,7 @@ function packageRoot(): string {
   return fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 }
 
-export function shellQuote(text: string): string {
+function shellQuote(text: string): string {
   return /^[A-Za-z0-9_./:=@%+-]+$/.test(text) ? text : `'${text.replaceAll("'", `'\\''`)}'`;
 }
 
