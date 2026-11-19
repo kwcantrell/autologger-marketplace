@@ -15,6 +15,7 @@ ones.
 | [`autologger-browser`](plugins/autologger-browser/README.md) | A Chromium profile for agent-browser that trusts a local dev stack's private CA in its own NSS database only (no `--ignore-https-errors`), optionally signed in with `make dev-login`, plus the exact agent-browser flags: `doctor`, `setup`, `signin`, `reset`. |
 | [`autologger-mcp`](plugins/autologger-mcp/README.md) | Read and write autologger session data (studios, shows, sessions, events, transcripts, topics, wiki pages, dashboards) through autologger's MCP endpoint, signed in with autologger's OAuth; checks wiki bodies for broken links. |
 | [`autologger-specs`](plugins/autologger-specs/README.md) | Keeps an autologger checkout's `docs/specs/` in step with code: which specs cover a file, which specs the `specs-with-code` gate would fail on, scaffolding and linting specs, and running the repo's own spec gates. |
+| [`plugin-advisor`](plugins/plugin-advisor/README.md) | Notices recurring friction with these plugins (CLI failures, workarounds, manual steps, missing guidance), recorded by Claude and by a hook, in a local redacted log; once an issue recurs it drafts a suggested plugin change with a paste-ready `/factory:run` request, and can file it as a GitHub issue after you confirm. |
 | [`plugin-builder`](plugins/plugin-builder/README.md) | Builds plugins for this marketplace: scaffolds one from the template, checks it against the CLI convention with a fix for each finding, and runs its full verification gate. |
 
 ## Add the marketplace
