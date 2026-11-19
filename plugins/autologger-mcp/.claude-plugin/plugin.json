@@ -1,7 +1,7 @@
 {
   "name": "autologger-mcp",
-  "version": "0.2.3",
-  "description": "Read and write autologger session data (studios, shows, sessions, events, transcripts, topics, wiki pages, dashboards) through autologger's MCP endpoint: OAuth sign-in, token refresh, MCP tool calls and a wiki-link checker, all in a TypeScript CLI.",
+  "version": "0.3.0",
+  "description": "Read and write autologger session data (studios, shows, sessions, events, transcripts, topics, wiki pages, dashboards) through autologger's MCP endpoint: OAuth sign-in, token refresh, MCP tool calls, a wiki-link checker, and export/import to seed a local dev stack from another server, all in a TypeScript CLI.",
   "author": {
     "name": "Kalen Cantrell"
   },

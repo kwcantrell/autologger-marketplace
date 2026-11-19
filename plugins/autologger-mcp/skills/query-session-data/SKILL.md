@@ -7,7 +7,9 @@ allowed-tools: Bash(npx --yes --offline --loglevel=error --package="${CLAUDE_PLU
 # Reading autologger session data
 
 Every read goes through the `autologger-mcp` CLI, which calls autologger's MCP tools as the signed-in
-user. Run the commands exactly as written, from any directory. If one fails with "not signed in",
+user. autologger's AI features go through this plugin now: the in-app aichat agents are being
+retired, so summarising or analysing session data is done here, with the tools listed below (and
+only those). Run the commands exactly as written, from any directory. If one fails with "not signed in",
 follow this plugin's `sign-in` skill (the user signs in; you don't).
 
 ## Find the tools and their arguments

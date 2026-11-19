@@ -216,3 +216,42 @@ function checkBlock(raw: string, startLine: number, problems: LinkProblem[]): vo
     report(m[1] ?? '', m.index + 1, m[1] ?? '');
   }
 }
+
+/** What a `wiki:`/`cite:` link's id becomes: a new id, or undefined to leave the link as it is. */
+export interface LinkResolver {
+  /** A source page id: the target page id, or undefined. */
+  page: (id: string) => string | undefined;
+  /** A source session id: the target session id, or undefined. */
+  session: (id: string) => string | undefined;
+}
+
+export interface RewriteResult {
+  body: string;
+  /** Each link left unchanged because the resolver had no target for it, as written (`wiki:p1`). */
+  unresolved: string[];
+}
+
+// A wiki:/cite: URL where a link destination starts: after `](` (optionally `<`), after a reference
+// definition's `]:`, or as an autolink `<...>`. The id ends at a character the grammar excludes.
+const LINK_TARGET_RE =
+  /(\]\([ \t\n]*<?|^ {0,3}\[[^\]\n]+\]:[ \t]*<?|<)(wiki|cite):([A-Za-z0-9_-]{1,64})(@\d+(?:\.\d{1,3})?)?(?![A-Za-z0-9_@-])/gm;
+
+/**
+ * Rewrites the ids of the `wiki:<page_id>` and `cite:<session_id>@<seconds>` link destinations in a
+ * Markdown body through `resolve`. Only the id changes; links the resolver has no target for, and
+ * text that is not a link destination, are left as they are.
+ */
+export function rewriteLinks(body: string, resolve: LinkResolver): RewriteResult {
+  const unresolved: string[] = [];
+  const out = body.replace(LINK_TARGET_RE, (whole, lead: string, scheme: string, id: string, at: string | undefined) => {
+    if (scheme === 'wiki' && at !== undefined) return whole;
+    if (scheme === 'cite' && at === undefined) return whole;
+    const target = scheme === 'wiki' ? resolve.page(id) : resolve.session(id);
+    if (target === undefined) {
+      unresolved.push(`${scheme}:${id}${at ?? ''}`);
+      return whole;
+    }
+    return `${lead}${scheme}:${target}${at ?? ''}`;
+  });
+  return { body: out, unresolved };
+}

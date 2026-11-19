@@ -27,7 +27,7 @@ test('--help prints usage on stdout', async () => {
   assert.equal(code, EXIT.ok);
   assert.equal(stderr, '');
   assert.match(stdout, new RegExp(`^Usage: ${CLI_NAME} `));
-  for (const word of ['login', 'status', 'import-tokens', 'logout', 'tools', 'call', 'check-links', '--json', 'NODE_EXTRA_CA_CERTS', 'AUTOLOGGER_URL']) {
+  for (const word of ['login', 'status', 'import-tokens', 'logout', 'tools', 'call', 'check-links', 'export', 'import', '--confirm', '--map', '--no-wait', 'import-state.json', '--json', 'NODE_EXTRA_CA_CERTS', 'AUTOLOGGER_URL']) {
     assert.ok(stdout.includes(word), word);
   }
 });

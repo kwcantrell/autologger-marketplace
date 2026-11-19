@@ -26,6 +26,54 @@ export interface FakeOptions {
   noRevocation?: boolean;
   /** Answer every /mcp request 401, whatever its token. */
   rejectAllBearers?: boolean;
+  /**
+   * Session data: the read and write tools then work on it the way autologger's do (strict inputs,
+   * paged lists, sliced wiki bodies, categories by id or name, unique wiki titles per show).
+   * Without it, every read tool answers one placeholder item and every write tool succeeds.
+   */
+  data?: FakeData;
+  /** Items per list page in data mode (default 2). */
+  pageSize?: number;
+  /** Characters per get_wiki_page slice in data mode (default 40). */
+  sliceChars?: number;
+  /** After this many successful writes, refuse the next `rateLimitTimes` writes with a rate limit. */
+  rateLimitAfterWrites?: number;
+  rateLimitTimes?: number;
+  /** The N of `Rate limit exceeded; retry in N s.` (default 7). */
+  rateLimitRetryS?: number;
+  /** Answer the write call with this 1-based number HTTP 500, once, writing nothing. */
+  failWriteNumber?: number;
+  /** Replace these tools' inputSchema in tools/list (and in the strict input check). */
+  inputSchemas?: Record<string, Record<string, unknown>>;
+  /** Leave these tools out of tools/list (calling them answers "not found"). */
+  omitTools?: string[];
+}
+
+export interface FakeSession {
+  session_id: string;
+  show_id: string;
+  title?: string;
+  /** The show's event categories (id and name); create_event takes either. */
+  categories?: { id: string; label: string }[];
+  events: Record<string, unknown>[];
+  topics: Record<string, unknown>[];
+}
+
+export interface FakePage {
+  page_id: string;
+  show_id: string;
+  kind: string;
+  title: string;
+  aliases: string[];
+  body_md: string;
+  revision: number;
+  /** For a kind 'session' page: its session. */
+  session_id?: string;
+}
+
+export interface FakeData {
+  sessions: FakeSession[];
+  pages: FakePage[];
 }
 
 interface Grant {
@@ -34,6 +82,30 @@ interface Grant {
   scope: string;
   revoked: boolean;
 }
+
+function strict(properties: Record<string, unknown>, required: string[]): Record<string, unknown> {
+  return { type: 'object', properties, required, additionalProperties: false };
+}
+
+/** The write tools' inputs as autologger-2 declares them (server/src/dashboards/mcpWriteTools.ts). */
+const WRITE_SCHEMAS: Record<string, Record<string, unknown>> = {
+  create_event: strict(
+    { session_id: { type: 'string' }, category: { type: 'string' }, message: { type: 'string' }, metadata: { type: 'object' }, marked_at_utc: { type: ['string', 'null'] } },
+    ['session_id', 'category', 'message'],
+  ),
+  create_topic: strict(
+    { session_id: { type: 'string' }, session_time: { type: 'string' }, duration_sec: { type: 'number' }, topic_level: { type: 'integer' }, summary: { type: 'string' } },
+    ['session_id'],
+  ),
+  create_wiki_page: strict(
+    { show_id: { type: 'string' }, kind: { type: 'string' }, title: { type: 'string' }, body_md: { type: 'string' }, aliases: { type: 'array' }, session_id: { type: 'string' } },
+    ['show_id', 'kind', 'title'],
+  ),
+  update_wiki_page: strict(
+    { page_id: { type: 'string' }, expected_revision: { type: 'integer' }, title: { type: 'string' }, kind: { type: 'string' }, body_md: { type: 'string' }, aliases: { type: 'array' } },
+    ['page_id', 'expected_revision'],
+  ),
+};
 
 const READ_TOOLS = [
   {
@@ -63,7 +135,13 @@ const READ_TOOLS = [
   {
     name: 'list_events',
     description: "A session's events.",
-    inputSchema: { type: 'object', properties: { session_id: { type: 'string' }, cursor: { type: 'string' } } },
+    inputSchema: strict({ session_id: { type: 'string' }, cursor: { type: 'string' }, limit: { type: 'integer' } }, ['session_id']),
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'list_topics',
+    description: "A session's topics.",
+    inputSchema: strict({ session_id: { type: 'string' }, cursor: { type: 'string' }, limit: { type: 'integer' } }, ['session_id']),
     annotations: { readOnlyHint: true },
   },
   {
@@ -75,13 +153,16 @@ const READ_TOOLS = [
   {
     name: 'list_wiki_pages',
     description: "A session's wiki pages.",
-    inputSchema: { type: 'object', properties: { session_id: { type: 'string' } } },
+    inputSchema: strict({ session_id: { type: 'string' }, cursor: { type: 'string' }, limit: { type: 'integer' } }, ['session_id']),
     annotations: { readOnlyHint: true },
   },
   {
     name: 'get_wiki_page',
     description: 'A wiki page.',
-    inputSchema: { type: 'object', properties: { session_id: { type: 'string' }, page_id: { type: 'string' } } },
+    inputSchema: strict(
+      { session_id: { type: 'string' }, page_id: { type: 'string' }, offset: { type: 'integer' }, max_chars: { type: 'integer' } },
+      ['session_id', 'page_id'],
+    ),
     annotations: { readOnlyHint: true },
   },
   {
@@ -105,7 +186,7 @@ const WRITE_TOOL_NAMES = [
 const WRITE_TOOLS = WRITE_TOOL_NAMES.map((name) => ({
   name,
   description: `${name}. Ask the user to confirm before you delete anything.`,
-  inputSchema: { type: 'object' },
+  inputSchema: WRITE_SCHEMAS[name] ?? { type: 'object' },
   annotations: { readOnlyHint: false, destructiveHint: name.startsWith('delete') },
 }));
 
@@ -142,6 +223,9 @@ export class FakeAutologger {
   readonly issued: string[] = [];
   readonly calls: { method: string; path: string; rpc?: string; tool?: string; arguments?: unknown }[] = [];
   readonly counts = { registrations: 0, refreshes: 0, revocations: 0, reuses: 0 };
+  /** Data mode: write tool calls answered (any outcome), successful writes, rate-limit refusals. */
+  readonly writeCounts = { attempted: 0, succeeded: 0, rateLimited: 0, failed500: 0 };
+  private nextId = 1;
 
   constructor(options: FakeOptions = {}) {
     this.options = options;
@@ -348,6 +432,216 @@ export class FakeAutologger {
     this.json(res, 404, { detail: 'Not Found' });
   }
 
+  private schemaOf(name: string): Record<string, unknown> | undefined {
+    const override = this.options.inputSchemas?.[name];
+    if (override !== undefined) return override;
+    return [...READ_TOOLS, ...WRITE_TOOLS].find((t) => t.name === name)?.inputSchema as Record<string, unknown> | undefined;
+  }
+
+  /** Data mode: one tool call on `options.data`, as autologger answers it. */
+  private dataCall(name: string, args: Record<string, unknown>, canWrite: boolean): Record<string, unknown> | 'http500' {
+    const data = this.options.data as FakeData;
+    const text = (t: string): Record<string, unknown> => ({ result: { content: [{ type: 'text', text: t }], isError: true } });
+    const ok = (out: Record<string, unknown>): Record<string, unknown> => ({
+      result: { content: [{ type: 'text', text: JSON.stringify(out) }], structuredContent: out },
+    });
+    if ((this.options.omitTools ?? []).includes(name) || ![...READ_TOOLS, ...WRITE_TOOLS].some((t) => t.name === name)) {
+      return { error: { code: -32602, message: `MCP error -32602: Tool ${name} not found` } };
+    }
+    // Strict inputs, as the SDK parses them before the tool runs.
+    const schema = this.schemaOf(name);
+    const props = isObjectRecord(schema?.properties) ? Object.keys(schema.properties) : undefined;
+    if (props !== undefined && schema?.additionalProperties === false) {
+      const unknown = Object.keys(args).filter((k) => !props.includes(k));
+      if (unknown.length > 0) return text(`MCP error -32602: Input validation error: Unrecognized key(s) in object: ${unknown.map((k) => `'${k}'`).join(', ')}`);
+    }
+    const required = Array.isArray(schema?.required) ? (schema.required as string[]) : [];
+    const missing = required.filter((k) => args[k] === undefined);
+    if (missing.length > 0) return text(`MCP error -32602: Input validation error: Required: ${missing.join(', ')}`);
+
+    const session = (id: unknown) => data.sessions.find((s) => s.session_id === id);
+    const page = <T>(items: T[]): Record<string, unknown> => {
+      const size = this.options.pageSize ?? 2;
+      const cursor = typeof args.cursor === 'string' ? Number(args.cursor.replace(/^c/, '')) : 0;
+      const slice = items.slice(cursor, cursor + size);
+      const next = cursor + size < items.length ? `c${cursor + size}` : null;
+      return { items: slice, next_cursor: next, total: items.length, truncated: false };
+    };
+    const associated = (s: FakeSession) =>
+      data.pages
+        .filter((p) => p.show_id === s.show_id)
+        .map((p) => {
+          const own = data.pages.find((q) => q.session_id === s.session_id);
+          const association =
+            p.session_id === s.session_id
+              ? 'session_page'
+              : p.body_md.includes(`cite:${s.session_id}@`)
+                ? 'cites_session'
+                : own !== undefined && own.body_md.includes(`wiki:${p.page_id})`)
+                  ? 'linked_from_session_page'
+                  : undefined;
+          return { p, association };
+        })
+        .filter((x) => x.association !== undefined);
+
+    if (WRITE_TOOL_NAMES.includes(name)) {
+      if (!canWrite) return text(WRITE_SCOPE_REFUSAL);
+      this.writeCounts.attempted++;
+      if (this.options.failWriteNumber === this.writeCounts.attempted) {
+        this.writeCounts.failed500++;
+        return 'http500';
+      }
+      const after = this.options.rateLimitAfterWrites;
+      if (after !== undefined && this.writeCounts.succeeded >= after && this.writeCounts.rateLimited < (this.options.rateLimitTimes ?? 1)) {
+        this.writeCounts.rateLimited++;
+        return text(`Rate limit exceeded; retry in ${this.options.rateLimitRetryS ?? 7} s.`);
+      }
+      const done = (out: Record<string, unknown>): Record<string, unknown> => {
+        this.writeCounts.succeeded++;
+        return ok(out);
+      };
+      const id = (prefix: string) => `${prefix}${this.nextId++}`;
+      switch (name) {
+        case 'create_event': {
+          const s = session(args.session_id);
+          if (s === undefined) return text('Session not found');
+          const wanted = String(args.category);
+          const cats = s.categories ?? [];
+          const cat =
+            wanted === 'internal'
+              ? { id: 'internal', label: 'Internal' }
+              : (cats.find((c) => c.id === wanted) ?? cats.find((c) => c.label.trim().toLowerCase() === wanted.trim().toLowerCase()));
+          if (cat === undefined) {
+            return text(`Unknown category. Send a category id or name. Nothing was written. Valid categories: ${cats.map((c) => `${c.label} (${c.id})`).join(', ') || 'none'}, or internal.`);
+          }
+          const row = {
+            event_id: id('ev_'),
+            wall_time_utc: args.marked_at_utc ?? '2026-11-19T12:00:00.000Z',
+            category: cat.id,
+            category_label: cat.label,
+            message: args.message,
+            metadata: args.metadata ?? {},
+            version: 1,
+          };
+          s.events.push(row);
+          return done(row);
+        }
+        case 'create_topic': {
+          const s = session(args.session_id);
+          if (s === undefined) return text('Session not found');
+          const row = {
+            id: id('tp_'),
+            session_time: args.session_time ?? '',
+            duration_sec: args.duration_sec ?? 0,
+            topic_level: args.topic_level ?? 1,
+            summary: args.summary ?? '',
+            ordinal: s.topics.length + 1,
+            version: 1,
+          };
+          s.topics.push(row);
+          return done(row);
+        }
+        case 'create_wiki_page': {
+          const showId = String(args.show_id);
+          if (!data.sessions.some((s) => s.show_id === showId)) return text('Show not found.');
+          const title = String(args.title);
+          const taken = data.pages.find((p) => p.show_id === showId && p.title.toLowerCase() === title.toLowerCase());
+          if (taken !== undefined) return text(`Title already used. page_id: ${taken.page_id}`);
+          if (args.kind === 'session') {
+            if (args.session_id === undefined) return text('session_id: required for a session page');
+            const has = data.pages.find((p) => p.session_id === args.session_id);
+            if (has !== undefined) return text(`Session already has a page. page_id: ${has.page_id}`);
+          } else if (args.session_id !== undefined) {
+            return text('session_id: only for a session page');
+          }
+          const row: FakePage = {
+            page_id: id('pg_'),
+            show_id: showId,
+            kind: String(args.kind),
+            title,
+            aliases: Array.isArray(args.aliases) ? (args.aliases as string[]) : [],
+            body_md: typeof args.body_md === 'string' ? args.body_md : '',
+            revision: 1,
+            ...(typeof args.session_id === 'string' ? { session_id: args.session_id } : {}),
+          };
+          data.pages.push(row);
+          return done({ ...row });
+        }
+        case 'update_wiki_page': {
+          const p = data.pages.find((q) => q.page_id === args.page_id);
+          if (p === undefined) return text('Wiki page not found');
+          if (p.revision !== args.expected_revision) return text(`Version conflict: nothing was written. The current row is ${JSON.stringify(p)}`);
+          if (typeof args.title === 'string') p.title = args.title;
+          if (typeof args.body_md === 'string') p.body_md = args.body_md;
+          p.revision++;
+          return done({ ...p });
+        }
+        default:
+          return text(`${name} is not played by the fake`);
+      }
+    }
+
+    switch (name) {
+      case 'get_session': {
+        const s = session(args.session_id);
+        if (s === undefined) return text('Session not found');
+        return ok({
+          session_id: s.session_id,
+          show_id: s.show_id,
+          studio_id: 'st_1',
+          title: s.title ?? s.session_id,
+          date: '2026-11-19',
+          fps: 25,
+          counts: { events: s.events.length, words: 0, paragraphs: 0, topics: s.topics.length, wiki_pages: associated(s).length },
+          revision: 1,
+        });
+      }
+      case 'list_events':
+      case 'list_topics': {
+        const s = session(args.session_id);
+        if (s === undefined) return text('Session not found');
+        return ok(page(name === 'list_events' ? s.events : s.topics));
+      }
+      case 'list_wiki_pages': {
+        const s = session(args.session_id);
+        if (s === undefined) return text('Session not found');
+        return ok(
+          page(
+            associated(s).map(({ p, association }) => ({
+              page_id: p.page_id,
+              kind: p.kind,
+              title: p.title,
+              aliases: p.aliases,
+              revision: p.revision,
+              association,
+              body_chars: p.body_md.length,
+            })),
+          ),
+        );
+      }
+      case 'get_wiki_page': {
+        const s = session(args.session_id);
+        if (s === undefined) return text('Session not found');
+        const found = associated(s).find((x) => x.p.page_id === args.page_id)?.p;
+        if (found === undefined) return text('Wiki page not found');
+        const offset = typeof args.offset === 'number' ? args.offset : 0;
+        const end = offset + (this.options.sliceChars ?? 40);
+        return ok({
+          page_id: found.page_id,
+          kind: found.kind,
+          title: found.title,
+          revision: found.revision,
+          body_md: found.body_md.slice(offset, end),
+          offset,
+          next_offset: end < found.body_md.length ? end : null,
+          body_chars: found.body_md.length,
+        });
+      }
+      default:
+        return ok({ items: [], next_cursor: null, total: 0, truncated: false });
+    }
+  }
+
   private async mcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') return this.json(res, 405, { detail: 'Method Not Allowed' }, { allow: 'POST' });
     const bearer = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
@@ -387,7 +681,10 @@ export class FakeAutologger {
           result: { protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'autologger', version: 'fake' } },
         });
       case 'tools/list': {
-        const all = [...READ_TOOLS, ...(canWrite ? WRITE_TOOLS : [])];
+        const omit = this.options.omitTools ?? [];
+        const all = [...READ_TOOLS, ...(canWrite ? WRITE_TOOLS : [])]
+          .filter((t) => !omit.includes(t.name))
+          .map((t) => (this.options.inputSchemas?.[t.name] !== undefined ? { ...t, inputSchema: this.options.inputSchemas[t.name] } : t));
         // Two pages, to exercise nextCursor.
         const second = message.params?.cursor === 'page-2';
         return answer({ result: second ? { tools: all.slice(3) } : { tools: all.slice(0, 3), nextCursor: 'page-2' } });
@@ -400,6 +697,14 @@ export class FakeAutologger {
           call.arguments = args;
         }
         if (name === 'fail_tool') return answer(text('Session not found', true));
+        if (this.options.data !== undefined) {
+          const out = this.dataCall(name, isObjectRecord(args) ? args : {}, canWrite);
+          if (out === 'http500') {
+            res.writeHead(500, { 'content-type': 'text/plain' }).end('Internal Server Error');
+            return;
+          }
+          return answer(out);
+        }
         if (WRITE_TOOL_NAMES.includes(name)) {
           if (!canWrite) return answer(text(WRITE_SCOPE_REFUSAL, true));
           return answer({ result: { content: [{ type: 'text', text: `${name} done` }], structuredContent: { ok: true, arguments: args } } });
@@ -418,6 +723,10 @@ export class FakeAutologger {
         return answer({ error: { code: -32601, message: 'Method not found' } });
     }
   }
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Plays the browser: follows the authorization URL to the loopback callback. */

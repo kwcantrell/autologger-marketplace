@@ -14,12 +14,30 @@ import { FakeAutologger } from './fakeServer.ts';
 
 const CLI_NAME = 'autologger-mcp';
 const INVOCATION = `npx --yes --offline --loglevel=error --package="\${CLAUDE_PLUGIN_ROOT}" -- ${CLI_NAME}`;
-/** Skills in the order their commands run: reads, then writes, then sign-in (which ends with logout). */
-const SKILL_ORDER = ['query-session-data', 'write-session-data', 'sign-in'];
+/** Skills in the order their commands run: reads, then writes, then seeding, then sign-in (which ends with logout). */
+const SKILL_ORDER = ['query-session-data', 'write-session-data', 'seed-dev-stack', 'sign-in'];
 
 const source = fileURLToPath(new URL('..', import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), `${CLI_NAME}-e2e-`));
 const server = new FakeAutologger();
+// seed-dev-stack copies from a source server to a local target: two more fakes, with session data.
+const seedSource = new FakeAutologger({
+  data: {
+    sessions: [
+      {
+        session_id: 'S1',
+        show_id: 'shw_src',
+        categories: [{ id: 'cat_a', label: 'Joke' }],
+        events: [{ event_id: 'e1', wall_time_utc: '2026-01-01T10:00:00.000Z', category: 'cat_a', category_label: 'Joke', message: 'a joke', metadata: {}, version: 1 }],
+        topics: [{ id: 't1', session_time: '00:01:00:00', duration_sec: 30, topic_level: 1, summary: 'Openers', ordinal: 1, version: 1 }],
+      },
+    ],
+    pages: [{ page_id: 'pg_a', show_id: 'shw_src', kind: 'session', title: 'Session one', aliases: [], body_md: 'A [quote](cite:S1@2).', revision: 1, session_id: 'S1' }],
+  },
+});
+const seedTarget = new FakeAutologger({
+  data: { sessions: [{ session_id: 'T1', show_id: 'shw_t', categories: [{ id: 'cat_t', label: 'joke' }], events: [], topics: [] }], pages: [] },
+});
 const printed: string[] = [];
 
 // Simulate the plugin cache: Claude Code installs a plugin by copying its folder.
@@ -52,10 +70,14 @@ env.BROWSER = browser;
 delete env.AUTOLOGGER_URL;
 
 before(async () => {
+  await seedSource.start();
+  await seedTarget.start();
   await server.start();
   env.AUTOLOGGER_URL = server.base;
 });
 after(async () => {
+  await seedSource.close();
+  await seedTarget.close();
   await server.close();
   rmSync(scratch, { recursive: true, force: true });
 });
@@ -94,9 +116,16 @@ function allowedPrefixes(skill: string): string[] {
   return [...line.matchAll(/Bash\((.*?):\*\)/g)].map((m) => m[1] ?? '');
 }
 
-/** Fills a skill's `<placeholder>` values with ids the fake server accepts. */
+/** Fills a skill's `<placeholder>` values with ids the fake servers accept. */
 function fill(command: string): string {
-  return command.replace(/<([a-z_]+)>/g, (_, name: string) => `${name.toUpperCase()}-1`);
+  const seed: Record<string, string> = {
+    source_server: seedSource.base,
+    local_server: seedTarget.base,
+    source_session_id: 'S1',
+    snapshot_file: join(cwd, 'snapshot.json'),
+    mapping: 'S1=T1',
+  };
+  return command.replace(/<([a-z_]+)>/g, (_, name: string) => seed[name] ?? `${name.toUpperCase()}-1`);
 }
 
 async function sh(command: string, extraEnv: NodeJS.ProcessEnv = env): Promise<{ status: number | null; stdout: string; stderr: string }> {
@@ -118,15 +147,18 @@ test('every skill calls the CLI only through the shared npx invocation', () => {
     const commands = skillCommands(skill);
     assert.ok(commands.length >= 2, `expected npx command lines in ${skill}`);
     for (const command of commands) assert.ok(command.startsWith(`${INVOCATION} `), command);
-    // Every command line is pre-approved except import-tokens, which writes credentials: no rule
-    // (in any skill) may cover it, so Claude has to ask first.
+    // Every command line is pre-approved except import-tokens, which writes credentials, and
+    // import --confirm, which writes session data: no rule (in any skill) may cover them, so Claude
+    // has to ask first.
     const prefixes = allowedPrefixes(skill);
     assert.ok(prefixes.length > 0 && prefixes.every((p) => p.startsWith(`${INVOCATION} `)), skill);
     for (const command of commands) {
       const allowed = prefixes.some((p) => command.startsWith(p));
-      assert.equal(allowed, !command.startsWith(`${INVOCATION} import-tokens`), `${skill}: ${command}`);
+      const writes = command.startsWith(`${INVOCATION} import-tokens`) || command.startsWith(`${INVOCATION} import --confirm`);
+      assert.equal(allowed, !writes, `${skill}: ${command}`);
     }
     assert.ok(!prefixes.some((p) => `${INVOCATION} import-tokens --json`.startsWith(p)), `${skill} pre-approves import-tokens`);
+    assert.ok(!prefixes.some((p) => `${INVOCATION} import --confirm --snapshot x --json`.startsWith(p)), `${skill} pre-approves import --confirm`);
   }
   assert.ok(skillCommands('sign-in').some((c) => c.startsWith(`${INVOCATION} import-tokens `)), 'the sign-in skill shows import-tokens');
   assert.equal(existsSync(join(pluginRoot, 'node_modules')), false);
@@ -155,6 +187,11 @@ test('every skill command line runs from a fresh copy and exits 0', async () => 
   writeFileSync(join(cwd, 'wiki-page.json'), JSON.stringify({ show_id: 'SHOW-1', kind: 'topic', title: 'Jokes', body_md: 'x' }));
   // The output of `make dev-mcp-token` the user saved, fed to import-tokens on stdin (fake tokens).
   writeFileSync(join(cwd, 'TOKEN_FILE-1'), server.mintDevTokens('dashboards session-data:write'), { mode: 0o600 });
+  // The user's sign-ins for seed-dev-stack: the source read-only, the local target with --write.
+  for (const [base, write] of [[seedSource.base, ''], [seedTarget.base, ' --write']] as const) {
+    const login = await sh(`${INVOCATION} login${write} --server ${base} --json`);
+    assert.equal(login.status, 0, login.stderr);
+  }
   let imported: Record<string, unknown> | undefined;
   for (const skill of SKILL_ORDER) {
     for (const command of skillCommands(skill).map(fill)) {
@@ -165,6 +202,10 @@ test('every skill command line runs from a fresh copy and exits 0', async () => 
       if (command.includes(' import-tokens ')) imported = JSON.parse(stdout);
     }
   }
+  // seed-dev-stack: export read the source, the dry run wrote nothing, --confirm wrote the target.
+  assert.ok(seedSource.calls.every((c) => c.tool === undefined || !c.tool.startsWith('create_')));
+  assert.deepEqual(seedTarget.writeCounts.succeeded, 3, 'one event, one topic, one wiki page');
+  assert.equal(seedTarget.options.data?.pages[0]?.body_md, 'A [quote](cite:T1@2).');
   const called = server.calls.filter((c) => c.tool !== undefined).map((c) => c.tool);
   assert.ok(called.includes('create_wiki_page') && called.includes('list_studios'), called.join(','));
   // import-tokens replaced the browser sign-in (revoking its grant), then logout revoked the import.
@@ -190,8 +231,8 @@ test('an unknown command through npx exits 2 with the message on stderr', async 
 
 test('no token appeared in any output', () => {
   assert.ok(server.issued.length > 0);
-  const all = printed.join('\n');
-  for (const t of server.issued) assert.ok(!all.includes(t), 'a token was printed');
+  const all = [...printed, readFileSync(join(cwd, 'snapshot.json'), 'utf8'), readFileSync(join(cwd, 'snapshot.json.import-state.json'), 'utf8')].join('\n');
+  for (const t of [...server.issued, ...seedSource.issued, ...seedTarget.issued]) assert.ok(!all.includes(t), 'a token was printed or stored');
 });
 
 // Guard against `--package=""`: npm reads an empty spec as the registry package `undefined` (owned by a
