@@ -1,6 +1,6 @@
 {
   "name": "autologger-browser",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "CLI for the autologger-browser Claude Code plugin; run by its skills via npx.",
   "type": "module",

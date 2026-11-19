@@ -41,10 +41,29 @@ env.PLUGIN_DISCOVER_CONFIG_DIR = join(scratch, 'config', 'plugin-discover');
 env.HOME = join(scratch, 'home');
 env.PATH = `${fakeClaude(scratch)}:${process.env.PATH ?? ''}`;
 
-function skillCommands(): string[] {
-  const text = readFileSync(join(pluginRoot, SKILL), 'utf8');
+// Commands in the ```sh blocks of a skill: each starts at a line beginning with "npx " and, like the
+// shell, continues over lines ending in an odd number of backslashes (only the "\" and the newline
+// are removed). Mirrors npxLines in plugin-builder's check.ts; copied so this test stays standalone.
+function shCommands(text: string): string[] {
   const blocks = [...text.matchAll(/```sh\n([\s\S]*?)```/g)].map((m) => m[1] ?? '');
-  return blocks.flatMap((b) => b.split('\n')).map((l) => l.trim()).filter((line) => line.startsWith('npx '));
+  const continues = (s: string): boolean => (/\\+$/.exec(s)?.[0].length ?? 0) % 2 === 1;
+  const out: string[] = [];
+  for (const block of blocks) {
+    const lines = block.split('\n');
+    lines.forEach((line, index) => {
+      let command = line.trim();
+      if (!command.startsWith('npx ')) return;
+      for (let next = index + 1; continues(command) && next < lines.length; next++) {
+        command = `${command.slice(0, -1)}${(lines[next] ?? '').trimEnd()}`;
+      }
+      out.push(command.trim());
+    });
+  }
+  return out;
+}
+
+function skillCommands(): string[] {
+  return shCommands(readFileSync(join(pluginRoot, SKILL), 'utf8'));
 }
 
 function sh(command: string, input?: string): { status: number | null; stdout: string; stderr: string } {

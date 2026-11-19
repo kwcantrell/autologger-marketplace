@@ -1,6 +1,6 @@
 {
   "name": "autologger-dev",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Brings up a local autologger dev stack (local OpenBao, HTTPS mode, the dev CA) and connects Claude to its MCP server: a doctor that diagnoses what is missing, a guarded up, the CA export, status and connect steps, all in a TypeScript CLI.",
   "author": {
     "name": "Kalen Cantrell"
