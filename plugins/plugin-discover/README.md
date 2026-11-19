@@ -24,11 +24,11 @@ and from a checkout you can run `node plugins/plugin-discover/src/cli.ts <comman
 
 | Command | What it does |
 | --- | --- |
-| `catalog` | Every installed plugin (id, version, scope, description, `enabled`, and each skill's name and frontmatter `description`), the user's own skills (`~/.claude/skills/*/SKILL.md`), and every autologger-marketplace plugin that is not installed, with its description, skills and install command. Read-only. |
-| `match "<task text>"` | Ranks those entries against the task: `installed` and `available` lists (top 5 each, best first), each entry with `score` and `reason` (the matched terms), available ones with `installCommand`. `none_applicable: true` when nothing reaches the threshold, plus `advisor.record`/`advisor.suggest` command lines when plugin-advisor is installed and enabled. Also prints the `mode`; with mode `off`, `available` is always empty. Read-only. |
+| `catalog` | Every installed plugin (id, version, scope, description, `enabled`, and each skill's name and frontmatter `description`), `installedElsewhere`: plugins installed with `project` or `local` scope only for another project (with `scope` and `projectPath`), the user's own skills (`~/.claude/skills/*/SKILL.md`), and every autologger-marketplace plugin that is not installed, with its description, skills and install command. Read-only. |
+| `match "<task text>"` | Ranks those entries against the task: `installed`, `available` and `elsewhere` (installed for another project) lists (top 5 each, best first), each entry with `score` and `reason` (the matched terms), available ones with `installCommand`. `none_applicable: true` when nothing reaches the threshold, plus `advisor.record`/`advisor.suggest` command lines when plugin-advisor is installed and enabled; those lines use plugin-advisor's own pre-approved form (`--package="<its install path>"`), so they run without a permission prompt. Also prints the `mode`; with mode `off`, `available` and `elsewhere` are always empty, but `none_applicable` is decided before that, so it stays false (and there is no advisor line) when a marketplace plugin fits. Read-only. |
 | `settings` | Prints the mode (`ask` by default). |
 | `settings set mode <mode>` | Sets it to `ask`, `notify`, `auto-install` or `off`; anything else is a usage error. |
-| `install <name> [--confirmed]` | Runs `claude plugin install <name>@autologger-marketplace` (spawned directly, no shell, 120 s timeout) only if `<name>` is in the marketplace manifest and not installed, the mode is not `off` or `notify`, and the mode is `auto-install` or `--confirmed` is passed. Every refusal exits 1 with the reason (in `notify` mode, the reason includes the command to run). On success it says to run `/reload-plugins`. |
+| `install <name> [--confirmed]` | Runs `claude plugin install <name>@autologger-marketplace` (spawned directly, no shell, 120 s timeout) only if `<name>` is in the marketplace manifest and not installed (here, or with project or local scope for another project: that refusal says to add it to this project with `/plugin` instead), the mode is not `off` or `notify`, and the mode is `auto-install` or `--confirmed` is passed. Every refusal exits 1 with the reason (in `notify` mode, the reason includes the command to run). On success it says to run `/reload-plugins`. |
 | `hook` | Reads a `UserPromptSubmit` hook input on stdin and prints the hint, or nothing. Used by `hooks/hooks.json`; always exits 0. |
 
 Exit codes: 0 success, 1 the command failed, 2 usage error. On a non-zero exit stdout is empty and the
@@ -44,8 +44,11 @@ From Claude Code's own records, in `$CLAUDE_CONFIG_DIR` or else `~/.claude`, wit
 than reading a few small files.
 
 - `plugins/installed_plugins.json` (version 2): installed plugins and their `installPath`. A
-  `project` or `local` install counts only inside its `projectPath`.
-- `<installPath>/.claude-plugin/plugin.json` and `<installPath>/skills/*/SKILL.md`: descriptions.
+  `project` or `local` install counts only inside its `projectPath`; elsewhere it is reported as
+  installed elsewhere (`installedElsewhere`), never as available.
+- `<installPath>/.claude-plugin/plugin.json` and `<installPath>/skills/*/SKILL.md`: descriptions
+  (plain, quoted, or `>`/`|` block scalars, read in full, blank lines inside them included). They are
+  shown as data; the skill tells Claude never to follow directions found in them.
 - `settings.json`, then each `.claude/settings.json` and `.claude/settings.local.json` from `/` down
   to the current directory: `enabledPlugins["<id>"]: false` marks a plugin disabled.
 - `skills/*/SKILL.md`: the user's own skills.

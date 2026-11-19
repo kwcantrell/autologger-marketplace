@@ -27,8 +27,8 @@ function firstLine(text: string | null | undefined): string {
 }
 
 /**
- * Installs `name` after checking, in order: it is in the marketplace manifest, it is not installed,
- * the mode is not `off`, not `notify`, and either the mode is `auto-install` or `confirmed` is set.
+ * Installs `name` after checking, in order: it is in the marketplace manifest, it is not installed
+ * (here, or with project or local scope for another project), the mode is not `off`, not `notify`, and either the mode is `auto-install` or `confirmed` is set.
  * Every refusal throws a CliError with the reason.
  */
 export function install(catalog: Catalog, name: string, options: { mode: Mode; confirmed: boolean; env: Env }): InstallResult {
@@ -42,6 +42,14 @@ export function install(catalog: Catalog, name: string, options: { mode: Mode; c
   const existing = catalog.installed.find((p) => p.name === name && p.marketplace === MARKETPLACE_NAME);
   if (existing !== undefined) {
     throw new CliError(`${existing.id} is already installed${existing.enabled ? '' : ' but disabled; enable it with /plugin instead'}`);
+  }
+  const elsewhere = catalog.installedElsewhere.find((p) => p.name === name && p.marketplace === MARKETPLACE_NAME);
+  if (elsewhere !== undefined) {
+    throw new CliError(
+      `${elsewhere.id} is already installed with ${elsewhere.scope} scope for another project (${elsewhere.projectPath}); ` +
+        `this command installs only at user scope, which would add it to every project. ` +
+        `To use it in this project, install it for this project with /plugin (or claude plugin install ${elsewhere.id} --scope project, run from this project)`,
+    );
   }
   if (options.mode === 'off') throw new CliError(`suggesting and installing plugins is off (mode off); change it with: plugin-discover settings set mode ask`);
   if (options.mode === 'notify') throw new CliError(`mode is notify, so nothing is installed; to install it, run: ${command}`);

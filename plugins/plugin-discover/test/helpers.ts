@@ -16,6 +16,11 @@ export interface Options {
   installed?: string[];
   /** Plugin ids whose enabledPlugins entry is false (default: autologger-specs). */
   disabled?: string[];
+  /**
+   * autologger-marketplace plugins installed with project scope for `<dir>/some-other-project` only
+   * (default: autologger-browser), unless also in `installed`.
+   */
+  elsewhere?: string[];
   /** Record the marketplace in known_marketplaces.json (default true). */
   knownMarketplace?: boolean;
 }
@@ -59,10 +64,11 @@ export function sandbox(options: Options = {}, extraEnv: Env = {}): Sandbox {
   const other = join(claudeDir, 'plugins', 'cache', 'other-market', 'other-tools', '1.2.0');
   cpSync(join(FIXTURES, 'other-tools'), other, { recursive: true });
   records['other-tools@other-market'] = [{ scope: 'user', installPath: other, version: '1.2.0' }];
-  const elsewhere = join(claudeDir, 'plugins', 'cache', MARKETPLACE, 'autologger-dev', '0.1.0');
-  cpSync(join(marketplace, 'plugins', 'autologger-dev'), elsewhere, { recursive: true });
-  if (records[`autologger-dev@${MARKETPLACE}`] === undefined) {
-    records[`autologger-dev@${MARKETPLACE}`] = [{ scope: 'project', projectPath: join(dir, 'some-other-project'), installPath: elsewhere, version: '0.1.0' }];
+  for (const name of options.elsewhere ?? ['autologger-browser']) {
+    if (records[`${name}@${MARKETPLACE}`] !== undefined) continue;
+    const elsewhere = join(claudeDir, 'plugins', 'cache', MARKETPLACE, name, '0.1.0');
+    cpSync(join(marketplace, 'plugins', name), elsewhere, { recursive: true });
+    records[`${name}@${MARKETPLACE}`] = [{ scope: 'project', projectPath: join(dir, 'some-other-project'), installPath: elsewhere, version: '0.1.0' }];
   }
   writeJson(join(claudeDir, 'plugins', 'installed_plugins.json'), { version: 2, plugins: records });
 

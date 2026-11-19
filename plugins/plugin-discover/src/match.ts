@@ -13,7 +13,7 @@
 //   - An entry is a match when its score is at least THRESHOLD: one autologger-specific term plus any
 //     other term, or a phrase, or three plain terms. Below that, `none_applicable` is true.
 import { DEFAULT_MODE, type Mode } from './config.ts';
-import { type AvailablePlugin, type Catalog, type InstalledPlugin, SELF, type Skill, type UserSkill } from './catalog.ts';
+import { type AvailablePlugin, type Catalog, type ElsewherePlugin, type InstalledPlugin, SELF, type Skill, type UserSkill } from './catalog.ts';
 
 export const THRESHOLD = 3;
 export const AUTOLOGGER_WEIGHT = 2;
@@ -126,6 +126,18 @@ export interface AvailableMatch {
   installCommand: string;
 }
 
+/** A fitting plugin installed only for another project (project or local scope). */
+export interface ElsewhereMatch {
+  name: string;
+  id: string;
+  skill?: string;
+  description: string;
+  scope: string;
+  projectPath: string;
+  score: number;
+  reason: string[];
+}
+
 export interface Advisor {
   record: string;
   suggest: string;
@@ -134,10 +146,16 @@ export interface Advisor {
 export interface MatchResult {
   task: string;
   threshold: number;
-  /** The plugin-discover mode; with `off`, `available` is always empty. */
+  /** The plugin-discover mode; with `off`, `available` and `elsewhere` are always empty. */
   mode: Mode;
   installed: InstalledMatch[];
   available: AvailableMatch[];
+  /** Fitting plugins installed only for another project: installed elsewhere, not missing. */
+  elsewhere: ElsewhereMatch[];
+  /**
+   * True when no installed, marketplace or installed-elsewhere plugin fits. Decided before mode `off`
+   * empties `available` and `elsewhere`, so it stays false when a marketplace plugin fits.
+   */
   none_applicable: boolean;
   /** Set when none_applicable and plugin-advisor is installed and enabled. */
   advisor?: Advisor;
@@ -163,8 +181,21 @@ export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+/** Characters that are special inside a shell double-quoted string (plus `!`, history expansion). */
+const DOUBLE_QUOTE_SPECIAL = /["$`\\!\n]/;
+
+/**
+ * The `--package` argument for plugin-advisor. plugin-advisor's skill pre-approves its commands as
+ * `--package="${CLAUDE_PLUGIN_ROOT}"`, so the path goes in double quotes, the same form, and the
+ * printed line matches that rule without a permission prompt. A path that double quotes cannot hold
+ * literally falls back to single quotes: safe, but then Claude Code asks first.
+ */
+export function packageArg(installPath: string): string {
+  return DOUBLE_QUOTE_SPECIAL.test(installPath) ? `--package=${shellQuote(installPath)}` : `--package="${installPath}"`;
+}
+
 export function advisorCommands(installPath: string, task: string): Advisor {
-  const prefix = `npx --yes --offline --loglevel=error --package=${shellQuote(installPath)} -- ${ADVISOR}`;
+  const prefix = `npx --yes --offline --loglevel=error ${packageArg(installPath)} -- ${ADVISOR}`;
   const oneLine = task.replace(/\s+/g, ' ').trim();
   const text = oneLine.length > SUMMARY_MAX ? `${oneLine.slice(0, SUMMARY_MAX - 3)}...` : oneLine;
   const summary = `no installed or marketplace plugin fits: ${text}`;
@@ -200,17 +231,32 @@ export function match(catalog: Catalog, task: string, mode: Mode = DEFAULT_MODE,
     const skill = bestSkill(words, p.skills);
     available.push({ name: p.name, ...(skill === undefined ? {} : { skill }), description: p.description, score: s.score, reason: s.matched, installCommand: p.installCommand });
   };
-  // Mode off: never suggest a plugin that is not installed.
-  if (mode !== 'off') catalog.available.forEach(offer);
+  const elsewhere: ElsewhereMatch[] = [];
+  const other = (p: ElsewherePlugin): void => {
+    if (p.name === SELF) return;
+    const s = score(words, p.name, pluginText(p));
+    if (s.score < threshold) return;
+    const skill = bestSkill(words, p.skills);
+    elsewhere.push({ name: p.name, id: p.id, ...(skill === undefined ? {} : { skill }), description: p.description, scope: p.scope, projectPath: p.projectPath, score: s.score, reason: s.matched });
+  };
+  catalog.available.forEach(offer);
+  catalog.installedElsewhere.forEach(other);
   installed.sort(byScore);
   available.sort(byScore);
+  elsewhere.sort(byScore);
+  // Decided on every fitting plugin, before mode off hides the ones not installed here: "nothing
+  // fits" (and the plugin-advisor record line that says so) must not be claimed when one does.
+  const noneApplicable = installed.length === 0 && available.length === 0 && elsewhere.length === 0;
+  // Mode off: never suggest a plugin that is not installed here.
+  const suggest = mode !== 'off';
   const result: MatchResult = {
     task,
     threshold,
     mode,
     installed: installed.slice(0, LIMIT),
-    available: available.slice(0, LIMIT),
-    none_applicable: installed.length === 0 && available.length === 0,
+    available: suggest ? available.slice(0, LIMIT) : [],
+    elsewhere: suggest ? elsewhere.slice(0, LIMIT) : [],
+    none_applicable: noneApplicable,
   };
   if (result.none_applicable) {
     const advisor = catalog.installed.find((p) => p.name === ADVISOR && p.enabled);

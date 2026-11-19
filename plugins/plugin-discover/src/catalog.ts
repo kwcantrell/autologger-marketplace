@@ -40,6 +40,20 @@ export interface AvailablePlugin {
   installCommand: string;
 }
 
+/** A plugin installed with project or local scope for another project: not usable here, not missing. */
+export interface ElsewherePlugin {
+  id: string;
+  name: string;
+  marketplace: string;
+  /** `project` or `local`. */
+  scope: string;
+  /** The project it is installed for. */
+  projectPath: string;
+  installPath: string;
+  description: string;
+  skills: Skill[];
+}
+
 export interface UserSkill extends Skill {
   path: string;
 }
@@ -49,6 +63,8 @@ export interface Catalog {
   /** The autologger-marketplace manifest used for `available`, or null when none was found. */
   manifest: string | null;
   installed: InstalledPlugin[];
+  /** Plugins installed only for other projects (project or local scope); never in `available`. */
+  installedElsewhere: ElsewherePlugin[];
   userSkills: UserSkill[];
   available: AvailablePlugin[];
 }
@@ -87,9 +103,23 @@ function unquote(value: string): string {
   return v;
 }
 
+/** Folds the lines of a `>` block: adjacent lines join with a space, each blank line is a newline. */
+function fold(lines: readonly string[]): string {
+  let out = '';
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (i === 0) out = line;
+    else if (line === '') out += '\n';
+    else out += (lines[i - 1] ?? '') === '' ? line : ` ${line}`;
+  }
+  return out;
+}
+
 /**
  * The `name` and `description` of a SKILL.md's frontmatter. Handles plain, quoted and block (`>`,
- * `|`) scalars, which is all skill frontmatter uses; anything else is ignored.
+ * `|`) scalars, which is all skill frontmatter uses; anything else is ignored. A block runs over
+ * every following indented or blank line, so blank lines inside it are kept (as a newline when
+ * folded); trailing blank lines are dropped.
  */
 export function frontmatter(text: string): Record<string, string> {
   const m = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
@@ -102,9 +132,13 @@ export function frontmatter(text: string): Record<string, string> {
     const key = kv[1] ?? '';
     let value = kv[2] ?? '';
     if (/^[>|][+-]?$/.test(value.trim())) {
-      const block: string[] = [];
-      while (i + 1 < lines.length && /^(\s+|$)/.test(lines[i + 1] ?? '') && (lines[i + 1] ?? '') !== '') block.push((lines[++i] ?? '').trim());
-      value = block.join(value.trim().startsWith('>') ? ' ' : '\n');
+      const raw: string[] = [];
+      while (i + 1 < lines.length && /^(\s|$)/.test(lines[i + 1] ?? '')) raw.push(lines[++i] ?? '');
+      while (raw.length > 0 && (raw[raw.length - 1] ?? '').trim() === '') raw.pop();
+      while (raw.length > 0 && (raw[0] ?? '').trim() === '') raw.shift();
+      const indent = /^\s*/.exec(raw[0] ?? '')?.[0].length ?? 0;
+      const block = raw.map((l) => (l.trim() === '' ? '' : l.slice(Math.min(indent, /^\s*/.exec(l)?.[0].length ?? 0)).trimEnd()));
+      value = value.trim().startsWith('>') ? fold(block) : block.join('\n');
     } else {
       value = unquote(value);
     }
@@ -174,28 +208,49 @@ export function enabledPlugins(dir: string, cwd: string): Map<string, boolean> {
 }
 
 /**
- * The installed plugins that apply in `cwd`, from `<claudeDir>/plugins/installed_plugins.json`
- * (version 2: `{"plugins": {"<name>@<marketplace>": [{scope, installPath, version, projectPath?}]}}`).
- * A project- or local-scoped install counts only inside its project.
+ * The installed plugins in `<claudeDir>/plugins/installed_plugins.json` (version 2:
+ * `{"plugins": {"<name>@<marketplace>": [{scope, installPath, version, projectPath?}]}}`), split into
+ * those that apply in `cwd` and those installed only for another project. A project- or local-scoped
+ * install counts only inside its project; elsewhere it is reported as installed elsewhere.
  */
-export function readInstalled(dir: string, cwd: string): InstalledPlugin[] {
+export function readInstalled(dir: string, cwd: string): { installed: InstalledPlugin[]; elsewhere: ElsewherePlugin[] } {
   const records = readJson(join(dir, 'plugins', 'installed_plugins.json'));
   const plugins = isObject(records) && isObject(records.plugins) ? records.plugins : {};
   const enabled = enabledPlugins(dir, cwd);
   const out: InstalledPlugin[] = [];
+  const elsewhere: ElsewherePlugin[] = [];
   for (const [id, installs] of Object.entries(plugins)) {
     if (!Array.isArray(installs)) continue;
     const at = id.lastIndexOf('@');
     const name = at > 0 ? id.slice(0, at) : id;
     const marketplace = at > 0 ? id.slice(at + 1) : '';
-    const install = installs.find((i) => {
-      if (!isObject(i) || str(i.installPath) === undefined) return false;
+    const valid = installs.filter((i): i is Record<string, unknown> => isObject(i) && str(i.installPath) !== undefined);
+    const scoped = (i: Record<string, unknown>): boolean => i.scope === 'project' || i.scope === 'local';
+    const install = valid.find((i) => {
       const projectPath = str(i.projectPath);
-      return (i.scope !== 'project' && i.scope !== 'local') || (projectPath !== undefined && within(cwd, projectPath));
+      return !scoped(i) || (projectPath !== undefined && within(cwd, projectPath));
     });
-    if (!isObject(install)) continue;
+    const description = (installPath: string): string => {
+      const manifest = readJson(join(installPath, '.claude-plugin', 'plugin.json'));
+      return (isObject(manifest) ? str(manifest.description) : undefined) ?? '';
+    };
+    if (install === undefined) {
+      const other = valid.find((i) => scoped(i) && str(i.projectPath) !== undefined);
+      if (other === undefined) continue;
+      const installPath = str(other.installPath) ?? '';
+      elsewhere.push({
+        id,
+        name,
+        marketplace,
+        scope: str(other.scope) ?? '',
+        projectPath: str(other.projectPath) ?? '',
+        installPath,
+        description: description(installPath),
+        skills: readSkills(installPath),
+      });
+      continue;
+    }
     const installPath = str(install.installPath) ?? '';
-    const manifest = readJson(join(installPath, '.claude-plugin', 'plugin.json'));
     const version = str(install.version);
     const scope = str(install.scope);
     out.push({
@@ -205,12 +260,12 @@ export function readInstalled(dir: string, cwd: string): InstalledPlugin[] {
       ...(version === undefined ? {} : { version }),
       ...(scope === undefined ? {} : { scope }),
       installPath,
-      description: (isObject(manifest) ? str(manifest.description) : undefined) ?? '',
+      description: description(installPath),
       enabled: enabled.get(id) !== false,
       skills: readSkills(installPath),
     });
   }
-  return out.sort((a, b) => a.id.localeCompare(b.id));
+  return { installed: out.sort((a, b) => a.id.localeCompare(b.id)), elsewhere: elsewhere.sort((a, b) => a.id.localeCompare(b.id)) };
 }
 
 /** The user's own skills, `<claudeDir>/skills/*\/SKILL.md`. */
@@ -259,10 +314,11 @@ export function readMarketplace(manifest: string): MarketplaceEntry[] | null {
 
 export function readCatalog(env: Env, options: { pluginRoot: string; cwd: string }): Catalog {
   const dir = claudeDir(env);
-  const installed = readInstalled(dir, options.cwd);
+  const { installed, elsewhere } = readInstalled(dir, options.cwd);
   const manifest = findManifest(options.pluginRoot, dir);
   const entries = manifest === null ? [] : (readMarketplace(manifest) ?? []);
-  const have = new Set(installed.filter((p) => p.marketplace === MARKETPLACE_NAME).map((p) => p.name));
+  // Installed here, or for another project: either way not missing, so not offered for install.
+  const have = new Set([...installed, ...elsewhere].filter((p) => p.marketplace === MARKETPLACE_NAME).map((p) => p.name));
   const available: AvailablePlugin[] = entries
     .filter((e) => !have.has(e.name))
     .map((e) => {
@@ -270,7 +326,7 @@ export function readCatalog(env: Env, options: { pluginRoot: string; cwd: string
       const description = e.description !== '' ? e.description : ((isObject(pluginJson) ? str(pluginJson.description) : undefined) ?? '');
       return { name: e.name, marketplace: MARKETPLACE_NAME, description, skills: e.root === null ? [] : readSkills(e.root), installCommand: installCommand(e.name) };
     });
-  return { claudeDir: dir, manifest, installed, userSkills: readUserSkills(dir), available };
+  return { claudeDir: dir, manifest, installed, installedElsewhere: elsewhere, userSkills: readUserSkills(dir), available };
 }
 
 /** This plugin's own folder (src/..). */

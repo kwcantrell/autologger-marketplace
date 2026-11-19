@@ -28,18 +28,21 @@ Finds the installed plugin or skill that fits an autologger task, and the ${MARK
 plugins that would fit but are not installed. Reads Claude Code's own records; never the network.
 
 Commands:
-  catalog                    Every installed plugin (with its skills; disabled ones marked), the
-                             user's own skills, and the ${MARKETPLACE_NAME} plugins not installed
-  match <task text>          Rank them against a one-line task summary: an 'installed' and an
-                             'available' list, each entry with a score and the matched terms. An
-                             entry needs a score of at least ${THRESHOLD}; below that, none_applicable
-                             is true (with the plugin-advisor record command when it is installed).
-                             Also prints the mode; with mode off, 'available' is always empty
+  catalog                    Every installed plugin (with its skills; disabled ones marked), plugins
+                             installed only for another project, the user's own skills, and the
+                             ${MARKETPLACE_NAME} plugins not installed
+  match <task text>          Rank them against a one-line task summary: 'installed', 'available'
+                             and 'elsewhere' (installed for another project) lists, each entry with
+                             a score and the matched terms. An entry needs a score of at least
+                             ${THRESHOLD}; if none does, none_applicable is true (with the
+                             plugin-advisor record command when it is installed). Also prints the
+                             mode; with mode off, 'available' and 'elsewhere' are always empty
   settings                   Show the mode (default ${DEFAULT_MODE})
   settings set mode <mode>   Change it: ${MODES.join(', ')}
   install <name> [--confirmed]
                              Run 'claude plugin install <name>@${MARKETPLACE_NAME}' if <name> is
-                             in that marketplace and not installed, and the mode allows it: auto-install,
+                             in that marketplace and not installed (here or for another project),
+                             and the mode allows it: auto-install,
                              or ask with --confirmed (pass it only after the user said yes)
   hook                       Read a UserPromptSubmit hook input on stdin and print a one-line hint
                              when it is about autologger (used by hooks/hooks.json)
@@ -75,6 +78,10 @@ function catalogText(c: Catalog): string {
     for (const s of p.skills) lines.push(`    skill ${s.name}: ${s.description}`);
   }
   if (c.installed.length === 0) lines.push('  (none)');
+  if (c.installedElsewhere.length > 0) {
+    lines.push('Installed for another project only:');
+    for (const p of c.installedElsewhere) lines.push(`  ${p.id} (${p.scope} scope, ${p.projectPath}): ${p.description}`);
+  }
   lines.push('User skills:');
   for (const s of c.userSkills) lines.push(`  ${s.name}: ${s.description}`);
   if (c.userSkills.length === 0) lines.push('  (none)');
@@ -91,6 +98,8 @@ function matchText(m: MatchResult): string {
     lines.push(`installed ${e.name}${skill}${e.enabled ? '' : ' [disabled]'}  score ${e.score}  matched ${e.reason.join(', ')}`);
   }
   for (const e of m.available) lines.push(`available ${e.name}  score ${e.score}  matched ${e.reason.join(', ')}\n  install: ${e.installCommand}`);
+  for (const e of m.elsewhere) lines.push(`installed elsewhere ${e.id} (${e.scope} scope, ${e.projectPath})  score ${e.score}  matched ${e.reason.join(', ')}`);
+  if (!m.none_applicable && lines.length === 0) lines.push('Nothing installed here fits (mode off: plugins that are not installed are not suggested).');
   if (m.none_applicable) {
     lines.push(`Nothing scores ${m.threshold} or more: no installed or marketplace plugin fits.`);
     if (m.advisor !== undefined) lines.push(`Record the gap with plugin-advisor:\n  ${m.advisor.record}`);

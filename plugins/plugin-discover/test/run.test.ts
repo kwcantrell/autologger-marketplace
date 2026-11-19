@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { CLI_NAME, EXIT, run } from '../src/run.ts';
-import { fakeClaude, sandbox } from './helpers.ts';
+import { fakeClaude, type Options, sandbox } from './helpers.ts';
 
 function call(...argv: string[]): { code: number; stdout: string; stderr: string } {
   let stdout = '';
@@ -77,8 +77,8 @@ test('settings: default ask, set validates and persists in an owner-only config 
 });
 
 /** A sandbox whose PATH holds only a fake claude and node. */
-function installSandbox(script?: string): ReturnType<typeof sandbox> & { calls: () => string[][] } {
-  const s = sandbox();
+function installSandbox(script?: string, options?: Options): ReturnType<typeof sandbox> & { calls: () => string[][] } {
+  const s = sandbox(options);
   const bin = fakeClaude(s.dir, script);
   s.env.PATH = `${bin}:${dirname(process.execPath)}`;
   const calls = (): string[][] => {
@@ -90,14 +90,15 @@ function installSandbox(script?: string): ReturnType<typeof sandbox> & { calls: 
 
 const sandboxes: Array<{ cleanup: () => void }> = [];
 after(() => sandboxes.forEach((s) => s.cleanup()));
-function fresh(script?: string): ReturnType<typeof installSandbox> {
-  const s = installSandbox(script);
+function fresh(script?: string, options?: Options): ReturnType<typeof installSandbox> {
+  const s = installSandbox(script, options);
   sandboxes.push(s);
   return s;
 }
 
 test('install in ask mode refuses without --confirmed and runs claude plugin install with it', () => {
-  const s = fresh();
+  // No project-scoped installs, so autologger-browser is installable too (the text output below).
+  const s = fresh(undefined, { elsewhere: [] });
   const refused = s.call(['install', 'autologger-dev', '--json']);
   assert.equal(refused.code, EXIT.failure);
   assert.equal(refused.stdout, '');
@@ -151,6 +152,21 @@ test('install refuses a plugin outside the marketplace, or one already installed
     assert.deepEqual([r.code, r.stdout], [EXIT.failure, ''], name);
     assert.match(r.stderr, message);
   }
+  assert.deepEqual(s.calls(), []);
+});
+
+test('install refuses, with exit 1, a plugin installed with project scope for another project', () => {
+  const s = fresh();
+  // Even in auto-install mode: a user-scope install would duplicate it into every project.
+  s.call(['settings', 'set', 'mode', 'auto-install']);
+  const r = s.call(['install', 'autologger-browser', '--json']);
+  assert.deepEqual([r.code, r.stdout], [EXIT.failure, '']);
+  assert.equal(
+    r.stderr,
+    `plugin-discover: autologger-browser@autologger-marketplace is already installed with project scope for another project (${join(s.dir, 'some-other-project')}); ` +
+      'this command installs only at user scope, which would add it to every project. ' +
+      'To use it in this project, install it for this project with /plugin (or claude plugin install autologger-browser@autologger-marketplace --scope project, run from this project)\n',
+  );
   assert.deepEqual(s.calls(), []);
 });
 
