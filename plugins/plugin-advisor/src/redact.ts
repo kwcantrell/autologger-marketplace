@@ -364,8 +364,10 @@ type ContinuedCommand = { from: number; to: number; raw: boolean };
  * `-p s3cret`, or `mysql -H Authorization: x \` then `-p s3cret`) loses the end of its first line,
  * backslash included, to the authorization rule, so the `-p` rule no longer sees its `-p` on the next
  * lines. For each logical line (lines joined by backslash continuations) that holds such a value, the
- * first one a password command runs through (as `PASSWORD_COMMAND` reads the line as it is) gives the
- * lines after it, to the end of the logical line. Each logical line is looked at once, so the scan
+ * first one a password command runs through gives the lines after it, to the end of the logical line.
+ * A command runs through a value when `PASSWORD_COMMAND`, read from the start of the logical line
+ * (`mysql -H Authorization: x \`) or, for the first such value, from the value's own start (as job
+ * 034 read it), has a match that reaches past the value's line. Each logical line is looked at once, so the scan
  * stays linear.
  */
 function continuedCommands(text: string): ContinuedCommand[] {
@@ -381,11 +383,14 @@ function continuedCommands(text: string): ContinuedCommand[] {
     let end = lineEnd(text, eol + 1);
     while (continues(text, end)) end = lineEnd(text, end + 1);
     done = end;
-    // The password commands on it, in order, and the first value one of them runs through.
-    const commands = [...text.slice(start, end).matchAll(PASSWORD_COMMAND)].map((c) => [start + c.index, start + c.index + c[0].length]);
+    // The password commands on it, in order, and the first value one of them runs through. The first
+    // value is also read as job 034 read it, from the value's own start: a quote opened earlier on
+    // the line (`mysql -e "x Authorization: y; mysqldump db" -h h; echo " \`) pairs differently.
+    const spans = (from: number): number[][] => [...text.slice(from, end).matchAll(PASSWORD_COMMAND)].map((c) => [from + c.index, from + c.index + c[0].length]);
+    const commands = spans(start);
     let next = 0;
-    let through = -1;
-    for (let a: RegExpExecArray | null = m; a !== null && a.index < end; a = AUTHORIZATION_SCAN.exec(text)) {
+    let through = spans(eol - (m[6]?.length ?? 0)).some(([s0 = end, e0 = 0]) => s0 < eol && e0 > eol) ? eol : -1;
+    for (let a: RegExpExecArray | null = through === -1 ? m : null; a !== null && a.index < end; a = AUTHORIZATION_SCAN.exec(text)) {
       eol = continuedValueEnd(text, a);
       if (eol === -1) continue;
       while (next < commands.length && (commands[next]?.[1] ?? 0) <= eol) next++;

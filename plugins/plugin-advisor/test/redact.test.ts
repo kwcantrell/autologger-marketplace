@@ -885,3 +885,36 @@ test('redact stays linear on the job 036 paths: 64 KB under 200 ms, 3.1x the inp
     assert.ok(ratio < 6, `${name}: ${ratio.toFixed(1)}x for 3.1x the input`);
   }
 });
+
+// Job 036 round 1: a quote opened by an earlier command before the authorization key pairs with one
+// in the value, so read from the line's start no command reaches the value's end. Read from the
+// value's start (as job 034 did), `mysqldump` does, and its -p on the next line is redacted.
+test('a quote opened before the authorization key does not hide the command in its value (job 036)', () => {
+  const input = 'mysql -e "select 1 Authorization: x; mysqldump db" -h h; echo " \\\n-p s3cret';
+  for (const f of [redact, cleanDetail, cleanSummary]) {
+    const out = f(input);
+    assert.ok(!out.includes('s3cret'), `${f.name}: ${JSON.stringify(out)}`);
+    assert.equal(containsSecret(out), false, out);
+  }
+  assert.equal(redact(input), `mysql -e "select 1 Authorization: ${R}\n-p ${R}`);
+});
+
+// redactContinuedLines maps the redacted text back to its lines by line number, and gives up when a
+// rule changed the number of lines. Only the PEM rule may (it runs before the lines are counted).
+test('no rule adds or removes a line break, except the PEM rule (job 036)', () => {
+  const triggers = [
+    'Authorization:', 'Authorization: x \\', 'Proxy-Authorization=Bearer abc', '"Authorization: x', 'Cookie: a=b;', 'Set-Cookie:',
+    'Bearer', 'Basic', 'alm_abcd', 'ghp_aaaaaaaaaaaaaaaaaaaa', 'eyJhbGciOi.eyJzdWIi.sig', 'autologger_sid=', 'autologger_sid',
+    'token=', 'password:', '"token":', '\\"token\\":', '\\"token\\": \\"a', '--token', '--api-key', 'mysql -p', 'mysql \\', '-p',
+    'a'.repeat(20) + '1', 'A1b2'.repeat(12), 'https://ada:', 'x', '',
+  ];
+  const breaks = ['\n', '\r\n', '\n\n', ' \\\n', ' ', '\t\n '];
+  for (const a of triggers) {
+    for (const nl of breaks) {
+      for (const b of ['x', 'abcDEF123456ghiJKL789', '= zq', '-p zq', '"zq"', '\\"zq\\"}', 'Authorization: y', '']) {
+        const text = `${a}${nl}${b}${nl}${a} ${b}`;
+        assert.equal(redact(text).split('\n').length, text.split('\n').length, JSON.stringify(text));
+      }
+    }
+  }
+});
