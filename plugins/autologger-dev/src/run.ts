@@ -59,8 +59,8 @@ Commands:
   connect [--slot <N>] [--server <url>]
                  Print (never run) what is left to connect Claude: the NODE_EXTRA_CA_CERTS export,
                  claude mcp add --transport http autologger-dev <server>/mcp (autologger-dev-N for
-                 slot N), autologger-mcp login, or, with no Google client needed, where to
-                 get autologger-mcp's import_tokens_command (its status --server <server> --json:
+                 slot N), where to get autologger-mcp's login_command, or, with no Google client needed,
+                 autologger-mcp's import_tokens_command (its status --server <server> --json:
                  make dev-mcp-token EMAIL=<address> piped into its import-tokens) to run in the
                  checkout (DEV_SLOT=N in front for slot N).
 

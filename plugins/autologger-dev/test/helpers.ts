@@ -36,6 +36,11 @@ export const GOOGLE_ID = '123456789-abcdefg.apps.googleusercontent.com';
 export const DEV_TOKEN_8787 =
   "get import_tokens_command from autologger-mcp's `status --server https://localhost:8787 --json` (the autologger-mcp sign-in skill runs it; it is the whole make dev-mcp-token line, piped into autologger-mcp's import-tokens in its full npx form) and run that line in the autologger-2 checkout with the user's email for <address>";
 
+/** connect's autologger_mcp_login for a server, word for word. */
+export function loginHint(server: string): string {
+  return `get login_command from autologger-mcp's \`status --server ${server} --json\` (the autologger-mcp sign-in skill runs it; it is the full npx form of login) and run that line yourself in a terminal`;
+}
+
 export const TEST_CA = readFileSync(new URL('./fixtures/test-ca.crt', import.meta.url), 'utf8');
 
 export interface FixtureOptions {

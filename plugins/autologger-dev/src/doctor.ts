@@ -4,7 +4,7 @@
 // dev server.
 import { accessSync, constants, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { devMcpTokenCommand } from './connect.ts';
+import { devMcpTokenHint } from './connect.ts';
 import { DEFAULT_SERVER, type Env, type Fetch, isLoopback, probe } from './http.ts';
 import type { Runner } from './runner.ts';
 import { appContainer, cliCommand, DEV_PORT_KEY, type DevPort, expectedPort, googleRedirect, slotServer } from './slot.ts';
@@ -161,7 +161,7 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
     // Google sign-in is only one way in: MCP can still be connected with a dev token.
     if (!google.ok) {
       fixes.push(
-        `MCP can still be connected without a Google client: ${devMcpTokenCommand(ctx.server, slot)} (autologger's dev-only dev-mcp-token; see autologger-dev connect)`,
+        `MCP can still be connected without a Google client: ${devMcpTokenHint(ctx.server, slot)} (autologger's dev-only dev-mcp-token; see autologger-dev connect)`,
       );
     }
     checks.push({

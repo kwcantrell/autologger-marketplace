@@ -4,7 +4,7 @@
 // (it revokes the grant). So every refresh runs under the credentials lock, re-reads the file
 // first (another process may already have rotated), and saves the new tokens atomically before
 // the new access token is used.
-import { devTokenHint, reusableClientId } from './commands.ts';
+import { devTokenHint, loginCommand, reusableClientId } from './commands.ts';
 import { CliError, NotSignedInError } from './errors.ts';
 import { clip, type Fetch, isObject } from './http.ts';
 import {
@@ -48,7 +48,7 @@ export function notSignedIn(store: CredentialStore, why = 'not signed in', now =
     // An unreadable credentials file: the hint just registers a new client.
   }
   const hint = devTokenHint(store.server, clientId);
-  return new NotSignedInError(`${why} to ${store.server}; run 'autologger-mcp login' (add --write to edit session data)${hint === '' ? '' : `\n${hint}`}`);
+  return new NotSignedInError(`${why} to ${store.server}; run ${loginCommand(store.server, false)} (to edit session data, run ${loginCommand(store.server, true)} instead)${hint === '' ? '' : `\n${hint}`}`);
 }
 
 function tokensFrom(response: TokenResponse, now: number, fallbackScope: string, previousRefresh?: string): Tokens {

@@ -116,7 +116,7 @@ test('before sign-in, tools and call through npx exit 1 with "not signed in"', a
     const { status, stdout, stderr } = await sh(command);
     assert.equal(status, 1, stderr);
     assert.equal(stdout, '');
-    assert.match(stderr, /^autologger-mcp: not signed in to http:\/\/127\.0\.0\.1:\d+; run 'autologger-mcp login'/);
+    assert.match(stderr, /^autologger-mcp: not signed in to http:\/\/127\.0\.0\.1:\d+; run npx --yes --offline --loglevel=error --package=\S+ -- autologger-mcp login --server http:\/\/127\.0\.0\.1:\d+ \(to edit session data, run npx \S+ \S+ \S+ --package=\S+ -- autologger-mcp login --write --server /);
   }
 });
 

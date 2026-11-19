@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EXIT } from '../src/run.ts';
 import { devPort, googleRedirect, mcpServerName, parseSlot, slotEnv, slotServer } from '../src/slot.ts';
-import { answering, cli, fakeRunner, fixture, GOOD_OVERRIDES, INHERITED, untrusted } from './helpers.ts';
+import { answering, cli, fakeRunner, fixture, GOOD_OVERRIDES, INHERITED, loginHint, untrusted } from './helpers.ts';
 
 /** fetch that answers 401 and records every URL it was asked for. */
 function recording(): typeof fetch & { urls: string[] } {
@@ -222,7 +222,7 @@ test('connect --slot 3 prints the slot\'s /mcp URL, an MCP server name for the s
   assert.equal(report.slot, 3);
   assert.equal(report.mcp_url, 'https://localhost:23787/mcp');
   assert.equal(report.claude_mcp_add, 'claude mcp add --transport http autologger-dev-3 https://localhost:23787/mcp');
-  assert.equal(report.autologger_mcp_login, 'autologger-mcp login --server https://localhost:23787');
+  assert.equal(report.autologger_mcp_login, loginHint('https://localhost:23787'));
   assert.equal(
     report.dev_mcp_token,
     "get import_tokens_command from autologger-mcp's `status --server https://localhost:23787 --json` (the autologger-mcp sign-in skill runs it; it is the whole make dev-mcp-token line, piped into autologger-mcp's import-tokens in its full npx form) and run that line in the autologger-2 checkout with the user's email for <address> and `DEV_SLOT=3 ` in front of make",
@@ -315,7 +315,7 @@ test('DEV_PORT=9787 in overrides.env: status, connect and doctor default to http
 
     const co = JSON.parse((await cli({ env: f.env }, 'connect', ...slotArgs, '--json')).stdout) as Record<string, unknown>;
     assert.equal(co.claude_mcp_add, 'claude mcp add --transport http autologger-dev https://localhost:9787/mcp');
-    assert.equal(co.autologger_mcp_login, 'autologger-mcp login --server https://localhost:9787');
+    assert.equal(co.autologger_mcp_login, loginHint('https://localhost:9787'));
 
     fetchFn = recording();
     const doc = await cli({ env: f.env, runner: fakeRunner(), fetch: fetchFn }, 'doctor', '--repo', f.repo, ...slotArgs, '--json');

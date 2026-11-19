@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import type { StatusReport } from '../src/status.ts';
 import { EXIT } from '../src/run.ts';
-import { cli, DEV_TOKEN_8787, fixture, tempDir } from './helpers.ts';
+import { cli, DEV_TOKEN_8787, fixture, loginHint, tempDir } from './helpers.ts';
 
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -164,7 +164,7 @@ test('connect prints the CA export, claude mcp add, the autologger-mcp login and
   assert.equal(r.ca_file_exists, false);
   assert.equal(r.node_extra_ca_certs_export, `export NODE_EXTRA_CA_CERTS=${caFile}`);
   assert.equal(r.claude_mcp_add, 'claude mcp add --transport http autologger-dev https://localhost:8787/mcp');
-  assert.equal(r.autologger_mcp_login, 'autologger-mcp login --server https://localhost:8787');
+  assert.equal(r.autologger_mcp_login, loginHint('https://localhost:8787'));
   // Slot 0: no DEV_SLOT in front of make.
   assert.equal(r.dev_mcp_token, DEV_TOKEN_8787);
   // Never the bare autologger-mcp, which is not on PATH for a plugin install.
@@ -178,7 +178,8 @@ test('connect prints the CA export, claude mcp add, the autologger-mcp login and
   const text = await cli({ env: f.env }, 'connect');
   assert.match(text.stdout, /^To connect Claude to https:\/\/localhost:8787\/mcp \(run these yourself\):\n {2}1\. /);
   assert.match(text.stdout, /claude mcp add --transport http autologger-dev https:\/\/localhost:8787\/mcp/);
-  assert.match(text.stdout, /autologger-mcp login --server https:\/\/localhost:8787/);
+  assert.ok(text.stdout.includes(loginHint('https://localhost:8787')), text.stdout);
+  assert.doesNotMatch(text.stdout, /autologger-mcp login --server/);
   assert.ok(text.stdout.includes(`  5. Or, with no Google sign-in (the stack's Google client may stay a placeholder), use the autologger-mcp plugin with a dev token: ${DEV_TOKEN_8787} (`), text.stdout);
   assert.doesNotMatch(text.stdout, /autologger-mcp import-tokens/);
 });

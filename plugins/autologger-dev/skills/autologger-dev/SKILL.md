@@ -105,8 +105,10 @@ It prints commands and never runs them. Give the user, from its fields:
 - `node_extra_ca_certs_export` (when not null): they put it in the environment Claude Code starts
   in (for example their shell profile) and **restart Claude Code**; Node reads it only at startup.
 - `claude_mcp_add`: they run it to register the MCP server, then sign in from `/mcp`.
-- or `autologger_mcp_login`, with the autologger-mcp plugin's sign-in skill: they run it in a
-  terminal because it opens a browser.
+- or `autologger_mcp_login`: get `login_command` from autologger-mcp's `status --server <server>
+  --json` (the autologger-mcp sign-in skill runs it; it is login in its full npx form, as a bare
+  `autologger-mcp` is not on PATH for a plugin install). They run that line in a terminal because it
+  opens a browser.
 - or, with no Google client needed, `dev_mcp_token`: get `import_tokens_command` from
   autologger-mcp's `status --server <server> --json` (the autologger-mcp sign-in skill runs it) and
   run that line in the autologger-2 checkout with your email for `<address>` (and `DEV_SLOT=N ` in
