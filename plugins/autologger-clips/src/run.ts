@@ -50,7 +50,8 @@ Commands:
       player per video, at most 8, in compile order: by session date unless --order list).
       --save-args also writes save_dashboard's arguments {title, tsx, scope} for autologger-mcp's
       call save_dashboard --args-file (scope: the clips' session, or --session). Writes local files
-      only; it never calls autologger.
+      only (--out a .tsx, --save-args a .json, neither a symlink nor a non-regular file); it never
+      calls autologger.
   media set <session_id> <video file> [--offset <s>] [--duration <s>]
       Map a session to a local video file (--offset: session time of the video's second 0).
   media list                      The media map, with whether each file exists.

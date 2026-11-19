@@ -2,7 +2,7 @@
 // ranges (as timeline plans them), the refusals, and that the file keeps autologger's save-time rules
 // with hostile session data in it.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { cleanText } from '../src/clips.ts';
@@ -338,6 +338,47 @@ for (const [argv, message] of [
     assert.match(r.stderr, message);
   });
 }
+
+// dashboard is pre-approved in the skills, so it must not write anywhere but a .tsx and a .json
+// regular file: --save-args ~/.bashrc with session data in it would run that data as shell code.
+for (const [name, argv, message] of [
+  ['no extension', ['--save-args', 'bashrc'], /--save-args must end in \.json, got 'bashrc'/],
+  ['.sh', ['--save-args', 'evil.sh'], /--save-args must end in \.json/],
+  ['.tsx, the same as --out', ['--save-args', 'guard.tsx'], /--save-args must end in \.json/],
+  ['a directory', ['--save-args', 'adir.json'], /--save-args .*adir\.json exists and is not a regular file/],
+  ['a symlink', ['--save-args', 'link.json'], /--save-args .*link\.json is a symbolic link/],
+  ['--out a symlink', ['--out', 'link.tsx'], /--out .*link\.tsx is a symbolic link/],
+] as const) {
+  test(`dashboard refuses an unsafe output path (${name}), exit 2, writing nothing`, async () => {
+    file('clips-guard.json', [{ session_id: 'S1', start_s: 30, end_s: 40, label: '$(touch pwned)' }]);
+    file('media-guard.json', toolResult([item(ids.a, 0)]));
+    mkdirSync(join(box.cwd, 'adir.json'), { recursive: true });
+    file('target.txt', 'keep');
+    for (const link of ['link.json', 'link.tsx']) {
+      if (!existsSync(join(box.cwd, link))) symlinkSync(join(box.cwd, 'target.txt'), join(box.cwd, link));
+    }
+    const out = argv[0] === '--out' ? [] : ['--out', 'guard.tsx'];
+    const r = await call(ctx, 'dashboard', '--clips', 'clips-guard.json', '--media-json', 'media-guard.json', ...out, ...argv, '--title', '$(touch pwned)', '--json');
+    assert.equal(r.code, EXIT.usage, r.stderr);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, message);
+    assert.equal(existsSync(join(box.cwd, 'guard.tsx')), false, 'nothing is written on a usage error');
+    assert.equal(existsSync(join(box.cwd, 'bashrc')), false);
+    assert.equal(existsSync(join(box.cwd, 'evil.sh')), false);
+    assert.equal(readFileSync(join(box.cwd, 'target.txt'), 'utf8'), 'keep');
+  });
+}
+
+test('dashboard overwrites its own earlier .tsx and .json regular files', async () => {
+  file('clips-again.json', [{ session_id: 'S1', start_s: 30, end_s: 40, label: 'Again' }]);
+  file('media-again.json', toolResult([item(ids.a, 0)]));
+  file('again.tsx', 'old');
+  file('again.json', 'old');
+  const r = await dashboard('--clips', 'clips-again.json', '--media-json', 'media-again.json', '--out', 'again.tsx', '--save-args', 'again.json');
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.tsx, /YouTubePlayer/);
+  assert.equal(JSON.parse(readFileSync(join(box.cwd, 'again.json'), 'utf8')).tsx, r.tsx);
+});
 
 test('media fetch still takes exactly one --media-json', async () => {
   const r = await call(ctx, 'media', 'fetch', 'S1', '--media-json', 'a.json', '--media-json', 'b.json');

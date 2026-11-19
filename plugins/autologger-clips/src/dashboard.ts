@@ -9,7 +9,7 @@
 // Safety: everything that comes from session data (labels, titles, ids) is put in ONE constant as
 // JSON (JSON.stringify, with <, >, &, U+2028 and U+2029 escaped), never into JSX or code. The rest of
 // the file is a fixed template, so the code a dashboard runs does not depend on the data.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, resolve } from 'node:path';
 import { buildPlan, cleanText, parseClipList, type ClipInput, type Plan, type PlanClip } from './clips.ts';
 import { CliError, UsageError } from './errors.ts';
@@ -285,8 +285,32 @@ function planOrExplain(plan: () => Plan): Plan {
   }
 }
 
+/**
+ * A file this command may write: refused (usage error, before anything is written) when it is a
+ * symlink or exists as something other than a regular file. The command is pre-approved, so it
+ * must not be able to write through a link or onto a device, directory or FIFO.
+ */
+function writableTarget(cwd: string, path: string, option: string): string {
+  const full = resolve(cwd, path);
+  let stat;
+  try {
+    stat = lstatSync(full);
+  } catch {
+    return full;
+  }
+  if (stat.isSymbolicLink()) throw new UsageError(`${option} ${full} is a symbolic link; give a plain file path`);
+  if (!stat.isFile()) throw new UsageError(`${option} ${full} exists and is not a regular file`);
+  return full;
+}
+
 export function buildDashboard(options: DashboardOptions): DashboardReport {
+  // Every check on the output paths comes before any write: a usage error writes nothing.
   if (extname(options.out).toLowerCase() !== '.tsx') throw new UsageError(`--out must end in .tsx, got '${options.out}'`);
+  if (options.saveArgs !== undefined && extname(options.saveArgs).toLowerCase() !== '.json') {
+    throw new UsageError(`--save-args must end in .json, got '${options.saveArgs}'`);
+  }
+  const out = writableTarget(options.cwd, options.out, '--out');
+  const saveArgs = options.saveArgs !== undefined ? writableTarget(options.cwd, options.saveArgs, '--save-args') : null;
   const clipsPath = resolve(options.cwd, options.clips);
   if (!existsSync(clipsPath)) throw new UsageError(`--clips file ${clipsPath} does not exist`);
   const clips = parseClipList(readFileSync(clipsPath, 'utf8'), basename(clipsPath));
@@ -338,13 +362,9 @@ export function buildDashboard(options: DashboardOptions): DashboardReport {
     throw new UsageError(`the clips come from ${sessions.length} sessions; name the one to save the dashboard on with --session <session_id>`);
   }
 
-  const out = resolve(options.cwd, options.out);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, tsx);
-  let saveArgs: string | null = null;
-  if (options.saveArgs !== undefined) {
-    saveArgs = resolve(options.cwd, options.saveArgs);
-    if (saveArgs === out) throw new UsageError('--save-args and --out must be different files');
+  if (saveArgs !== null) {
     mkdirSync(dirname(saveArgs), { recursive: true });
     writeFileSync(saveArgs, `${JSON.stringify({ title, tsx, scope: { kind: 'session', session_id: scope } }, null, 2)}\n`);
   }
