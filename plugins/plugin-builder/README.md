@@ -53,6 +53,7 @@ or not inside a marketplace checkout. On a non-zero exit stdout is empty and the
 | `tests-present` | `test/` has at least one `*.test.ts` |
 | `e2e-test` | a test reads `SKILL.md` and runs its lines through `npx` with `CLAUDE_PLUGIN_ROOT` set |
 | `relative-imports` | relative imports in `src/` and `test/` end in `.ts` (or `.json`) |
+| `hooks-cli` | if `hooks/hooks.json` exists: it is JSON in Claude Code's hooks format (`{"hooks": {<Event>: [{"matcher"?, "hooks": [...]}]}}`, known event names and hook types, a positive `timeout`, boolean `async`/`once`), and every `command` hook runs the plugin's own CLI: exec form `"command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts", ...]` (the bin file), or the skill `npx` prefix with the plugin's bin |
 
 `<placeholder>` arguments in skill lines are accepted; filling them is the plugin's e2e test's job.
 Whether a command passes an exit status through, prints exactly one JSON value, or keeps stdout

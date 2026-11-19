@@ -1,7 +1,7 @@
 // check: one deliberately broken fixture plugin per rule, each producing its own finding; and the
 // real repo's plugins (read only) passing.
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { RULES, check, checkPlugin, npxLines, relativeSpecifiers } from '../src/check.ts';
@@ -272,6 +272,122 @@ test('relative-imports: .js and extensionless relative imports, with line number
   assert.equal(byFile[`${PLUGIN}/src/cli.ts`]?.line, lineOf(f, `${PLUGIN}/src/cli.ts`, './run.js'));
   assert.match(byFile[`${PLUGIN}/src/cli.ts`]?.fix ?? '', /\.\/run\.ts/);
   assert.match(byFile[`${PLUGIN}/src/run.ts`]?.message ?? '', /without an extension/);
+});
+
+const HOOKS = `${PLUGIN}/hooks/hooks.json`;
+const NODE_HOOK = { type: 'command', command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/src/cli.ts', 'hello'], timeout: 5 };
+
+/** Writes hooks/hooks.json into the good plugin: a raw string as is, anything else as JSON. */
+function withHooks(f: Fixture, hooks: unknown): void {
+  mkdirSync(join(f.root, PLUGIN, 'hooks'), { recursive: true });
+  writeFileSync(join(f.root, HOOKS), typeof hooks === 'string' ? hooks : JSON.stringify(hooks, null, 2));
+}
+
+const onEvent = (event: string, hook: unknown, extra: Record<string, unknown> = {}) => ({ description: 'x', hooks: { [event]: [{ ...extra, hooks: [hook] }] } });
+
+test('hooks-cli: exec-form node, the npx prefix (shell and exec form) and non-command hooks are accepted', () => {
+  const f = good();
+  withHooks(f, {
+    description: 'fixture',
+    hooks: {
+      PostToolUseFailure: [{ matcher: 'Bash', hooks: [{ ...NODE_HOOK, async: true }] }],
+      UserPromptSubmit: [
+        {
+          hooks: [
+            { type: 'command', command: `${PREFIX} ${NAME} hello --json` },
+            { type: 'command', command: 'npx', args: ['--yes', '--offline', '--loglevel=error', '--package=${CLAUDE_PLUGIN_ROOT}', '--', NAME, 'hello'] },
+            { type: 'prompt', prompt: 'Is this ok?' },
+          ],
+        },
+      ],
+    },
+  });
+  assert.deepEqual(checkPlugin(f.root, NAME), []);
+});
+
+test('hooks-cli: the repo plugins that ship hooks pass (plugin-advisor, plugin-discover)', () => {
+  for (const name of ['plugin-advisor', 'plugin-discover']) {
+    assert.ok(existsSync(join(REPO, 'plugins', name, 'hooks', 'hooks.json')), name);
+    assert.deepEqual(checkPlugin(REPO, name), [], name);
+  }
+});
+
+test('hooks-cli: invalid JSON, with its line', () => {
+  const f = good();
+  withHooks(f, '{\n  "hooks": {},\n  oops\n}\n');
+  const x = only(checkPlugin(f.root, NAME), 'hooks-cli');
+  assert.equal(x.file, HOOKS);
+  assert.match(x.message, /not valid JSON/);
+  assert.equal(x.line, 3);
+});
+
+test('hooks-cli: no "hooks" object', () => {
+  const f = good();
+  withHooks(f, { PostToolUse: [] });
+  assert.match(only(checkPlugin(f.root, NAME), 'hooks-cli').message, /no "hooks" object/);
+});
+
+test('hooks-cli: an unknown event name', () => {
+  const f = good();
+  withHooks(f, onEvent('postToolUse', NODE_HOOK));
+  const x = only(checkPlugin(f.root, NAME), 'hooks-cli');
+  assert.match(x.message, /'postToolUse' is not a Claude Code hook event/);
+  assert.match(x.fix, /PostToolUse/);
+});
+
+test('hooks-cli: an event that is not an array of matcher groups, and a group without hooks', () => {
+  const f = good();
+  withHooks(f, { hooks: { Stop: { hooks: [NODE_HOOK] }, SessionStart: [{ matcher: 'startup' }] } });
+  const findings = checkPlugin(f.root, NAME);
+  assert.deepEqual(rules(findings), ['hooks-cli']);
+  assert.deepEqual(findings.map((x) => x.message.split(' ')[0]), ['hooks.Stop', 'hooks.SessionStart[0]']);
+});
+
+test('hooks-cli: a bad type, matcher, timeout and async', () => {
+  const f = good();
+  withHooks(f, { hooks: { Stop: [{ hooks: [{ type: 'shell', command: 'node' }] }], PreToolUse: [{ matcher: 3, hooks: [{ ...NODE_HOOK, timeout: 0, async: 'yes' }] }] } });
+  const messages = checkPlugin(f.root, NAME).map((x) => (assert.equal(x.rule, 'hooks-cli'), x.message));
+  assert.deepEqual(messages, [
+    'hooks.Stop[0].hooks[0]: "type" is "shell"',
+    'hooks.PreToolUse[0].matcher is not a string',
+    'hooks.PreToolUse[0].hooks[0].timeout is 0',
+    'hooks.PreToolUse[0].hooks[0].async is "yes"',
+  ]);
+});
+
+test('hooks-cli: a command hook running a shell script instead of the CLI', () => {
+  const f = good();
+  withHooks(f, onEvent('PostToolUse', { type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/hooks/run.sh' }, { matcher: 'Bash' }));
+  const x = only(checkPlugin(f.root, NAME), 'hooks-cli');
+  assert.match(x.message, /^hooks\.PostToolUse\[0\]\.hooks\[0\] runs .*run\.sh.*, not the plugin's own CLI/);
+  assert.ok(x.fix.includes('"command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts"'), x.fix);
+});
+
+test('hooks-cli: node in shell form, which puts the plugin path through a shell, gets the exec-form fix', () => {
+  const f = good();
+  withHooks(f, onEvent('Stop', { type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" hello' }));
+  assert.match(only(checkPlugin(f.root, NAME), 'hooks-cli').fix, /^use exec form/);
+});
+
+test('hooks-cli: exec-form node running another file, and npx running another bin', () => {
+  const f = good();
+  withHooks(f, {
+    hooks: {
+      Stop: [{ hooks: [{ ...NODE_HOOK, args: ['${CLAUDE_PLUGIN_ROOT}/src/other.ts'] }, { type: 'command', command: `${PREFIX} other-cli hello` }] }],
+    },
+  });
+  const findings = checkPlugin(f.root, NAME);
+  assert.deepEqual(rules(findings), ['hooks-cli']);
+  assert.equal(findings.length, 2);
+});
+
+test('hooks-cli: a command hook with no command, or with non-string args', () => {
+  const f = good();
+  withHooks(f, { hooks: { Stop: [{ hooks: [{ type: 'command' }, { type: 'command', command: 'node', args: [1] }] }] } });
+  assert.deepEqual(
+    checkPlugin(f.root, NAME).map((x) => x.message),
+    ['hooks.Stop[0].hooks[0]: a command hook with no "command" string', 'hooks.Stop[0].hooks[1].args is not an array of strings'],
+  );
 });
 
 test('relativeSpecifiers finds static, side-effect, re-export and dynamic imports', () => {

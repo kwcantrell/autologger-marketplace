@@ -1,6 +1,6 @@
 {
   "name": "autologger-browser",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A Chromium profile for agent-browser that trusts a local autologger dev stack's private CA in its own NSS database only, optionally signed in with make dev-login: doctor, setup, signin and reset, in a TypeScript CLI.",
   "author": {
     "name": "Kalen Cantrell"
