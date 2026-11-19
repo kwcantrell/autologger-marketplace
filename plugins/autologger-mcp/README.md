@@ -83,14 +83,14 @@ and its tokens for a dev-stack user without a Google OAuth client, and prints th
 Pipe it into `import-tokens` to sign in with it:
 
 ```sh
-make dev-mcp-token EMAIL=me@example.com |
+make dev-mcp-token EMAIL=me@example.com | \
 npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp import-tokens --server https://localhost:8787
-DEV_SLOT=2 make dev-mcp-token EMAIL=me@example.com SCOPE="dashboards session-data:write" |
+DEV_SLOT=2 make dev-mcp-token EMAIL=me@example.com SCOPE="dashboards session-data:write" | \
 npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp import-tokens --server https://localhost:22787
 ```
 
 `status --json` prints the whole line for the server as `import_tokens_command`, with the full
-`npx ...` form of the `import-tokens` command (the bare name is not on PATH for a plugin install; `<plugin dir>` above is the installed plugin folder).
+`npx ...` form of the `import-tokens` command (the bare name is not on PATH for a plugin install).
 When a client is stored for the server, registered at its current registration endpoint and recent
 enough that the server still keeps it, `status --json` also prints it as `client_id` and the line
 carries `CLIENT_ID=<client_id>`, so repeated imports reuse one client instead of registering a new
@@ -113,9 +113,9 @@ The make target creates an account and a grant on your dev stack, so run it your
 ### status, logout
 
 ```sh
-autologger-mcp status           # local file only: server, signed in, scope, token expiry, login commands
-autologger-mcp status --check   # also discovery, and a test of the token against /mcp
-autologger-mcp logout           # revoke at the server (if it can), then delete the local tokens
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp status           # local file only: server, signed in, scope, token expiry, login commands
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp status --check   # also discovery, and a test of the token against /mcp
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp logout           # revoke at the server (if it can), then delete the local tokens
 ```
 
 `logout` succeeds, with a warning, when the server cannot be reached; revoke the app under
@@ -124,12 +124,12 @@ Connected apps in autologger in that case.
 ### tools, call
 
 ```sh
-autologger-mcp tools                       # name and description of every tool
-autologger-mcp tools --json                # full input schemas
-autologger-mcp call list_studios
-autologger-mcp call list_shows --args '{"studio_id":"<studio_id>"}'
-autologger-mcp call list_events --args '{"session_id":"<session_id>","limit":50}' --json
-autologger-mcp call create_wiki_page --args-file page.json --json   # needs login --write
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp tools                       # name and description of every tool
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp tools --json                # full input schemas
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp call list_studios
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp call list_shows --args '{"studio_id":"<studio_id>"}'
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp call list_events --args '{"session_id":"<session_id>","limit":50}' --json
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp call create_wiki_page --args-file page.json --json   # needs login --write
 ```
 
 `call` prints the tool's text, or with `--json` the raw MCP result (`structuredContent` holds the
@@ -143,7 +143,7 @@ access token, or one the server rejects with 401, is refreshed once and the requ
 ### check-links
 
 ```sh
-autologger-mcp check-links page.md      # or - for stdin
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp check-links page.md      # or - for stdin
 ```
 
 Reports, as `file:line:column: message`, every `[[...]]` outside code spans and code blocks, and
