@@ -26,7 +26,6 @@ export const CA_FILE_NAME = 'autologger-dev-ca.crt';
 
 export const GOOGLE_KEYS = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'] as const;
 export const DASHBOARDS_KEY = 'CUSTOM_DASHBOARDS_ENABLED';
-export const GOOGLE_REDIRECT = 'https://localhost:8787/auth/google/callback';
 
 export function homeDir(env: Env): string {
   return env.HOME !== undefined && env.HOME !== '' ? env.HOME : homedir();

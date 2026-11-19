@@ -51,7 +51,7 @@ const script = (name: string, body: string): void => {
 };
 script(
   'make',
-  `echo "\${DEV_HTTPS:+DEV_HTTPS=$DEV_HTTPS }make $* (in $PWD)" >> "$FAKE_MAKE_LOG"
+  `echo "\${DEV_HTTPS:+DEV_HTTPS=$DEV_HTTPS }\${DEV_SLOT+DEV_SLOT=$DEV_SLOT }make $* (in $PWD)" >> "$FAKE_MAKE_LOG"
 case "$1" in
   --version) echo "GNU Make 4.4.1" ;;
   dev-ca) cat "$FAKE_CA" ;;
@@ -80,6 +80,8 @@ env.AUTOLOGGER_REPO = repo;
 env.FAKE_MAKE_LOG = makeLog;
 env.FAKE_CA = join(pluginRoot, 'test', 'fixtures', 'test-ca.crt');
 env.FAKE_LEAK = SECRET;
+// A DEV_SLOT in the caller's environment must never reach make: only --slot sets it.
+env.DEV_SLOT = '7';
 
 // A local stand-in for the dev server with /mcp on.
 let origin = '';
@@ -153,6 +155,24 @@ test('every skill command line runs from a fresh copy against the fakes and exit
       assert.match(stderr, /fake make dev-up printed DEEPGRAM_API_KEY=\[redacted\]/);
       assert.match(stderr, /warning: the Google OAuth client/);
     }
+    if (command.endsWith(' up --slot 1 --json')) {
+      // The shared OpenBao steps get no DEV_SLOT; dev-up gets the slot's, never the inherited 7.
+      assert.deepEqual(ran, [
+        `make dev-bao (in ${repo})`,
+        `make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1 (in ${repo})`,
+        `DEV_HTTPS=1 DEV_SLOT=1 make dev-up (in ${repo})`,
+      ]);
+    }
+    if (command.endsWith(' ca --slot 1 --json')) {
+      assert.deepEqual(ran, [`DEV_HTTPS=1 DEV_SLOT=1 make dev-ca (in ${repo})`]);
+      assert.equal((JSON.parse(stdout) as { path: string }).path, join(home, '.autologger-dev', 'autologger-dev-ca.crt'));
+    }
+    if (command.includes(' --slot 1 ') && !command.includes(' up ') && !command.includes(' ca ')) {
+      assert.equal((JSON.parse(stdout) as { server: string }).server, 'https://localhost:21787', command);
+    }
+    if (command.endsWith(' connect --slot 1 --json')) {
+      assert.equal((JSON.parse(stdout) as { claude_mcp_add: string }).claude_mcp_add, 'claude mcp add --transport http autologger-dev-1 https://localhost:21787/mcp');
+    }
     if (command.endsWith(' ca --json')) {
       assert.deepEqual(ran, [`DEV_HTTPS=1 make dev-ca (in ${repo})`]);
       const report = JSON.parse(stdout) as { path: string; export: string };
@@ -195,6 +215,10 @@ test('the skill asks the user, naming the checkout path, before up and before ca
   const text = readFileSync(join(pluginRoot, SKILL), 'utf8');
   assert.match(text, /## 2\. Bring the stack up - ask the user first[\s\S]*ask the user before running it for real, naming the\s+checkout path/);
   assert.match(text, /## 3\. Write the dev CA - ask the user first[\s\S]*ask the user before\s+running it, naming the checkout path/);
+  assert.match(text, /## 6\. Dev slots[\s\S]*ask the user first, naming the checkout path and the slot\*\*[\s\S]*-- autologger-dev up --slot 1 --json/);
+  for (const sub of ['doctor --slot 1', 'up --dry-run --slot 1', 'up --slot 1', 'ca --slot 1', 'status --slot 1', 'connect --slot 1']) {
+    assert.ok(skillCommands().includes(`${INVOCATION} ${sub} --json`), sub);
+  }
 });
 
 test('up and ca through npx refuse to default to the current directory (exit 2), even in a checkout', async () => {

@@ -6,6 +6,8 @@ import { accessSync, constants, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { type Env, type Fetch, probe } from './http.ts';
 import type { Runner } from './runner.ts';
+import { cliCommand, googleRedirect } from './slot.ts';
+import { stepFor } from './up.ts';
 import {
   type Checkout,
   CREDENTIALS_FILE,
@@ -13,7 +15,6 @@ import {
   DASHBOARDS_KEY,
   dashboardsState,
   defaultCaFile,
-  GOOGLE_REDIRECT,
   googleClient,
   googleKeysIn,
   isFile,
@@ -47,11 +48,15 @@ export interface DoctorContext {
   fetch: Fetch;
   checkout: Checkout;
   server: string;
+  /** The dev slot (0, the default stack, when left out). */
+  slot?: number;
 }
 
 export interface DoctorReport {
   repo: string;
   server: string;
+  /** The dev slot the fixes name (0 is the default stack). */
+  slot: number;
   ok: boolean;
   checks: Check[];
 }
@@ -63,11 +68,10 @@ const ok = (name: string, detail: string): Check => ({ name, status: 'ok', detai
 const missing = (name: string, detail: string, fix: string): Check => ({ name, status: 'missing', detail, fix });
 const fail = (name: string, detail: string, fix: string): Check => ({ name, status: 'fail', detail, fix });
 
-const UP = 'autologger-dev up';
-const CA = 'autologger-dev ca';
-
 export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
   const { checkout, env, runner } = ctx;
+  const slot = ctx.slot ?? 0;
+  const up = cliCommand('up', slot);
   const isCheckout = checkout.missing.length === 0;
   const checks: Check[] = [];
 
@@ -91,9 +95,9 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
     state.state === 'running'
       ? ok('openbao', `container ${container} is running`)
       : state.state === 'stopped'
-        ? missing('openbao', `container ${container} exists but is not running (dev-mode OpenBao loses its state when it stops)`, `run make dev-bao in the checkout (or ${UP})`)
+        ? missing('openbao', `container ${container} exists but is not running (dev-mode OpenBao loses its state when it stops)`, `run make dev-bao in the checkout (or ${up})`)
         : state.state === 'absent'
-          ? missing('openbao', `no container ${container}`, `run make dev-bao in the checkout (or ${UP})`)
+          ? missing('openbao', `no container ${container}`, `run make dev-bao in the checkout (or ${up})`)
           : fail('openbao', `cannot tell whether ${container} is running: ${state.reason}`, 'make docker reachable (see the docker check), then run doctor again'),
   );
 
@@ -102,7 +106,7 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
       ? missing('openbao_credentials', `no checkout, so no ${CREDENTIALS_FILE} to look for`, 'fix the checkout check first')
       : isFile(join(checkout.path, CREDENTIALS_FILE))
         ? ok('openbao_credentials', `${CREDENTIALS_FILE} is present in the checkout`)
-        : missing('openbao_credentials', `no ${CREDENTIALS_FILE} in the checkout`, `run make dev-bao in the checkout (or ${UP})`),
+        : missing('openbao_credentials', `no ${CREDENTIALS_FILE} in the checkout`, `run make dev-bao in the checkout (or ${up})`),
   );
 
   const overridesPath = join(stateDir(env), OVERRIDES_FILE);
@@ -122,13 +126,13 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
     const fixes: string[] = [];
     const verbatim = [...(quoted.length > 0 ? [QUOTES_WHY] : []), ...(padded.length > 0 ? [SPACES_WHY] : [])];
     if (quoted.length > 0) {
-      fixes.push(`remove the quotes around the value of ${quoted.join(' and ')} in ${overridesPath} (${QUOTES_WHY}, so Google rejects the client), then run make dev-bao and ${UP} again`);
+      fixes.push(`remove the quotes around the value of ${quoted.join(' and ')} in ${overridesPath} (${QUOTES_WHY}, so Google rejects the client), then run make dev-bao and ${up} again`);
     }
     if (padded.length > 0) {
-      fixes.push(`remove the spaces around the value of ${padded.join(' and ')} in ${overridesPath} (${SPACES_WHY}, so Google rejects the client), then run make dev-bao and ${UP} again`);
+      fixes.push(`remove the spaces around the value of ${padded.join(' and ')} in ${overridesPath} (${SPACES_WHY}, so Google rejects the client), then run make dev-bao and ${up} again`);
     }
     if (unset.length > 0) {
-      fixes.push(`the user adds their own Google OAuth client (redirect ${GOOGLE_REDIRECT}) to ${overridesPath}, then runs make dev-bao and ${UP}`);
+      fixes.push(`the user adds their own Google OAuth client (redirect ${googleRedirect(slot)}) to ${overridesPath}, then runs make dev-bao and ${up}`);
     }
     checks.push({
       ...(google.ok
@@ -140,7 +144,7 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
     });
     const dashboards = dashboardsState(values);
     // up runs make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1 for anything but exactly 1, which rewrites the line.
-    const rewrite = `or just run ${UP}, which rewrites it as ${DASHBOARDS_KEY}=1 (make dev-bao-set), so editing it by hand is optional`;
+    const rewrite = `or just run ${up}, which rewrites it as ${DASHBOARDS_KEY}=1 (make dev-bao-set), so editing it by hand is optional`;
     checks.push({
       ...(dashboards === 'enabled'
         ? ok('custom_dashboards', `${DASHBOARDS_KEY}=1 (${where})`)
@@ -148,23 +152,23 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
           ? fail(
               'custom_dashboards',
               `${DASHBOARDS_KEY} is quoted (${where}): ${QUOTES_WHY}, so it is not 1 to autologger and /mcp is off`,
-              `remove the quotes around the value of ${DASHBOARDS_KEY} in ${overridesPath} (${QUOTES_WHY}), then run make dev-bao and ${UP} again; ${rewrite}`,
+              `remove the quotes around the value of ${DASHBOARDS_KEY} in ${overridesPath} (${QUOTES_WHY}), then run make dev-bao and ${up} again; ${rewrite}`,
             )
           : dashboards === 'padded'
             ? fail(
                 'custom_dashboards',
                 `${DASHBOARDS_KEY} has spaces around its value (${where}): ${SPACES_WHY}, so it is not exactly 1`,
-                `remove the spaces around the value of ${DASHBOARDS_KEY} in ${overridesPath} (${SPACES_WHY}), then run make dev-bao and ${UP} again; ${rewrite}`,
+                `remove the spaces around the value of ${DASHBOARDS_KEY} in ${overridesPath} (${SPACES_WHY}), then run make dev-bao and ${up} again; ${rewrite}`,
               )
-            : missing('custom_dashboards', `${DASHBOARDS_KEY} is not 1 (${where}), so /mcp is off`, `${UP} (runs make dev-bao-set ${DASHBOARDS_KEY}=1)`)),
+            : missing('custom_dashboards', `${DASHBOARDS_KEY} is not 1 (${where}), so /mcp is off`, `${up} (runs make dev-bao-set ${DASHBOARDS_KEY}=1)`)),
       keys: { [DASHBOARDS_KEY]: dashboards },
     });
   }
 
-  checks.push(caCheck(env));
-  checks.push(await serverCheck(ctx));
+  checks.push(caCheck(env, slot));
+  checks.push(await serverCheck(ctx, slot));
 
-  return { repo: checkout.path, server: ctx.server, ok: checks.every((c) => c.status === 'ok'), checks };
+  return { repo: checkout.path, server: ctx.server, slot, ok: checks.every((c) => c.status === 'ok'), checks };
 }
 
 async function dockerCheck(runner: Runner, env: Env): Promise<Check> {
@@ -197,10 +201,11 @@ async function nodeCheck(runner: Runner, env: Env): Promise<Check> {
   return fail('node', `node ${v.join('.')} on PATH is older than ${need}`, `install Node ${need} or newer and put it first on PATH`);
 }
 
-function caCheck(env: Env): Check {
+function caCheck(env: Env, slot: number): Check {
+  const ca = cliCommand('ca', slot);
   const path = env.NODE_EXTRA_CA_CERTS;
   const caFile = defaultCaFile(env);
-  const howTo = `run ${CA} (writes ${caFile}), then export NODE_EXTRA_CA_CERTS=${caFile} where Claude Code starts and restart it`;
+  const howTo = `run ${ca} (writes ${caFile}), then export NODE_EXTRA_CA_CERTS=${caFile} where Claude Code starts and restart it`;
   if (path === undefined || path === '') return missing('node_extra_ca_certs', 'NODE_EXTRA_CA_CERTS is not set, so Node does not trust the dev CA', howTo);
   try {
     if (!statSync(path).isFile()) return fail('node_extra_ca_certs', `NODE_EXTRA_CA_CERTS=${path} is not a file`, howTo);
@@ -211,20 +216,20 @@ function caCheck(env: Env): Check {
   return ok('node_extra_ca_certs', `NODE_EXTRA_CA_CERTS=${path} is a readable file`);
 }
 
-async function serverCheck(ctx: DoctorContext): Promise<Check> {
+async function serverCheck(ctx: DoctorContext, slot: number): Promise<Check> {
   const result = await probe(ctx.fetch, `${ctx.server}/`, {}, 5_000);
   if (result.ok) {
     await result.response.body?.cancel();
     return ok('dev_server', `${ctx.server} answers (HTTP ${result.response.status})`);
   }
   if (result.kind === 'tls') {
-    return fail('dev_server', result.message, `run ${CA}, then set NODE_EXTRA_CA_CERTS to the file it writes before Claude Code starts`);
+    return fail('dev_server', result.message, `run ${cliCommand('ca', slot)}, then set NODE_EXTRA_CA_CERTS to the file it writes before Claude Code starts`);
   }
-  return missing('dev_server', result.message, `${UP} (DEV_HTTPS=1 make dev-up in the checkout)`);
+  return missing('dev_server', result.message, `${cliCommand('up', slot)} (${stepFor('dev-up', slot).command} in the checkout)`);
 }
 
 export function formatDoctor(report: DoctorReport): string {
-  const lines = [`autologger dev stack: ${report.repo} -> ${report.server}`];
+  const lines = [`autologger dev stack: ${report.repo} -> ${report.server}${report.slot === 0 ? '' : ` (dev slot ${report.slot})`}`];
   for (const c of report.checks) {
     lines.push(`[${c.status}] ${c.name}: ${c.detail}`);
     if (c.fix !== null) lines.push(`    fix: ${c.fix}`);

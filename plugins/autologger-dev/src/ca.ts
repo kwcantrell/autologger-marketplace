@@ -6,12 +6,24 @@ import { basename, dirname, join } from 'node:path';
 import { CliError } from './errors.ts';
 import { type Env, shellQuote } from './http.ts';
 import type { Runner } from './runner.ts';
+import { cliCommand, slotEnv, slotPrefix } from './slot.ts';
 import { type Checkout, childEnv, verifyCheckout } from './stack.ts';
 
 export const CA_COMMAND = 'DEV_HTTPS=1 make dev-ca';
 
+/**
+ * The command line `ca` runs for the slot: DEV_HTTPS=1 DEV_SLOT=N make dev-ca for slot N. Every slot
+ * prints the same root (ADR 0038: one dev CA, slot 0's volume, shared by every slot), but the make
+ * target reads it from that slot's own gate, so the slot must be up.
+ */
+export function caCommand(slot: number): string {
+  return `DEV_HTTPS=1 ${slotPrefix(slot)}make dev-ca`;
+}
+
 export interface CaReport {
   path: string;
+  /** The dev slot whose gate printed the (shared) root CA. */
+  slot: number;
   subject: string;
   fingerprint256: string;
   valid_to: string;
@@ -43,6 +55,8 @@ export interface CaContext {
   env: Env;
   runner: Runner;
   checkout: Checkout;
+  /** The dev slot (0, the default stack, when left out). */
+  slot?: number;
   /** Absolute path to write the certificate to. */
   out: string;
   /** Receives make's own stderr (diagnostics), scrubbed by the caller. */
@@ -136,23 +150,26 @@ export function writeCertificate(path: string, pem: string, ops: WriteOps = FS_O
 
 export async function fetchCa(ctx: CaContext): Promise<CaReport> {
   const { checkout } = ctx;
+  const slot = ctx.slot ?? 0;
+  const command = caCommand(slot);
   await verifyCheckout(checkout, ctx.runner, ctx.env);
   const before = outRefusal(ctx.out);
   if (before !== null) throw refuseOut(ctx.out, before);
-  const result = await ctx.runner('make', ['dev-ca'], { cwd: checkout.path, env: childEnv(ctx.env, { DEV_HTTPS: '1' }), timeoutMs: 120_000 });
+  const result = await ctx.runner('make', ['dev-ca'], { cwd: checkout.path, env: childEnv(ctx.env, { DEV_HTTPS: '1', ...slotEnv(slot) }), timeoutMs: 120_000 });
   if (result.error === 'ENOENT') throw new CliError('make is not on PATH');
   if (result.stderr !== '') ctx.diagnostics(result.stderr.endsWith('\n') ? result.stderr : `${result.stderr}\n`);
   if (result.code !== 0) {
     throw new CliError(
-      `${CA_COMMAND} failed (${result.code === null ? 'it did not finish' : `exit ${result.code}`}); is the stack up in HTTPS mode? Run autologger-dev up first`,
+      `${command} failed (${result.code === null ? 'it did not finish' : `exit ${result.code}`}); is the stack up in HTTPS mode? Run ${cliCommand('up', slot)} first`,
     );
   }
   const found = singleCertificate(result.stdout);
-  if (!found.ok) throw new CliError(`refusing the output of ${CA_COMMAND}: ${found.reason}; nothing was written`);
+  if (!found.ok) throw new CliError(`refusing the output of ${command}: ${found.reason}; nothing was written`);
 
   writeCertificate(ctx.out, found.pem);
   return {
     path: ctx.out,
+    slot,
     subject: found.cert.subject.replaceAll('\n', ', '),
     fingerprint256: found.cert.fingerprint256,
     valid_to: new Date(found.cert.validTo).toISOString(),

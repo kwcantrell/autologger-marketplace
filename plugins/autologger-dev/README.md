@@ -67,17 +67,40 @@ github.com/kwcantrell/autologger-2 (https or ssh, `.git` optional). The server i
 `$LOCAL_BAO_DIR` and `$LOCAL_BAO_NAME`, as `make dev-bao` reads them, change the state directory and
 container name.
 
+## Dev slots (`--slot <N>`)
+
+autologger can run up to ten dev stacks side by side, one per worktree (its ADR 0038,
+`DEV_SLOT=0-9`). `doctor`, `up`, `ca`, `status` and `connect` take `--slot <N>`, exactly one digit
+0-9 (anything else is a usage error, exit 2), following autologger's own rule
+(`docker/compose.dev-slot.yaml`, `docker/compose.dev-slot-https.yaml`):
+
+| | Slot 0 (no `--slot`, or `--slot 0`) | Slot N (1-9) |
+| --- | --- | --- |
+| Server (`status`, `connect`, `doctor`'s `dev_server`) | `https://localhost:8787` | `https://localhost:2N787` |
+| `up` runs | `DEV_HTTPS=1 make dev-up` | `DEV_HTTPS=1 DEV_SLOT=N make dev-up` |
+| `ca` runs | `DEV_HTTPS=1 make dev-ca` | `DEV_HTTPS=1 DEV_SLOT=N make dev-ca` |
+| MCP server name (`connect`) | `autologger-dev` | `autologger-dev-N` |
+| Google redirect (`doctor`, `up`) | `https://localhost:8787/auth/google/callback` | `https://localhost:2N787/auth/google/callback` |
+
+Shared by every slot, so unchanged by `--slot`: the local OpenBao (container, state directory,
+`overrides.env`; `make dev-bao` and `make dev-bao-set` never get `DEV_SLOT`) and the dev CA (one
+root for every slot, so one CA file and one `NODE_EXTRA_CA_CERTS`). Without `--slot`, every command
+behaves exactly as slot 0; the JSON of every command has a `slot` field. The server is `--server`
+if given, else the slot's server when `--slot` is given, else `$AUTOLOGGER_URL`, else
+`https://localhost:8787`. Make never sees a `DEV_SLOT` from your environment, only the one `--slot`
+sets. Use `--slot` from an autologger worktree that has its own slot, with that worktree as `--repo`.
+
 ## Commands
 
 Every command takes `--json` (exactly one JSON value on stdout) and `--help`.
 
 | Command | What it does |
 | --- | --- |
-| `doctor [--repo <path>] [--server <url>]` | Named checks, each `ok`, `missing` or `fail` with a one-line fix: `checkout`, `docker` (daemon reachable), `make`, `node` (>= 22.12), `openbao` (container running), `openbao_credentials` (`.env.openbao.dev`), `google_client` (non-placeholder in `overrides.env`; `KEY=`, `KEY=""` and `KEY=''` count as not set), `custom_dashboards` (`CUSTOM_DASHBOARDS_ENABLED=1`), `node_extra_ca_certs` (set to a readable file), `dev_server` (answers; a TLS trust failure is `fail`). **Quotes:** autologger stores an `overrides.env` value verbatim, quotes included, so `GOOGLE_CLIENT_ID="abc"` or `CUSTOM_DASHBOARDS_ENABLED='1'` (a matching pair around a non-empty value) is `fail` with the key's state `quoted` (in `--json`, the check's `keys`) and the fix to remove the quotes and run `make dev-bao` and `up` again; mismatched quotes are an ordinary value. **Spaces:** a value with whitespace before or after it (`GOOGLE_CLIENT_ID= abc`, `CUSTOM_DASHBOARDS_ENABLED=1 `) is kept verbatim too, so it is `fail` with the state `padded` and the fix to remove the spaces. For `CUSTOM_DASHBOARDS_ENABLED` the fix also says that running `up` rewrites it as `1`, so editing it by hand is optional. Read-only. Exit 0 whenever it ran. |
-| `up --repo <path> [--dry-run]` | Runs in the checkout, in order and only as needed: `make dev-bao` (container not running or `.env.openbao.dev` missing), `make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1` (not already set), `DEV_HTTPS=1 make dev-up` (always). make's output streams to stderr; the first failing step stops it with exit 1 naming the step. Warns when the Google client is a placeholder, quoted or padded (the stack still comes up); a quoted or padded `CUSTOM_DASHBOARDS_ENABLED` is rewritten as `1` by `dev-bao-set`. A step's last output line without a newline is ended before the next step's header. `--dry-run` prints the plan and runs nothing. |
-| `ca --repo <path> [--out <file>]` | Runs `DEV_HTTPS=1 make dev-ca`, refuses (exit 1, nothing written) anything but exactly one valid PEM certificate or anything that looks like a private key, writes it to `--out` (default `~/.autologger-dev/autologger-dev-ca.crt`, mode 644, parent created, written to a temp file in the same directory and renamed over the target; an existing file there is replaced only if it is a regular file holding one PEM certificate, otherwise exit 1 and it is left unchanged) and prints the `export NODE_EXTRA_CA_CERTS=<path>` line. |
-| `status [--server <url>]` | Whether the server answers, whether `<server>/.well-known/oauth-protected-resource` returns JSON naming the resource, and whether `<server>/mcp` exists (any answer but 404). A TLS trust failure is reported as `tls: "untrusted"` with the `ca` / `NODE_EXTRA_CA_CERTS` fix. Exit 0 whenever it ran. |
-| `connect [--server <url>]` | Prints, never runs, what is left: the `NODE_EXTRA_CA_CERTS` export (when unset), `claude mcp add --transport http autologger-dev <server>/mcp`, and the alternative `autologger-mcp login --server <server>`. |
+| `doctor [--repo <path>] [--slot <N>] [--server <url>]` | Named checks, each `ok`, `missing` or `fail` with a one-line fix: `checkout`, `docker` (daemon reachable), `make`, `node` (>= 22.12), `openbao` (container running), `openbao_credentials` (`.env.openbao.dev`), `google_client` (non-placeholder in `overrides.env`; `KEY=`, `KEY=""` and `KEY=''` count as not set), `custom_dashboards` (`CUSTOM_DASHBOARDS_ENABLED=1`), `node_extra_ca_certs` (set to a readable file), `dev_server` (answers; a TLS trust failure is `fail`). **Quotes:** autologger stores an `overrides.env` value verbatim, quotes included, so `GOOGLE_CLIENT_ID="abc"` or `CUSTOM_DASHBOARDS_ENABLED='1'` (a matching pair around a non-empty value) is `fail` with the key's state `quoted` (in `--json`, the check's `keys`) and the fix to remove the quotes and run `make dev-bao` and `up` again; mismatched quotes are an ordinary value. **Spaces:** a value with whitespace before or after it (`GOOGLE_CLIENT_ID= abc`, `CUSTOM_DASHBOARDS_ENABLED=1 `) is kept verbatim too, so it is `fail` with the state `padded` and the fix to remove the spaces. For `CUSTOM_DASHBOARDS_ENABLED` the fix also says that running `up` rewrites it as `1`, so editing it by hand is optional. Read-only. Exit 0 whenever it ran. |
+| `up --repo <path> [--slot <N>] [--dry-run]` | Runs in the checkout, in order and only as needed: `make dev-bao` (container not running or `.env.openbao.dev` missing), `make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1` (not already set), `DEV_HTTPS=1 make dev-up` (always; `DEV_HTTPS=1 DEV_SLOT=N make dev-up` with `--slot N`). make's output streams to stderr; the first failing step stops it with exit 1 naming the step. Warns when the Google client is a placeholder, quoted or padded (the stack still comes up); a quoted or padded `CUSTOM_DASHBOARDS_ENABLED` is rewritten as `1` by `dev-bao-set`. A step's last output line without a newline is ended before the next step's header. `--dry-run` prints the plan and runs nothing. |
+| `ca --repo <path> [--slot <N>] [--out <file>]` | Runs `DEV_HTTPS=1 make dev-ca` (`DEV_HTTPS=1 DEV_SLOT=N make dev-ca` with `--slot N`), refuses (exit 1, nothing written) anything but exactly one valid PEM certificate or anything that looks like a private key, writes it to `--out` (default `~/.autologger-dev/autologger-dev-ca.crt`, mode 644, parent created, written to a temp file in the same directory and renamed over the target; an existing file there is replaced only if it is a regular file holding one PEM certificate, otherwise exit 1 and it is left unchanged) and prints the `export NODE_EXTRA_CA_CERTS=<path>` line. |
+| `status [--slot <N>] [--server <url>]` | Whether the server answers, whether `<server>/.well-known/oauth-protected-resource` returns JSON naming the resource, and whether `<server>/mcp` exists (any answer but 404). A TLS trust failure is reported as `tls: "untrusted"` with the `ca` / `NODE_EXTRA_CA_CERTS` fix. Exit 0 whenever it ran. |
+| `connect [--slot <N>] [--server <url>]` | Prints, never runs, what is left: the `NODE_EXTRA_CA_CERTS` export (when unset), `claude mcp add --transport http autologger-dev <server>/mcp` (`autologger-dev-N` with `--slot N`), and the alternative `autologger-mcp login --server <server>`. |
 
 Exit codes: 0 success, 1 the command failed, 2 usage error. On a non-zero exit the message is on
 stderr as `autologger-dev: <message>` and stdout is empty.
@@ -92,8 +115,9 @@ stderr as `autologger-dev: <message>` and stdout is empty.
 - **A fixed step list.** `up` can run only the three commands above. It never runs a `*-reset`,
   `*-down`, stage or prod target, or `dev-bao-set` with another key, and drops `CONFIRM`,
   `DEV_SLOT`, `DEV_HTTPS`, `EMAIL`, `STAGE_*` and make's own `MAKEFLAGS`, `GNUMAKEFLAGS`, `MFLAGS`,
-  `MAKELEVEL` and `MAKEFILES` from make's environment (so it always acts on the default dev slot, and
-  a parent make cannot add flags, variables or "Entering directory" lines to `ca`'s output).
+  `MAKELEVEL` and `MAKEFILES` from make's environment (so it acts on the default dev slot unless
+  `--slot N` adds `DEV_SLOT=N`, and a parent make cannot add flags, variables or "Entering
+  directory" lines to `ca`'s output).
 - **`ca --out` never clobbers another file.** An existing file at the target is replaced only if it
   is a regular file holding one PEM certificate (an earlier `ca` run's); a directory, a symlink or
   any other file is refused with exit 1 and left unchanged. The certificate is written to a new temp
