@@ -16,7 +16,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Only superseded pull request runs are cancelled. A push to main is never cancelled: two quick
+  # pushes (such as admin-bypass merges) must each get their version check.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ci:

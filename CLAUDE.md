@@ -45,7 +45,7 @@ claude plugin validate .                 # marketplace manifest
 claude plugin validate plugins/<name>    # one plugin (also templates/plugin)
 node plugins/plugin-builder/src/cli.ts check <name>|--all   # the convention below, checked statically
 node plugins/plugin-builder/src/cli.ts verify <name>        # check + validate + typecheck + the plugin's tests
-node scripts/check-versions.ts --base main                   # every changed plugin has a raised version (CI only)
+node scripts/check-versions.ts --base main                   # every changed plugin has a raised version (CI enforces it; also run it locally)
 ```
 
 `plugin-builder check` reports each break of the convention below with its file, line, rule and fix;
@@ -64,7 +64,9 @@ There is no build step and nothing compiled is committed: Node runs the `.ts` fi
 
 `main` is guarded by a `main protection` ruleset: no deletion, no force-push, changes land through a
 pull request (0 approvals; stale reviews dismissed on push) with the CI check `ci` passing (the job
-id in `.github/workflows/ci.yml`; renaming it breaks the required check). The repository admin role
+id in `.github/workflows/ci.yml`; renaming it breaks the required check). The required `ci` check is
+pinned to GitHub Actions (app id 15368), so a status named `ci` from any other app does not satisfy it.
+CI cancels in-progress runs only for pull requests, never for pushes to `main`. The repository admin role
 may bypass it, so the maintainer's local `/factory:ship` plus `git push` still works. Every `uses:` in
 a workflow is pinned to a full 40-hex commit SHA with the tag in a comment (`scripts/test/` checks
 this; Dependabot keeps them current). Report vulnerabilities as `SECURITY.md` says.

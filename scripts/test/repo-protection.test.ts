@@ -72,3 +72,9 @@ test('SECURITY.md names every plugin in the marketplace manifest', () => {
     assert.ok(security.includes(`\`${name}\``), `SECURITY.md does not name plugin ${name}`);
   }
 });
+
+test('CI cancels in-progress runs only for pull requests, never for pushes to main', () => {
+  const ci = read(CI_WORKFLOW);
+  assert.match(ci, /^concurrency:\n {2}group: ci-\$\{\{ github\.ref \}\}\n(?: {2}#.*\n)* {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}\n/m);
+  assert.doesNotMatch(ci, /cancel-in-progress: true/);
+});
