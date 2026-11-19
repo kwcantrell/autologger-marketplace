@@ -120,9 +120,12 @@ npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>
 "hooks": {<Event>: [{"matcher"?, "hooks": [...]}]}}`). Every `command` hook runs the plugin's own
 CLI, like a skill does, so the hook's logic is tested code: preferably exec form, `"command": "node",
 "args": ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts", "<command>"]` (no shell, so the plugin path may hold
-spaces or quotes, and no npx start-up), or a shell command starting with the npx prefix above. A hook
-must stay fast and quiet and never block unless that is its job; set a `timeout`, and `async` when
-nothing waits on it. `plugin-builder check` enforces this as the `hooks-cli` rule;
+spaces or quotes, and no npx start-up), or a shell command that is the npx prefix above, the bin, its
+command and plain arguments; a chained or compound shell command (`;`, `&`, `|`, a backtick, `$(`,
+`>`, `<` or a newline after the prefix) is rejected. Hooks live only in `hooks/hooks.json`: a `hooks`
+field in `.claude-plugin/plugin.json` (inline, a path or paths) is flagged, with a fix to move them
+there. A hook must stay fast and quiet and never block unless that is its job; set a `timeout`, and
+`async` when nothing waits on it. `plugin-builder check` enforces this as the `hooks-cli` rule;
 `plugins/plugin-advisor` and `plugins/plugin-discover` are the examples.
 
 **Versions.** Claude Code caches an installed plugin by its version, so `/plugin marketplace update`
