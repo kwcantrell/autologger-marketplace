@@ -133,3 +133,25 @@ test('a secret passed as an argument value never comes back in an error', async 
     assertClean(argv.join(' '), outcome);
   }
 });
+
+test('a quoted secret value (with or without its quotes) appears in no output of doctor or up', async () => {
+  for (const q of ['"', "'"]) {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${q}${GOOGLE_ID}${q}\nGOOGLE_CLIENT_SECRET=${q}${GOOGLE_SECRET}${q}\nCUSTOM_DASHBOARDS_ENABLED=${q}1${q}\nDEEPGRAM_API_KEY=${q}${SECRET}${q}\n` });
+    for (const json of [[], ['--json']]) {
+      for (const argv of [
+        ['doctor', '--repo', f.repo],
+        ['up', '--dry-run', '--repo', f.repo],
+        ['up', '--repo', f.repo],
+      ]) {
+        const label = `${argv.join(' ')} ${json.join(' ')} (${q})`;
+        const outcome = await cli({ env: { ...f.env, NODE_EXTRA_CA_CERTS: '/nope' }, runner: fakeRunner(), fetch: answering(401) }, ...argv, ...json);
+        assert.equal(outcome.code, EXIT.ok, `${label}: ${outcome.stderr}`);
+        assertClean(label, outcome);
+        for (const secret of SECRETS) {
+          assert.ok(!(outcome.stdout + outcome.stderr).includes(`${q}${secret}${q}`), `${label}: quoted value printed`);
+        }
+        assert.match(outcome.stdout, /quote/, `${label}: the quotes are named`);
+      }
+    }
+  }
+});

@@ -155,29 +155,62 @@ export function isPlaceholder(value: string | undefined): boolean {
   return value === undefined || unquote(value) === '' || value.includes('REPLACE_ME');
 }
 
+/**
+ * A value wrapped in one matching pair of quotes ("..." or '...', surrounding whitespace allowed)
+ * with something inside. local-bao.mjs stores it verbatim, quotes included, so the setting autologger
+ * gets is not the one the user meant. An empty pair (`""`, `''`) is not quoted: it is not set.
+ */
+export function isQuoted(value: string | undefined): boolean {
+  return value !== undefined && /^\s*(['"]).*\1\s*$/.test(value) && unquote(value) !== '';
+}
+
+export type GoogleKeyState = 'set' | 'placeholder' | 'quoted' | 'not set';
+
 export interface GoogleClient {
-  /** true when both keys hold a non-placeholder value in overrides.env. */
+  /** true when both keys hold a non-placeholder, unquoted value in overrides.env. */
   ok: boolean;
   /**
-   * For each key: 'set', 'placeholder' (a REPLACE_ME value) or 'not set' (no line for it, so the
+   * For each key: 'set', 'placeholder' (a REPLACE_ME value), 'quoted' (a real value wrapped in
+   * quotes, which autologger keeps, so Google rejects it) or 'not set' (no line for it, so the
    * defaults' placeholder applies, or an empty value: `KEY=`, `KEY=""` or `KEY=''`).
    */
-  keys: Record<(typeof GOOGLE_KEYS)[number], 'set' | 'placeholder' | 'not set'>;
+  keys: Record<(typeof GOOGLE_KEYS)[number], GoogleKeyState>;
 }
 
 export function googleClient(values: Map<string, string>): GoogleClient {
-  const state = (key: string): 'set' | 'placeholder' | 'not set' => {
+  const state = (key: string): GoogleKeyState => {
     const value = values.get(key);
     if (value === undefined || unquote(value) === '') return 'not set';
-    return isPlaceholder(value) ? 'placeholder' : 'set';
+    if (isPlaceholder(value)) return 'placeholder';
+    return isQuoted(value) ? 'quoted' : 'set';
   };
   const keys = { GOOGLE_CLIENT_ID: state('GOOGLE_CLIENT_ID'), GOOGLE_CLIENT_SECRET: state('GOOGLE_CLIENT_SECRET') };
   return { ok: keys.GOOGLE_CLIENT_ID === 'set' && keys.GOOGLE_CLIENT_SECRET === 'set', keys };
 }
 
-export function dashboardsEnabled(values: Map<string, string>): boolean {
-  return values.get(DASHBOARDS_KEY)?.trim() === '1';
+/** The Google keys in a given state, in GOOGLE_KEYS order. */
+export function googleKeysIn(google: GoogleClient, state: GoogleKeyState): string[] {
+  return GOOGLE_KEYS.filter((k) => google.keys[k] === state);
 }
+
+/**
+ * CUSTOM_DASHBOARDS_ENABLED: 'enabled' (1), 'quoted' ("1" or '1', which autologger reads as the
+ * quoted string, not 1) or 'not enabled' (anything else, or no line).
+ */
+export type DashboardsState = 'enabled' | 'quoted' | 'not enabled';
+
+export function dashboardsState(values: Map<string, string>): DashboardsState {
+  const value = values.get(DASHBOARDS_KEY);
+  if (value?.trim() === '1') return 'enabled';
+  return value !== undefined && isQuoted(value) && unquote(value) === '1' ? 'quoted' : 'not enabled';
+}
+
+export function dashboardsEnabled(values: Map<string, string>): boolean {
+  return dashboardsState(values) === 'enabled';
+}
+
+/** Why a quoted value is wrong, for messages (never the value itself). */
+export const QUOTES_WHY = 'autologger stores the value verbatim, quotes included';
 
 export type ContainerState =
   | { state: 'running' }

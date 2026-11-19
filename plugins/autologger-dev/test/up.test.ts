@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { EXIT } from '../src/run.ts';
-import { cli, fakeRunner, fixture, GOOD_OVERRIDES, INHERITED, NOT_FOUND } from './helpers.ts';
+import { cli, fakeRunner, fixture, GOOD_OVERRIDES, GOOGLE_ID, GOOGLE_SECRET, INHERITED, NOT_FOUND } from './helpers.ts';
 
 const makeCalls = (runner: ReturnType<typeof fakeRunner>): string[] =>
   runner.calls.filter((c) => c.command === 'make').map((c) => `${c.env?.DEV_HTTPS === '1' ? 'DEV_HTTPS=1 ' : ''}make ${c.args.join(' ')}`);
@@ -141,4 +141,50 @@ test('up refuses a directory that is not an autologger-2 checkout (exit 1, nothi
   assert.equal(stdout, '');
   assert.match(stderr, /is not an autologger-2 checkout/);
   assert.deepEqual(runner.calls, []);
+});
+
+interface DryRun {
+  google_client: string;
+  warnings: string[];
+  steps: { id: string; run: boolean; reason: string }[];
+}
+
+test('up and up --dry-run warn about a quoted Google value, naming the quotes, like a placeholder', async () => {
+  for (const [id, secret] of [
+    [`"${GOOGLE_ID}"`, GOOGLE_SECRET],
+    [GOOGLE_ID, `'${GOOGLE_SECRET}'`],
+  ] as const) {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${id}\nGOOGLE_CLIENT_SECRET=${secret}\nCUSTOM_DASHBOARDS_ENABLED=1\n` });
+    const key = id.startsWith('"') ? 'GOOGLE_CLIENT_ID' : 'GOOGLE_CLIENT_SECRET';
+    const dry = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo, '--dry-run', '--json');
+    assert.equal(dry.code, EXIT.ok, dry.stderr);
+    const report = JSON.parse(dry.stdout) as DryRun;
+    assert.equal(report.google_client, 'placeholder');
+    assert.equal(report.warnings.length, 1);
+    assert.match(report.warnings[0] ?? '', new RegExp(`^${key} in .* is wrapped in quotes, and autologger stores the value verbatim, quotes included, so Google will reject the client.*Remove the quotes, then run make dev-bao and up again\\.$`));
+    const run = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo);
+    assert.equal(run.code, EXIT.ok, run.stderr);
+    assert.match(run.stdout, new RegExp(`Warning: ${key} in .* is wrapped in quotes`));
+  }
+  const both = fixture({ overrides: `GOOGLE_CLIENT_ID="${GOOGLE_ID}"\nGOOGLE_CLIENT_SECRET=REPLACE_ME\n` });
+  const report = JSON.parse((await cli({ env: both.env, runner: fakeRunner() }, 'up', '--repo', both.repo, '--dry-run', '--json')).stdout) as DryRun;
+  assert.match(report.warnings[0] ?? '', /^GOOGLE_CLIENT_ID in .* is wrapped in quotes/);
+  assert.match(report.warnings[1] ?? '', /is a placeholder or not set/);
+});
+
+test('up plans make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1 for a quoted value, and says why', async () => {
+  for (const q of ['"', "'"]) {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${GOOGLE_ID}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\nCUSTOM_DASHBOARDS_ENABLED=${q}1${q}\n` });
+    const dry = await cli({ env: f.env, runner: fakeRunner({ 'docker container': { stdout: 'true\n' } }) }, 'up', '--repo', f.repo, '--dry-run', '--json');
+    assert.equal(dry.code, EXIT.ok, dry.stderr);
+    const report = JSON.parse(dry.stdout) as DryRun;
+    const step = report.steps.find((s) => s.id === 'dev-bao-set');
+    assert.equal(step?.run, true);
+    assert.match(step?.reason ?? '', /CUSTOM_DASHBOARDS_ENABLED is quoted in .*autologger stores the value verbatim.*rewrites it unquoted/);
+    assert.deepEqual(report.warnings, [], 'the Google client is fine');
+    const runner = fakeRunner({ 'docker container': { stdout: 'true\n' } });
+    const run = await cli({ env: f.env, runner }, 'up', '--repo', f.repo);
+    assert.equal(run.code, EXIT.ok, run.stderr);
+    assert.deepEqual(makeCalls(runner), ['make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1', 'DEV_HTTPS=1 make dev-up']);
+  }
 });

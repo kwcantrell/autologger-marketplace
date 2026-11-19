@@ -10,14 +10,16 @@ import {
   type Checkout,
   CREDENTIALS_FILE,
   containerName,
-  dashboardsEnabled,
   DASHBOARDS_KEY,
+  dashboardsState,
   defaultCaFile,
   GOOGLE_REDIRECT,
   googleClient,
+  googleKeysIn,
   isFile,
   openbaoContainer,
   OVERRIDES_FILE,
+  QUOTES_WHY,
   readOverrides,
   stateDir,
 } from './stack.ts';
@@ -31,6 +33,11 @@ export interface Check {
   detail: string;
   /** One line: what to do about it; null when the check is ok. */
   fix: string | null;
+  /**
+   * google_client and custom_dashboards only, when overrides.env could be read: each key's state
+   * (`set`, `placeholder`, `quoted`, `not set`; `enabled`, `quoted`, `not enabled`), never its value.
+   */
+  keys?: Record<string, string>;
 }
 
 export interface DoctorContext {
@@ -107,20 +114,37 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
   } else {
     const google = googleClient(values);
     const where = overrides.state === 'absent' ? `${overridesPath} does not exist` : `in ${overridesPath}`;
-    checks.push(
-      google.ok
+    const detail = `GOOGLE_CLIENT_ID is ${google.keys.GOOGLE_CLIENT_ID}, GOOGLE_CLIENT_SECRET is ${google.keys.GOOGLE_CLIENT_SECRET} (${where})`;
+    const quoted = googleKeysIn(google, 'quoted');
+    const unset = [...googleKeysIn(google, 'placeholder'), ...googleKeysIn(google, 'not set')];
+    const fixes: string[] = [];
+    if (quoted.length > 0) {
+      fixes.push(`remove the quotes around the value of ${quoted.join(' and ')} in ${overridesPath} (${QUOTES_WHY}, so Google rejects the client), then run make dev-bao and ${UP} again`);
+    }
+    if (unset.length > 0) {
+      fixes.push(`the user adds their own Google OAuth client (redirect ${GOOGLE_REDIRECT}) to ${overridesPath}, then runs make dev-bao and ${UP}`);
+    }
+    checks.push({
+      ...(google.ok
         ? ok('google_client', `GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set (${where})`)
-        : missing(
-            'google_client',
-            `GOOGLE_CLIENT_ID is ${google.keys.GOOGLE_CLIENT_ID}, GOOGLE_CLIENT_SECRET is ${google.keys.GOOGLE_CLIENT_SECRET} (${where}): the stack boots but Google sign-in will not work`,
-            `the user adds their own Google OAuth client (redirect ${GOOGLE_REDIRECT}) to ${overridesPath}, then runs make dev-bao and ${UP}`,
-          ),
-    );
-    checks.push(
-      dashboardsEnabled(values)
+        : quoted.length > 0
+          ? fail('google_client', `${detail}: ${QUOTES_WHY}, so Google sign-in will not work`, fixes.join('; '))
+          : missing('google_client', `${detail}: the stack boots but Google sign-in will not work`, fixes.join('; '))),
+      keys: { ...google.keys },
+    });
+    const dashboards = dashboardsState(values);
+    checks.push({
+      ...(dashboards === 'enabled'
         ? ok('custom_dashboards', `${DASHBOARDS_KEY}=1 (${where})`)
-        : missing('custom_dashboards', `${DASHBOARDS_KEY} is not 1 (${where}), so /mcp is off`, `${UP} (runs make dev-bao-set ${DASHBOARDS_KEY}=1)`),
-    );
+        : dashboards === 'quoted'
+          ? fail(
+              'custom_dashboards',
+              `${DASHBOARDS_KEY} is quoted (${where}): ${QUOTES_WHY}, so it is not 1 to autologger and /mcp is off`,
+              `remove the quotes around the value of ${DASHBOARDS_KEY} in ${overridesPath} (${QUOTES_WHY}), then run make dev-bao and ${UP} again`,
+            )
+          : missing('custom_dashboards', `${DASHBOARDS_KEY} is not 1 (${where}), so /mcp is off`, `${UP} (runs make dev-bao-set ${DASHBOARDS_KEY}=1)`)),
+      keys: { [DASHBOARDS_KEY]: dashboards },
+    });
   }
 
   checks.push(caCheck(env));

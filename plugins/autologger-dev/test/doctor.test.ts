@@ -4,6 +4,7 @@ import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Check } from '../src/doctor.ts';
+import { dashboardsState, googleClient, isQuoted, parseEnvText } from '../src/stack.ts';
 import { EXIT } from '../src/run.ts';
 import { answering, cli, type CliOptions, fakeRunner, fixture, GOOD_OVERRIDES, GOOGLE_ID, GOOGLE_SECRET, NOT_FOUND, untrusted } from './helpers.ts';
 
@@ -244,16 +245,99 @@ for (const key of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'] as const) {
   }
 }
 
-test('a quoted real Google client is set, and no value is printed', async () => {
+test('isQuoted, googleClient and dashboardsState: matching quotes around a real value are quoted', () => {
   for (const q of ['"', "'"]) {
-    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${q}${GOOGLE_ID}${q}\nGOOGLE_CLIENT_SECRET=${q}${GOOGLE_SECRET}${q}\nCUSTOM_DASHBOARDS_ENABLED=1\n` });
-    const { checks } = await doctorChecks({ env: f.env }, '--repo', f.repo);
-    assert.equal(checks.get('google_client')?.status, 'ok');
-    const up = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo, '--dry-run', '--json');
-    assert.equal((JSON.parse(up.stdout) as { google_client: string }).google_client, 'set');
-    const text = await cli({ env: f.env }, 'doctor', '--repo', f.repo);
-    for (const out of [text.stdout + text.stderr, up.stdout + up.stderr]) {
-      for (const v of [GOOGLE_ID, GOOGLE_SECRET, GOOGLE_ID.slice(0, 12), GOOGLE_SECRET.slice(-12)]) assert.ok(!out.includes(v));
-    }
+    assert.equal(isQuoted(`${q}abc.apps.googleusercontent.com${q}`), true);
+    assert.equal(isQuoted(` ${q}x${q} `), true);
+    assert.equal(isQuoted(`${q}${q}`), false, 'an empty pair is not set, not quoted');
+    assert.equal(isQuoted(`${q} ${q}`), false);
+  }
+  for (const v of [`"abc'`, `'abc"`, '"abc', "abc'", 'abc', 'a"b"c', '"', '', undefined]) assert.equal(isQuoted(v), false, String(v));
+
+  const google = (text: string) => googleClient(parseEnvText(text)).keys;
+  for (const q of ['"', "'"]) {
+    assert.deepEqual(google(`GOOGLE_CLIENT_ID=${q}${GOOGLE_ID}${q}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\n`), { GOOGLE_CLIENT_ID: 'quoted', GOOGLE_CLIENT_SECRET: 'set' });
+    assert.deepEqual(google(`GOOGLE_CLIENT_ID=${GOOGLE_ID}\nGOOGLE_CLIENT_SECRET=${q}${GOOGLE_SECRET}${q}\n`), { GOOGLE_CLIENT_ID: 'set', GOOGLE_CLIENT_SECRET: 'quoted' });
+    assert.equal(googleClient(parseEnvText(`GOOGLE_CLIENT_ID=${q}${GOOGLE_ID}${q}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\n`)).ok, false);
+    assert.deepEqual(google(`GOOGLE_CLIENT_ID=${q}${q}\nGOOGLE_CLIENT_SECRET=${q}REPLACE_ME${q}\n`), { GOOGLE_CLIENT_ID: 'not set', GOOGLE_CLIENT_SECRET: 'placeholder' });
+  }
+  // Mismatched quotes are not a pair: an ordinary set value.
+  assert.deepEqual(google(`GOOGLE_CLIENT_ID="${GOOGLE_ID}'\nGOOGLE_CLIENT_SECRET='${GOOGLE_SECRET}"\n`), { GOOGLE_CLIENT_ID: 'set', GOOGLE_CLIENT_SECRET: 'set' });
+  assert.equal(googleClient(parseEnvText(`GOOGLE_CLIENT_ID=${GOOGLE_ID}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\n`)).ok, true);
+
+  const dashboards = (line: string) => dashboardsState(parseEnvText(`${line}\n`));
+  assert.equal(dashboards('CUSTOM_DASHBOARDS_ENABLED=1'), 'enabled');
+  assert.equal(dashboards('CUSTOM_DASHBOARDS_ENABLED="1"'), 'quoted');
+  assert.equal(dashboards("CUSTOM_DASHBOARDS_ENABLED='1'"), 'quoted');
+  for (const line of ['CUSTOM_DASHBOARDS_ENABLED=0', 'CUSTOM_DASHBOARDS_ENABLED="0"', `CUSTOM_DASHBOARDS_ENABLED="1'`, 'CUSTOM_DASHBOARDS_ENABLED=""', '# none']) {
+    assert.equal(dashboards(line), 'not enabled', line);
   }
 });
+
+const QUOTES_FIX = /remove the quotes around the value of .*autologger stores the value verbatim.*then run make dev-bao and autologger-dev up again/;
+
+for (const key of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'] as const) {
+  for (const q of ['"', "'"]) {
+    test(`doctor reports ${key}=${q}...${q} as quoted (fail) with the remove-the-quotes fix`, async () => {
+      const value = key === 'GOOGLE_CLIENT_ID' ? GOOGLE_ID : GOOGLE_SECRET;
+      const other = key === 'GOOGLE_CLIENT_ID' ? `GOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}` : `GOOGLE_CLIENT_ID=${GOOGLE_ID}`;
+      const f = fixture({ overrides: `${other}\n${key}=${q}${value}${q}\nCUSTOM_DASHBOARDS_ENABLED=1\n` });
+      const { checks, ok } = await doctorChecks({ env: f.env }, '--repo', f.repo);
+      assert.equal(ok, false);
+      const c = checks.get('google_client');
+      assert.equal(c?.status, 'fail');
+      assert.equal(c?.keys?.[key], 'quoted');
+      assert.equal(c?.keys?.[key === 'GOOGLE_CLIENT_ID' ? 'GOOGLE_CLIENT_SECRET' : 'GOOGLE_CLIENT_ID'], 'set');
+      assert.match(c?.detail ?? '', new RegExp(`${key} is quoted`));
+      assert.match(c?.fix ?? '', new RegExp(`remove the quotes around the value of ${key} in `));
+      assert.match(c?.fix ?? '', QUOTES_FIX);
+      assert.doesNotMatch(c?.fix ?? '', /adds their own Google OAuth client/, 'the other key is set: only the quotes need fixing');
+      assert.equal(checks.get('custom_dashboards')?.status, 'ok');
+      const text = await cli({ env: f.env }, 'doctor', '--repo', f.repo);
+      assert.match(text.stdout, /\[fail\] google_client: .*is quoted/);
+      assert.match(text.stdout, /fix: remove the quotes/);
+    });
+  }
+}
+
+test('doctor: both Google keys quoted, or one quoted and one not set, gets every fix that applies', async () => {
+  const both = fixture({ overrides: `GOOGLE_CLIENT_ID="${GOOGLE_ID}"\nGOOGLE_CLIENT_SECRET='${GOOGLE_SECRET}'\n` });
+  let c = (await doctorChecks({ env: both.env }, '--repo', both.repo)).checks.get('google_client');
+  assert.equal(c?.status, 'fail');
+  assert.deepEqual(c?.keys, { GOOGLE_CLIENT_ID: 'quoted', GOOGLE_CLIENT_SECRET: 'quoted' });
+  assert.match(c?.fix ?? '', /remove the quotes around the value of GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in /);
+  const half = fixture({ overrides: `GOOGLE_CLIENT_ID="${GOOGLE_ID}"\nGOOGLE_CLIENT_SECRET=""\n` });
+  c = (await doctorChecks({ env: half.env }, '--repo', half.repo)).checks.get('google_client');
+  assert.equal(c?.status, 'fail');
+  assert.deepEqual(c?.keys, { GOOGLE_CLIENT_ID: 'quoted', GOOGLE_CLIENT_SECRET: 'not set' });
+  assert.match(c?.fix ?? '', QUOTES_FIX);
+  assert.match(c?.fix ?? '', /adds their own Google OAuth client/);
+});
+
+test('doctor: mismatched quotes are an ordinary set value; unquoted real values are ok', async () => {
+  const mismatched = fixture({ overrides: `GOOGLE_CLIENT_ID="${GOOGLE_ID}'\nGOOGLE_CLIENT_SECRET='${GOOGLE_SECRET}"\nCUSTOM_DASHBOARDS_ENABLED=1\n` });
+  let c = (await doctorChecks({ env: mismatched.env }, '--repo', mismatched.repo)).checks.get('google_client');
+  assert.equal(c?.status, 'ok');
+  assert.deepEqual(c?.keys, { GOOGLE_CLIENT_ID: 'set', GOOGLE_CLIENT_SECRET: 'set' });
+  const h = healthy();
+  const { checks } = await doctorChecks(h, '--repo', h.repo);
+  c = checks.get('google_client');
+  assert.equal(c?.status, 'ok');
+  assert.deepEqual(c?.keys, { GOOGLE_CLIENT_ID: 'set', GOOGLE_CLIENT_SECRET: 'set' });
+  assert.deepEqual(checks.get('custom_dashboards')?.keys, { CUSTOM_DASHBOARDS_ENABLED: 'enabled' });
+});
+
+for (const q of ['"', "'"]) {
+  test(`doctor reports CUSTOM_DASHBOARDS_ENABLED=${q}1${q} as quoted, not enabled, with the remove-the-quotes fix`, async () => {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${GOOGLE_ID}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\nCUSTOM_DASHBOARDS_ENABLED=${q}1${q}\n` });
+    const { checks } = await doctorChecks({ env: f.env }, '--repo', f.repo);
+    const c = checks.get('custom_dashboards');
+    assert.equal(c?.status, 'fail');
+    assert.deepEqual(c?.keys, { CUSTOM_DASHBOARDS_ENABLED: 'quoted' });
+    assert.match(c?.detail ?? '', /CUSTOM_DASHBOARDS_ENABLED is quoted .*not 1 to autologger/);
+    assert.match(c?.fix ?? '', /remove the quotes around the value of CUSTOM_DASHBOARDS_ENABLED in /);
+    assert.match(c?.fix ?? '', QUOTES_FIX);
+    assert.doesNotMatch(c?.fix ?? '', /runs make dev-bao-set/, 'not the generic set-it-to-1 fix');
+    assert.equal(checks.get('google_client')?.status, 'ok');
+  });
+}

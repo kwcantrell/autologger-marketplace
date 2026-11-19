@@ -37,7 +37,7 @@ Commands:
   doctor [--repo <path>] [--server <url>]
                  Check what is missing: the checkout, docker, make, Node, the local OpenBao
                  container, .env.openbao.dev, the Google client and CUSTOM_DASHBOARDS_ENABLED in
-                 overrides.env (set or placeholder only, never values), NODE_EXTRA_CA_CERTS and the
+                 overrides.env (set, placeholder or quoted only, never values), NODE_EXTRA_CA_CERTS and the
                  dev server. Each check is ok, missing or fail, with a one-line fix. Exit 0 when it ran.
   up --repo <path> [--dry-run]
                  Run, in the checkout and only as needed: ${STEPS['dev-bao'].command},
