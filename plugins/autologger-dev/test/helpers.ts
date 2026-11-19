@@ -120,6 +120,7 @@ const DEFAULTS: Record<string, Partial<RunResult>> = {
   'make --version': { code: 0, stdout: 'GNU Make 4.4.1\nCopyright\n' },
   'node --version': { code: 0, stdout: 'v22.18.0\n' },
   'make dev-ca': { code: 0, stdout: TEST_CA },
+  'git remote': { code: 0, stdout: 'https://github.com/kwcantrell/autologger-2.git\n' },
 };
 
 export const NOT_FOUND: Partial<RunResult> = { code: null, error: 'ENOENT' };

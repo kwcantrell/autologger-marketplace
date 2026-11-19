@@ -20,9 +20,15 @@ test('ca writes the certificate to ~/.autologger-dev/autologger-dev-ca.crt (mode
   assert.equal(statSync(path).mode & 0o777, 0o644);
   assert.match(stdout, new RegExp(`to ${path}\\.`));
   assert.match(stdout, new RegExp(`\\n  export NODE_EXTRA_CA_CERTS=${path}\\n`));
-  const [call] = runner.calls;
-  assert.deepEqual([call?.command, call?.args, call?.cwd, call?.env?.DEV_HTTPS], ['make', ['dev-ca'], f.repo, '1']);
-  assert.equal(runner.calls.length, 1);
+  // Only the origin remote is read before make dev-ca runs.
+  assert.deepEqual(
+    runner.calls.map((c) => [c.command, c.args, c.cwd]),
+    [
+      ['git', ['remote', 'get-url', 'origin'], f.repo],
+      ['make', ['dev-ca'], f.repo],
+    ],
+  );
+  assert.equal(runner.calls[1]?.env?.DEV_HTTPS, '1');
 });
 
 test('ca --out writes there (relative to the cwd, parents created) and --json has the fields', async () => {

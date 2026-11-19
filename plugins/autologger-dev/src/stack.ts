@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { CliError } from './errors.ts';
 import type { Env } from './http.ts';
 import type { Runner } from './runner.ts';
 
@@ -60,6 +61,48 @@ export function resolveCheckout(option: string | undefined, env: Env, cwd: strin
   const path = resolve(cwd, option ?? fromEnv ?? '.');
   const missing = CHECKOUT_FILES.filter((f) => !isFile(join(path, f)));
   return { path, source, missing };
+}
+
+/** The GitHub repository whose checkout `up` and `ca` agree to run the Makefile of. */
+export const ORIGIN_REPO = 'kwcantrell/autologger-2';
+
+/**
+ * Whether a git remote URL is github.com/kwcantrell/autologger-2: https (credentials in the URL
+ * allowed), scp-style ssh (git@github.com:...) or ssh:// form, `.git` and a trailing slash optional.
+ * GitHub names are case-insensitive, so the comparison is too.
+ */
+export function isAutologgerOrigin(url: string): boolean {
+  const m = /^(?:https:\/\/(?:[^@/\s]+@)?github\.com(?::443)?\/|ssh:\/\/git@github\.com(?::22)?\/|git@github\.com:)([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(url.trim());
+  return m !== null && `${m[1] ?? ''}/${m[2] ?? ''}`.toLowerCase() === ORIGIN_REPO;
+}
+
+/** A remote URL fit for a message: credentials in an http(s) URL replaced, control characters escaped. */
+export function displayRemote(url: string): string {
+  return JSON.stringify(url.trim().replace(/^(https?:\/\/)[^@/]*@/i, '$1[credentials]@'));
+}
+
+/**
+ * The checks `up` and `ca` make before running the checkout's Makefile: the checkout files are
+ * there, and its `origin` remote is github.com/kwcantrell/autologger-2. Exit 1 otherwise, nothing run.
+ * (The remote is read with `git remote get-url origin`, which runs no hook or Makefile recipe.)
+ */
+export async function verifyCheckout(checkout: Checkout, runner: Runner, env: Env): Promise<void> {
+  if (checkout.missing.length > 0) {
+    throw new CliError(
+      `${checkout.path} (from ${checkout.source}) is not an autologger-2 checkout (no ${checkout.missing.join(', ')}); pass --repo <path> or set AUTOLOGGER_REPO`,
+    );
+  }
+  const gitEnv: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(env)) if (!k.startsWith('GIT_')) gitEnv[k] = v;
+  const r = await runner('git', ['remote', 'get-url', 'origin'], { cwd: checkout.path, env: gitEnv, timeoutMs: 15_000 });
+  if (r.error === 'ENOENT') throw new CliError(`git is not on PATH, so the origin remote of ${checkout.path} cannot be checked`);
+  if (r.code !== 0) {
+    throw new CliError(`${checkout.path} has no git origin remote (or is not a git repository); refusing to run its Makefile, which only a checkout of github.com/${ORIGIN_REPO} may do`);
+  }
+  const url = r.stdout.trim();
+  if (!isAutologgerOrigin(url)) {
+    throw new CliError(`the origin remote of ${checkout.path} is ${displayRemote(url)}, not github.com/${ORIGIN_REPO}; refusing to run its Makefile`);
+  }
 }
 
 export function isFile(path: string): boolean {

@@ -58,7 +58,10 @@ npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-dev 
 
 From a checkout of this repository, `node plugins/autologger-dev/src/cli.ts <command>` does the same.
 
-The checkout is `--repo <path>`, else `$AUTOLOGGER_REPO`, else the current directory. The server is
+The checkout is `--repo <path>`, else `$AUTOLOGGER_REPO`; `doctor` alone falls back to the current
+directory. `up` and `ca`, which run the checkout's Makefile, exit 2 without `--repo` or
+`$AUTOLOGGER_REPO`, and exit 1 (naming the URL) when the checkout's `origin` remote is not
+github.com/kwcantrell/autologger-2 (https or ssh, `.git` optional). The server is
 `--server <url>`, else `$AUTOLOGGER_URL`, else `https://localhost:8787`; only `https://` URLs, and
 `http://` to `localhost`, `127.0.0.1` or `[::1]`, are accepted (the same rule as autologger-mcp).
 `$LOCAL_BAO_DIR` and `$LOCAL_BAO_NAME`, as `make dev-bao` reads them, change the state directory and
@@ -71,8 +74,8 @@ Every command takes `--json` (exactly one JSON value on stdout) and `--help`.
 | Command | What it does |
 | --- | --- |
 | `doctor [--repo <path>] [--server <url>]` | Named checks, each `ok`, `missing` or `fail` with a one-line fix: `checkout`, `docker` (daemon reachable), `make`, `node` (>= 22.12), `openbao` (container running), `openbao_credentials` (`.env.openbao.dev`), `google_client` (non-placeholder in `overrides.env`), `custom_dashboards` (`CUSTOM_DASHBOARDS_ENABLED=1`), `node_extra_ca_certs` (set to a readable file), `dev_server` (answers; a TLS trust failure is `fail`). Read-only. Exit 0 whenever it ran. |
-| `up [--repo <path>] [--dry-run]` | Runs in the checkout, in order and only as needed: `make dev-bao` (container not running or `.env.openbao.dev` missing), `make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1` (not already set), `DEV_HTTPS=1 make dev-up` (always). make's output streams to stderr; the first failing step stops it with exit 1 naming the step. Warns when the Google client is a placeholder (the stack still comes up). `--dry-run` prints the plan and runs nothing. |
-| `ca [--repo <path>] [--out <file>]` | Runs `DEV_HTTPS=1 make dev-ca`, refuses (exit 1, nothing written) anything but exactly one valid PEM certificate or anything that looks like a private key, writes it to `--out` (default `~/.autologger-dev/autologger-dev-ca.crt`, mode 644, parent created) and prints the `export NODE_EXTRA_CA_CERTS=<path>` line. |
+| `up --repo <path> [--dry-run]` | Runs in the checkout, in order and only as needed: `make dev-bao` (container not running or `.env.openbao.dev` missing), `make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1` (not already set), `DEV_HTTPS=1 make dev-up` (always). make's output streams to stderr; the first failing step stops it with exit 1 naming the step. Warns when the Google client is a placeholder (the stack still comes up). `--dry-run` prints the plan and runs nothing. |
+| `ca --repo <path> [--out <file>]` | Runs `DEV_HTTPS=1 make dev-ca`, refuses (exit 1, nothing written) anything but exactly one valid PEM certificate or anything that looks like a private key, writes it to `--out` (default `~/.autologger-dev/autologger-dev-ca.crt`, mode 644, parent created) and prints the `export NODE_EXTRA_CA_CERTS=<path>` line. |
 | `status [--server <url>]` | Whether the server answers, whether `<server>/.well-known/oauth-protected-resource` returns JSON naming the resource, and whether `<server>/mcp` exists (any answer but 404). A TLS trust failure is reported as `tls: "untrusted"` with the `ca` / `NODE_EXTRA_CA_CERTS` fix. Exit 0 whenever it ran. |
 | `connect [--server <url>]` | Prints, never runs, what is left: the `NODE_EXTRA_CA_CERTS` export (when unset), `claude mcp add --transport http autologger-dev <server>/mcp`, and the alternative `autologger-mcp login --server <server>`. |
 
@@ -88,6 +91,11 @@ stderr as `autologger-dev: <message>` and stdout is empty.
   `*-down`, stage or prod target, or `dev-bao-set` with another key, and drops `CONFIRM`,
   `DEV_SLOT`, `DEV_HTTPS`, `EMAIL`, `MAKEFLAGS` and `STAGE_*` from make's environment (so it always
   acts on the default dev slot).
+- **No Makefile from an untrusted repository.** Only `up` and `ca` run `make`, and only in a checkout
+  named explicitly (`--repo` or `$AUTOLOGGER_REPO`, never the current directory) whose `origin` is
+  github.com/kwcantrell/autologger-2. The skill pre-approves only `doctor`, `status`, `connect`,
+  `up --dry-run` and `--help`, so `up` and `ca` always get a permission prompt, and it tells Claude to
+  ask the user, naming the checkout path, before either.
 - **TLS verification is never turned off.** The dev CA is trusted through `NODE_EXTRA_CA_CERTS`.
 
 ## Tests

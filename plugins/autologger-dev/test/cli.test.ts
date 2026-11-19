@@ -5,7 +5,7 @@
 // on PATH are shell scripts that log their arguments, the checkout is a fake one, HOME is a temp
 // dir, and AUTOLOGGER_URL points at a local test server. No real stack is started.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -35,6 +35,10 @@ for (const f of ['Makefile', 'docker/scripts/compose-run.mjs', 'docker/scripts/l
   mkdirSync(dirname(join(repo, f)), { recursive: true });
   writeFileSync(join(repo, f), '# fake\n');
 }
+// up and ca run only a checkout whose origin is kwcantrell/autologger-2; real git reads it.
+const quietGit = { stdio: 'ignore', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } } as const;
+execFileSync('git', ['init', '-q', repo], quietGit);
+execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'git@github.com:kwcantrell/autologger-2.git'], quietGit);
 const home = join(scratch, 'home');
 mkdirSync(join(home, '.autologger-local-openbao'), { recursive: true });
 writeFileSync(join(home, '.autologger-local-openbao', 'overrides.env'), `GOOGLE_CLIENT_ID=REPLACE_ME\nDEEPGRAM_API_KEY=${SECRET}\n`);
@@ -166,6 +170,44 @@ test('every skill command line runs from a fresh copy against the fakes and exit
     }
   }
   for (const call of makeCalls()) assert.doesNotMatch(call, /reset|down|stage|prod|GOOGLE/, call);
+});
+
+/** The Bash(<prefix>:*) rules in the skill's allowed-tools, as command prefixes. */
+function allowedPrefixes(): string[] {
+  const text = readFileSync(join(pluginRoot, SKILL), 'utf8');
+  const line = /^allowed-tools: (.*)$/m.exec(text.split('\n---', 1)[0] ?? '')?.[1] ?? '';
+  return [...line.matchAll(/Bash\(([^)]*):\*\)/g)].map((m) => m[1] ?? '');
+}
+const preApproved = (command: string): boolean => allowedPrefixes().some((p) => command === p || command.startsWith(`${p} `));
+
+test('allowed-tools pre-approves only the read-only commands, not up or ca', () => {
+  assert.deepEqual(allowedPrefixes(), ['doctor', 'status', 'connect', 'up --dry-run', '--help'].map((c) => `${INVOCATION} ${c}`));
+  for (const command of skillCommands()) {
+    const makefile = / (up|ca)( |$)/.test(command.slice(INVOCATION.length)) && !command.includes(' up --dry-run');
+    assert.equal(preApproved(command), !makefile, command);
+  }
+  for (const sub of ['up', 'up --json', 'up --repo /x', 'up --repo /x --dry-run', 'ca', 'ca --json', 'ca --repo /x', 'doctorx']) {
+    assert.equal(preApproved(`${INVOCATION} ${sub}`), false, sub);
+  }
+});
+
+test('the skill asks the user, naming the checkout path, before up and before ca', () => {
+  const text = readFileSync(join(pluginRoot, SKILL), 'utf8');
+  assert.match(text, /## 2\. Bring the stack up - ask the user first[\s\S]*ask the user before running it for real, naming the\s+checkout path/);
+  assert.match(text, /## 3\. Write the dev CA - ask the user first[\s\S]*ask the user before\s+running it, naming the checkout path/);
+});
+
+test('up and ca through npx refuse to default to the current directory (exit 2), even in a checkout', async () => {
+  const noRepo: NodeJS.ProcessEnv = { ...env };
+  delete noRepo.AUTOLOGGER_REPO;
+  const before = makeCalls().length;
+  for (const sub of ['up --json', 'ca --json']) {
+    const { status, stdout, stderr } = await sh(`cd "${repo}" && ${INVOCATION} ${sub}`, noRepo);
+    assert.equal(status, 2, sub);
+    assert.equal(stdout, '');
+    assert.match(stderr, /needs --repo <path> or AUTOLOGGER_REPO; it does not default to the current directory/);
+  }
+  assert.deepEqual(makeCalls().slice(before), []);
 });
 
 test('connect --json through npx prints the commands for the user', async () => {

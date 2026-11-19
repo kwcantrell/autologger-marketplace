@@ -6,7 +6,7 @@ import { dirname } from 'node:path';
 import { CliError } from './errors.ts';
 import { type Env, shellQuote } from './http.ts';
 import type { Runner } from './runner.ts';
-import { type Checkout, childEnv } from './stack.ts';
+import { type Checkout, childEnv, verifyCheckout } from './stack.ts';
 
 export const CA_COMMAND = 'DEV_HTTPS=1 make dev-ca';
 
@@ -51,11 +51,7 @@ export interface CaContext {
 
 export async function fetchCa(ctx: CaContext): Promise<CaReport> {
   const { checkout } = ctx;
-  if (checkout.missing.length > 0) {
-    throw new CliError(
-      `${checkout.path} (from ${checkout.source}) is not an autologger-2 checkout (no ${checkout.missing.join(', ')}); pass --repo <path> or set AUTOLOGGER_REPO`,
-    );
-  }
+  await verifyCheckout(checkout, ctx.runner, ctx.env);
   const result = await ctx.runner('make', ['dev-ca'], { cwd: checkout.path, env: childEnv(ctx.env, { DEV_HTTPS: '1' }), timeoutMs: 120_000 });
   if (result.error === 'ENOENT') throw new CliError('make is not on PATH');
   if (result.stderr !== '') ctx.diagnostics(result.stderr.endsWith('\n') ? result.stderr : `${result.stderr}\n`);

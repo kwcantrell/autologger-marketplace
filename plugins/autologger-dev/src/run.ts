@@ -39,12 +39,12 @@ Commands:
                  container, .env.openbao.dev, the Google client and CUSTOM_DASHBOARDS_ENABLED in
                  overrides.env (set or placeholder only, never values), NODE_EXTRA_CA_CERTS and the
                  dev server. Each check is ok, missing or fail, with a one-line fix. Exit 0 when it ran.
-  up [--repo <path>] [--dry-run]
+  up --repo <path> [--dry-run]
                  Run, in the checkout and only as needed: ${STEPS['dev-bao'].command},
                  ${STEPS['dev-bao-set'].command}, then ${STEPS['dev-up'].command}.
                  make's output goes to stderr; the first failing step stops it (exit 1).
                  --dry-run prints the steps without running them.
-  ca [--repo <path>] [--out <file>]
+  ca --repo <path> [--out <file>]
                  Run ${CA_COMMAND}, check the output is one PEM certificate, write it
                  (default ~/.autologger-dev/autologger-dev-ca.crt, mode 644) and print the
                  export NODE_EXTRA_CA_CERTS=<file> line.
@@ -56,7 +56,9 @@ Commands:
                  claude mcp add --transport http autologger-dev <server>/mcp, or autologger-mcp login.
 
 Options:
-  --repo <path>    autologger-2 checkout (default: $AUTOLOGGER_REPO, else the current directory)
+  --repo <path>    autologger-2 checkout (default: $AUTOLOGGER_REPO; for doctor only, else the
+                   current directory). up and ca need --repo or $AUTOLOGGER_REPO, and refuse a
+                   checkout whose origin remote is not github.com/kwcantrell/autologger-2.
   --server <url>   dev server (default: $AUTOLOGGER_URL, else ${DEFAULT_SERVER}); https://, or
                    http:// to localhost/127.0.0.1/[::1]
   --json           Print machine-readable JSON on stdout
@@ -80,6 +82,8 @@ const OPTIONS = {
 } as const;
 
 type OptionName = keyof typeof OPTIONS;
+/** Commands that run the checkout's Makefile: they need an explicit checkout. */
+const MAKEFILE_COMMANDS = new Set(['up', 'ca']);
 const COMMON: OptionName[] = ['json', 'help', 'version'];
 const COMMAND_OPTIONS: Record<string, OptionName[]> = {
   doctor: ['repo', 'server'],
@@ -142,12 +146,18 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
   }
   if (rest.length > 0) return usageError(rawIo, `${command} takes no arguments`);
   if (values.out === '') return usageError(rawIo, '--out needs a file path');
+  if (values.repo === '') return usageError(rawIo, '--repo needs a path');
 
   const env = rawIo.env ?? process.env;
   const cwd = rawIo.cwd ?? process.cwd();
+  const checkout = resolveCheckout(values.repo, env, cwd);
+  // up and ca run the checkout's Makefile: never one found only by being the current directory.
+  if (MAKEFILE_COMMANDS.has(command) && checkout.source === 'current directory') {
+    return usageError(rawIo, `${command} runs the checkout's Makefile, so it needs --repo <path> or AUTOLOGGER_REPO; it does not default to the current directory`);
+  }
+
   const runner = rawIo.runner ?? spawnRunner;
   const fetchFn = rawIo.fetch ?? fetch;
-  const checkout = resolveCheckout(values.repo, env, cwd);
 
   // No value from the OpenBao state directory or .env.openbao.dev may leave this process, whoever
   // printed it (make and docker included): scrub every write on the way out.

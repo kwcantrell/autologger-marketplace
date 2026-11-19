@@ -20,6 +20,7 @@ import {
   OVERRIDES_FILE,
   readOverrides,
   stateDir,
+  verifyCheckout,
 } from './stack.ts';
 
 export type StepId = 'dev-bao' | 'dev-bao-set' | 'dev-up';
@@ -69,11 +70,7 @@ export interface UpContext {
 
 export async function planUp(ctx: UpContext): Promise<UpReport> {
   const { checkout, env } = ctx;
-  if (checkout.missing.length > 0) {
-    throw new CliError(
-      `${checkout.path} (from ${checkout.source}) is not an autologger-2 checkout (no ${checkout.missing.join(', ')}); pass --repo <path> or set AUTOLOGGER_REPO`,
-    );
-  }
+  await verifyCheckout(checkout, ctx.runner, ctx.env);
   const container = containerName(env);
   const state = await openbaoContainer(ctx.runner, container, env);
   const hasCreds = isFile(join(checkout.path, CREDENTIALS_FILE));
