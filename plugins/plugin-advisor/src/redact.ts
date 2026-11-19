@@ -56,11 +56,21 @@ function redactCookies(value: string, setCookie: boolean): string {
     .join(';');
 }
 
-/** A `key=value` / `key: value` key and its separator. Matching stops here, so a value is scanned too. */
-const KEY_SEP = /(["']?)([A-Za-z_][A-Za-z0-9_.-]*)\1(\s*[=:]\s*)/g;
-/** The value after a key: quoted, or a bare run of value characters, where a `]` ends it unless it
- * closes a marker or more value follows. Sticky: it is tried only right after a key's separator. */
-const KEY_VALUE = /"([^"\n]*)"|'([^'\n]*)'|((?:\[redacted\]|\](?=[^\s"'&;,)}\]])|[^\s"'&;,)}\]])+)/y;
+/**
+ * A `key=value` / `key: value` key and its separator. Matching stops here, so a value is scanned too.
+ * An unquoted key starts only where a run of key characters starts (the lookbehind), so a long word is
+ * scanned once rather than from each of its characters; digits, `.` and `-` that lead the run are
+ * skipped (`--password=x` has the key `password`). A quoted key starts at its quote whatever comes
+ * before it (`{b'token': ...}`, `x"password"=...`). The separator stays on one line (`H` below: any
+ * space but a line break, Unicode spaces such as NBSP included): a key at the end of a line does not
+ * take the next line's first word as its value.
+ */
+const H = '[^\\S\\r\\n\\u2028\\u2029]';
+const KEY_SEP = new RegExp(`(?:(["'])|(?<![A-Za-z0-9_.-]))[0-9.-]*([A-Za-z_][A-Za-z0-9_.-]*)\\1(${H}*[=:]${H}*)`, 'g');
+/** The value after a key: quoted (with an optional string prefix such as Python's `b'...'` or
+ * `u'...'`), or a bare run of value characters, where a `]` ends it unless it closes a marker or more
+ * value follows. Sticky: it is tried only right after a key's separator. */
+const KEY_VALUE = /([bBuUrR]{0,2})(?:"([^"\n]*)"|'([^'\n]*)')|((?:\[redacted\]|\](?=[^\s"'&;,)}\]])|[^\s"'&;,)}\]])+)/y;
 
 /**
  * `key=value`, `key: value` and `"key": "value"` with a secret-looking key: the value is redacted;
@@ -79,14 +89,14 @@ function redactKeyValues(text: string): string {
     KEY_VALUE.lastIndex = at;
     const v = KEY_VALUE.exec(text);
     if (v === null) continue;
-    const [value, dq, sq, bare] = v;
+    const [value, prefix = '', dq, sq, bare] = v;
     const end = at + value.length;
     KEY_SEP.lastIndex = end;
     // A `Cookie:` header on its line is the cookie rule's (above): its value is `name=[redacted]`.
     if (q === '' && /^(set-)?cookie$/i.test(key) && /^[ \t]*:[ \t]*$/.test(sep)) continue;
     let replaced: string;
-    if (dq !== undefined) replaced = keep(dq) ? value : `"${REDACTED}"`;
-    else if (sq !== undefined) replaced = keep(sq) ? value : `'${REDACTED}'`;
+    if (dq !== undefined) replaced = keep(dq) ? value : `${prefix}"${REDACTED}"`;
+    else if (sq !== undefined) replaced = keep(sq) ? value : `${prefix}'${REDACTED}'`;
     else replaced = keep(bare ?? '') ? value : REDACTED;
     out += text.slice(done, at) + replaced;
     done = end;
@@ -109,9 +119,12 @@ const PASSWORD_COMMANDS = [
 ];
 
 /** A password command, from its word to the end of the command: a newline (unless continued with a
- * backslash), or `;`, `|` or `&` outside quotes. Longer names come first in the alternation. */
+ * backslash, which trailing spaces or tabs may follow), or `;`, `|` or `&` outside quotes. A version
+ * after the name (`mysql8`, `mysql5.7`, `mariadb10.11`) counts as the base tool. Longer names come
+ * first in the alternation. */
 const PASSWORD_COMMAND = new RegExp(
-  `\\b(?:${[...PASSWORD_COMMANDS].sort((a, b) => b.length - a.length).join('|')})(?![\\w-])(?:"[^"\\n]*"|'[^'\\n]*'|\\\\\\r?\\n|[^\\n;|&])*`,
+  `\\b(?:${[...PASSWORD_COMMANDS].sort((a, b) => b.length - a.length).join('|')})(?:\\d+(?:\\.\\d+)*)?(?![\\w-])` +
+    `(?:"[^"\\n]*"|'[^'\\n]*'|\\\\[ \\t]*\\r?\\n|[^\\n;|&])*`,
   'gi',
 );
 
@@ -136,18 +149,20 @@ type Rule = [RegExp, (match: string, ...groups: string[]) => string] | ((text: s
 const RULES: Rule[] = [
   // PEM private keys, to the END line (or the end of the text when cut off).
   [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, () => REDACTED],
-  // user:password@ in URLs.
-  [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi, (_m, scheme) => `${scheme}${REDACTED}@`],
-  // Authorization and Proxy-Authorization headers: the whole value to the end of the line, any scheme.
+  // user:password@ in URLs. The scheme starts where its run of characters starts (digits, `+`, `.`
+  // and `-` that lead the run are kept as they are), so a long word is scanned once.
   [
-    /\b((?:Proxy-)?Authorization)([ \t]*:[ \t]*)([^\n]*)/gi,
-    (m, name, sep, value) => (value.trim() === '' || value.trim() === REDACTED ? m : `${name}${sep}${REDACTED}`),
+    /(?<![a-z0-9+.-])([0-9+.-]*)([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi,
+    (_m, lead, scheme) => `${lead}${scheme}${REDACTED}@`,
   ],
-  // The `=` form (`authorization=Token abc`, `HTTP_AUTHORIZATION=...`), any casing: to the end of the
-  // line as for the header, or to the closing quote when the value, or the whole pair, is quoted.
+  // Authorization headers and the `=` form: any key that ends in `authorization` (`Authorization`,
+  // `Proxy-Authorization`, `HTTP_AUTHORIZATION`, `x_authorization`), any casing, with `:` or `=`. The
+  // value goes to the end of the line, any scheme, or to the closing quote when the value, or the
+  // whole pair, is quoted (`-H "Authorization: Token abc"`).
   [
-    /(?<![A-Za-z0-9_.-])(["']?)([A-Za-z0-9_.-]*authorization)([ \t]*=[ \t]*)(?:"([^"\n]*)"|'([^'\n]*)'|([^\n]*))/gi,
-    (m, open, name, sep, dq, sq, rest) => {
+    new RegExp(`(?:(["'])|(?<![A-Za-z0-9_.-]))([A-Za-z0-9_.-]*authorization)(${H}*[=:]${H}*)(?:"([^"\\n]*)"|'([^'\\n]*)'|([^\\n]*))`, 'gi'),
+    (m, quote, name, sep, dq, sq, rest) => {
+      const open = quote ?? '';
       const head = `${open}${name}${sep}`;
       if (dq !== undefined) return keep(dq) ? m : `${head}"${REDACTED}"`;
       if (sq !== undefined) return keep(sq) ? m : `${head}'${REDACTED}'`;
@@ -164,15 +179,19 @@ const RULES: Rule[] = [
   [/\b(alm|alr)_[A-Za-z0-9_-]{4,}/g, () => REDACTED],
   [/\b(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|sk-[A-Za-z0-9_-]{16,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})/g, () => REDACTED],
   // JWTs.
-  [/\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g, () => REDACTED],
+  // The first part stops before a later `-eyJ`, which is tried as a start of its own, so a long run
+  // of `eyJ-eyJ-...` is scanned once rather than once per `eyJ`.
+  [/\beyJ(?:[A-Za-z0-9_]|-(?!eyJ)){4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g, () => REDACTED],
   // The autologger session cookie, in any form (Cookie header, Set-Cookie, a bare pair).
   [/\b(autologger_sid)(\s*[=:]\s*)("?)([^\s;,"]+)\3/g, (m, name, sep, q, value) => (keep(value) ? m : `${name}${sep}${q}${REDACTED}${q}`)],
   // key=value / key: value / "key": "value" with a secret-looking key.
   redactKeyValues,
-  // --token value / --api-key value (the = form is covered above), after any command.
+  // --token value / --api-key value (the = form is covered above), after any command. The flag is
+  // the run of flag characters from its first `-` (letters and digits before that `-` are kept as
+  // they are); matching starts only where such a run starts, so a long word is scanned once.
   [
-    /(--?[A-Za-z0-9-]*(?:token|secret|password|passwd|api-key|apikey|cookie)[A-Za-z0-9-]*)(\s+)(["']?)([^\s"'-][^\s"']*)\3/gi,
-    (m, flag, space, q, value) => (keep(value) ? m : `${flag}${space}${q}${REDACTED}${q}`),
+    /(?<![A-Za-z0-9-])([A-Za-z0-9]*)(--?[A-Za-z0-9-]*(?:token|secret|password|passwd|api-key|apikey|cookie)[A-Za-z0-9-]*)(\s+)(["']?)([^\s"'-][^\s"']*)\4/gi,
+    (m, lead, flag, space, q, value) => (keep(value) ? m : `${lead}${flag}${space}${q}${REDACTED}${q}`),
   ],
   // -p value / -p=value / -pvalue, only in mysql and similar commands.
   redactPasswordFlags,
