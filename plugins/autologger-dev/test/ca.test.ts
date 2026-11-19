@@ -1,10 +1,11 @@
 // ca: runs DEV_HTTPS=1 make dev-ca (injected runner), accepts exactly one PEM certificate, writes it
 // mode 644 and prints the NODE_EXTRA_CA_CERTS export.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync as renameReal, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { removeCreatedDirs, singleCertificate, writeCertificate } from '../src/ca.ts';
+import { makeDirs, removeCreatedDirs, singleCertificate, writeCertificate } from '../src/ca.ts';
 import { CliError } from '../src/errors.ts';
 import { EXIT } from '../src/run.ts';
 import { type Call, cli, fakeRunner, fixture, INHERITED, NOT_FOUND, TEST_CA } from './helpers.ts';
@@ -418,4 +419,42 @@ test('ca --out into new folders: make failing, refused output or a failed mkdir 
   } finally {
     chmodSync(locked, 0o755);
   }
+});
+
+test('makeDirs creates every missing folder and returns the first it created, undefined when it existed', () => {
+  const home = fixture().home;
+  const deep = join(home, 'a', 'b', 'c');
+  assert.equal(makeDirs(deep), join(home, 'a'));
+  for (const dir of [join(home, 'a'), join(home, 'a', 'b'), deep]) assert.equal(statSync(dir).isDirectory(), true, dir);
+  assert.equal(makeDirs(deep), undefined);
+  assert.equal(makeDirs(join(deep, 'd')), join(deep, 'd'));
+});
+
+test('makeDirs rejects a regular file at the path or at a component (ENOTDIR), leaving no new folder', () => {
+  const home = fixture().home;
+  const file = join(home, 'file');
+  writeFileSync(file, '');
+  assert.throws(() => makeDirs(file), { code: 'ENOTDIR' });
+  assert.throws(() => makeDirs(join(file, 'x', 'y')), { code: 'ENOTDIR' });
+  assert.equal(statSync(file).isFile(), true);
+  // A file in the middle of a path whose top is missing: what was created on the way is removed.
+  mkdirSync(join(home, 'top'));
+  writeFileSync(join(home, 'top', 'blocker'), '');
+  assert.throws(() => makeDirs(join(home, 'top', 'blocker', 'z')), { code: 'ENOTDIR' });
+  assert.deepEqual(readdirSync(join(home, 'top')), ['blocker']);
+});
+
+// mkdir under /proc fails with ENOENT although /proc exists. Node 24's mkdirSync({ recursive: true })
+// loops forever on that; makeDirs (and ca --out there) must fail instead. Run in a child with a
+// timeout, because a synchronous hang cannot be stopped by --test-timeout.
+test('makeDirs and writeCertificate under /proc fail instead of hanging', { skip: existsSync('/proc/self') ? false : 'needs Linux /proc' }, () => {
+  const ca = new URL('../src/ca.ts', import.meta.url).href;
+  const code = `import { makeDirs, writeCertificate } from ${JSON.stringify(ca)};
+try { makeDirs('/proc/autologger-dev-cannot-write-here/x'); console.log('created'); } catch (error) { console.log(error.code); }
+try { writeCertificate('/proc/autologger-dev-cannot-write-here/x/ca.crt', 'pem'); console.log('written'); } catch (error) { console.log(error.message); }`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '--eval', code], { encoding: 'utf8', timeout: 10_000 });
+  assert.equal(r.signal, null, `makeDirs hung and was killed after 10 s (${process.version})`);
+  const [first, second] = r.stdout.trim().split('\n');
+  assert.equal(first, 'ENOENT', r.stderr);
+  assert.match(second ?? '', /^cannot write \/proc\/autologger-dev-cannot-write-here\/x\/ca\.crt: ENOENT.*; nothing was written$/, r.stderr);
 });

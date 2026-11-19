@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { importTokens, isExpired, login, logout, parseDevTokenGrant, requireSignedIn, TokenSource } from './auth.ts';
+import { CLI_NAME, devTokenHint, importTokensCommand, loginCommand, reusableClientId } from './commands.ts';
 import { CliError, messageOf, UsageError } from './errors.ts';
 import { DEFAULT_SERVER, type Fetch, isObject, resolveServer } from './http.ts';
 import { checkLinks } from './links.ts';
@@ -10,7 +10,7 @@ import { McpClient, resultText } from './mcp.ts';
 import { discover, WRITE_SCOPE } from './oauth.ts';
 import { CredentialStore, type Env, redact } from './store.ts';
 
-export const CLI_NAME = 'autologger-mcp';
+export { CLI_NAME, importTokensCommand, loginCommand } from './commands.ts';
 
 /** Exit codes shared by every plugin CLI in this marketplace. */
 export const EXIT = { ok: 0, failure: 1, usage: 2 } as const;
@@ -99,29 +99,6 @@ const COMMAND_OPTIONS: Record<string, OptionName[]> = {
 function version(): string {
   const pkg: unknown = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   return typeof pkg === 'object' && pkg !== null && 'version' in pkg ? String(pkg.version) : 'unknown';
-}
-
-/** The plugin's own folder (where package.json is), for the login command shown to users. */
-function packageRoot(): string {
-  return fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
-}
-
-function shellQuote(text: string): string {
-  return /^[A-Za-z0-9_./:=@%+-]+$/.test(text) ? text : `'${text.replaceAll("'", `'\\''`)}'`;
-}
-
-function terminalCommand(args: string): string {
-  return `npx --yes --offline --loglevel=error --package=${shellQuote(packageRoot())} -- ${CLI_NAME} ${args}`;
-}
-
-/** The exact command a user runs in a terminal to sign in. */
-export function loginCommand(server: string, write: boolean): string {
-  return terminalCommand(`login${write ? ' --write' : ''} --server ${shellQuote(server)}`);
-}
-
-/** The exact command a user pipes `make dev-mcp-token` into, in a terminal. */
-export function importTokensCommand(server: string): string {
-  return terminalCommand(`import-tokens --server ${shellQuote(server)}`);
 }
 
 function defaultOpenUrl(env: Env): (url: string) => void {
@@ -265,10 +242,13 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
           can_refresh: tokens?.refresh_token !== undefined,
           login_command: loginCommand(server, false),
           login_write_command: loginCommand(server, true),
-          import_tokens_command: importTokensCommand(server),
         };
+        // The client make dev-mcp-token can reuse (CLIENT_ID=), judged against the registration
+        // endpoint just discovered with --check, else the one stored from the last discovery.
+        let registrationEndpoint = creds.endpoints?.registration_endpoint;
         if (values.check) {
           const d = await discover(ctx.fetch, server);
+          registrationEndpoint = d.registration_endpoint;
           report.discovery = {
             resource: d.resource,
             issuer: d.issuer,
@@ -286,13 +266,17 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
             report.access_token_expired = false;
           }
         }
+        const clientId = reusableClientId(creds, now, registrationEndpoint);
+        if (clientId !== undefined) report.client_id = clientId;
+        report.import_tokens_command = importTokensCommand(server, clientId);
+        const devHint = devTokenHint(server, clientId);
         const lines = [
           `Server: ${server}`,
           report.signed_in
             ? `Signed in, scope '${String(report.scope)}'; access token ${
                 report.access_token_expired ? 'expired' : 'expires'
               } ${String(report.access_token_expires_at ?? 'never')}${report.can_refresh ? ' (refreshable)' : ''}`
-            : `Not signed in. Run in a terminal:\n  ${loginCommand(server, false)}`,
+            : `Not signed in. Run in a terminal:\n  ${loginCommand(server, false)}${devHint === '' ? '' : `\n${devHint}`}`,
           ...(values.check ? [`Discovery: OK (resource ${(report.discovery as { resource: string }).resource})`] : []),
           ...(report.token_valid === true ? ['Token: accepted by the server'] : []),
           `Credentials: ${store.path}`,

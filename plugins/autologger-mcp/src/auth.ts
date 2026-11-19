@@ -4,6 +4,7 @@
 // (it revokes the grant). So every refresh runs under the credentials lock, re-reads the file
 // first (another process may already have rotated), and saves the new tokens atomically before
 // the new access token is used.
+import { devTokenHint, reusableClientId } from './commands.ts';
 import { CliError, NotSignedInError } from './errors.ts';
 import { clip, type Fetch, isObject } from './http.ts';
 import {
@@ -35,8 +36,19 @@ export interface AuthContext {
   store: CredentialStore;
 }
 
-export function notSignedIn(server: string, why = 'not signed in'): NotSignedInError {
-  return new NotSignedInError(`${why} to ${server}; run 'autologger-mcp login' (add --write to edit session data)`);
+/**
+ * The not-signed-in error: run `login`, or, for a local dev stack (a loopback server), the
+ * dev-token line, reusing the stored client when it can.
+ */
+export function notSignedIn(store: CredentialStore, why = 'not signed in', now = Date.now()): NotSignedInError {
+  let clientId: string | undefined;
+  try {
+    clientId = reusableClientId(store.load(), now);
+  } catch {
+    // An unreadable credentials file: the hint just registers a new client.
+  }
+  const hint = devTokenHint(store.server, clientId);
+  return new NotSignedInError(`${why} to ${store.server}; run 'autologger-mcp login' (add --write to edit session data)${hint === '' ? '' : `\n${hint}`}`);
 }
 
 function tokensFrom(response: TokenResponse, now: number, fallbackScope: string, previousRefresh?: string): Tokens {
@@ -156,10 +168,10 @@ export async function login(ctx: AuthContext, opts: LoginOptions): Promise<Login
 }
 
 /** Signed-in credentials, or NotSignedInError. Reads only the local file. */
-export function requireSignedIn(store: CredentialStore): Required<Pick<Credentials, 'endpoints' | 'client' | 'tokens'>> & Credentials {
+export function requireSignedIn(store: CredentialStore, now = Date.now()): Required<Pick<Credentials, 'endpoints' | 'client' | 'tokens'>> & Credentials {
   const creds = store.load();
   if (creds.tokens === undefined || creds.endpoints === undefined || creds.client === undefined) {
-    throw notSignedIn(store.server);
+    throw notSignedIn(store, undefined, now);
   }
   return creds as Required<Pick<Credentials, 'endpoints' | 'client' | 'tokens'>> & Credentials;
 }
@@ -176,7 +188,7 @@ export class TokenSource {
 
   constructor(ctx: AuthContext) {
     this.ctx = ctx;
-    const creds = requireSignedIn(ctx.store);
+    const creds = requireSignedIn(ctx.store, ctx.now());
     this.endpoints = creds.endpoints;
     this.current = creds.tokens.access_token;
     this.scope = creds.tokens.scope;
@@ -200,7 +212,7 @@ export class TokenSource {
       const creds = store.load();
       const tokens = creds.tokens;
       if (tokens === undefined || creds.client === undefined || creds.endpoints === undefined) {
-        throw notSignedIn(store.server);
+        throw notSignedIn(store, undefined, this.ctx.now());
       }
       // A fresh token other than the rejected one: another process refreshed while we waited for
       // the lock (or before we started). Use it rather than spending the refresh token again.
@@ -210,7 +222,7 @@ export class TokenSource {
       }
       if (tokens.refresh_token === undefined) {
         store.clearTokens();
-        throw notSignedIn(store.server, 'the access token expired and there is no refresh token; signed out');
+        throw notSignedIn(store, 'the access token expired and there is no refresh token; signed out', this.ctx.now());
       }
       let response: TokenResponse;
       try {
@@ -218,7 +230,7 @@ export class TokenSource {
       } catch (error) {
         if (error instanceof InvalidGrantError) {
           store.clearTokens();
-          throw notSignedIn(store.server, 'the sign-in has expired or was revoked (invalid_grant); signed out');
+          throw notSignedIn(store, 'the sign-in has expired or was revoked (invalid_grant); signed out', this.ctx.now());
         }
         throw error;
       }

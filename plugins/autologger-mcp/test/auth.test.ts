@@ -285,3 +285,56 @@ test('no command prints a token: --help, --json, status, errors (tokens in serve
     }
   }
 });
+
+// Sign-in hints: on a loopback server (a local dev stack) the not-signed-in error and status's text
+// name the dev-token line as a second way in, with the full import_tokens_command; elsewhere only login.
+const NPX_IMPORT = String.raw`npx --yes --offline --loglevel=error --package=\S+ -- autologger-mcp import-tokens --server`;
+
+test('not signed in to a loopback server: the error and status text name login and the full dev-token line', async () => {
+  const { server, configDir } = await signedIn();
+  const clientId = storedCredentials(configDir, server.base).client?.client_id ?? '';
+  assert.notEqual(clientId, '');
+  assert.equal((await cli({ configDir, server: server.base }, 'logout')).code, 0);
+  const status = JSON.parse((await cli({ configDir, server: server.base }, 'status', '--json')).stdout);
+  const command = status.import_tokens_command as string;
+  assert.equal(status.client_id, clientId, 'logout keeps the client; the line reuses it');
+  assert.match(command, new RegExp(`^make dev-mcp-token EMAIL=<address> CLIENT_ID=${clientId} \\| ${NPX_IMPORT} http://127\\.0\\.0\\.1:\\d+$`));
+
+  const tools = await cli({ configDir, server: server.base }, 'tools');
+  assert.equal(tools.code, 1);
+  assert.equal(tools.stdout, '');
+  const lines = tools.stderr.split('\n');
+  assert.match(lines[0] ?? '', /^autologger-mcp: not signed in to http:\/\/127\.0\.0\.1:\d+; run 'autologger-mcp login' \(add --write to edit session data\)$/);
+  assert.match(lines[1] ?? '', /^Or, on a local dev stack without Google sign-in, run in the autologger-2 checkout \(your email for <address>; DEV_SLOT=N in front for dev slot N\):$/);
+  assert.equal(lines[2], `  ${command}`);
+
+  const text = await cli({ configDir, server: server.base }, 'status');
+  assert.equal(text.code, 0, text.stderr);
+  assert.match(text.stdout, /Not signed in\. Run in a terminal:\n {2}npx \S+ \S+ \S+ --package=\S+ -- autologger-mcp login --server http:\/\/127\.0\.0\.1:\d+\nOr, on a local dev stack without Google sign-in, run in the autologger-2 checkout/);
+  assert.ok(text.stdout.includes(`\n  ${command}\n`), text.stdout);
+});
+
+test('not signed in to a loopback server with nothing stored: the dev-token line registers a new client', async () => {
+  const configDir = tempConfigDir();
+  const offline: typeof fetch = async () => {
+    throw new Error('network used');
+  };
+  const tools = await cli({ configDir, server: 'https://localhost:8787', fetch: offline }, 'tools');
+  assert.equal(tools.code, 1);
+  assert.match(tools.stderr, new RegExp(`\\n {2}make dev-mcp-token EMAIL=<address> \\| ${NPX_IMPORT} https://localhost:8787\\n$`));
+  const text = await cli({ configDir, server: 'https://localhost:8787', fetch: offline }, 'status');
+  assert.match(text.stdout, new RegExp(`\\n {2}make dev-mcp-token EMAIL=<address> \\| ${NPX_IMPORT} https://localhost:8787\\n`));
+});
+
+test('not signed in to a non-local server: only login is suggested', async () => {
+  const configDir = tempConfigDir();
+  const offline: typeof fetch = async () => {
+    throw new Error('network used');
+  };
+  const tools = await cli({ configDir, server: 'https://autologger.example', fetch: offline }, 'tools');
+  assert.equal(tools.code, 1);
+  assert.equal(tools.stderr, "autologger-mcp: not signed in to https://autologger.example; run 'autologger-mcp login' (add --write to edit session data)\n");
+  const text = await cli({ configDir, server: 'https://autologger.example', fetch: offline }, 'status');
+  assert.equal(text.code, 0, text.stderr);
+  assert.doesNotMatch(text.stdout, /dev-mcp-token/);
+});

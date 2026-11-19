@@ -88,7 +88,14 @@ DEV_SLOT=2 make dev-mcp-token EMAIL=me@example.com SCOPE="dashboards session-dat
   | autologger-mcp import-tokens --server https://localhost:22787
 ```
 
-(`status --json` prints the full `npx ...` form as `import_tokens_command`.) It reads the JSON from
+`status --json` prints the whole line for the server as `import_tokens_command`, with the full
+`npx ...` form of `autologger-mcp import-tokens` (the bare name is not on PATH for a plugin install).
+When a client is stored for the server, registered at its current registration endpoint and recent
+enough that the server still keeps it, `status --json` also prints it as `client_id` and the line
+carries `CLIENT_ID=<client_id>`, so repeated imports reuse one client instead of registering a new
+one each time (autologger caps registered clients). Run the line again without `CLIENT_ID=...` if
+make answers `CLIENT_ID names no registered client` (the dev stack was reset). On a loopback server
+the not-signed-in error and `status` both name this line after `login`. It reads the JSON from
 standard input only, never from an argument, so the tokens stay out of shell history and process
 lists. It checks that every field is there, `token_type` is `Bearer` and the scope is `dashboards`
 or `dashboards session-data:write`, then runs the same discovery as `login`: the JSON's `issuer`

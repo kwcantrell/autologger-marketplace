@@ -196,7 +196,7 @@ test('doctor --slot 9 checks https://localhost:29787, names the slot in its fixe
   assert.equal(report.slot, 9);
   const check = (name: string) => report.checks.find((c) => c.name === name);
   assert.match(check('google_client')?.fix ?? '', /redirect https:\/\/localhost:29787\/auth\/google\/callback.*autologger-dev up --slot 9/);
-  assert.match(check('google_client')?.fix ?? '', /; MCP can still be connected without a Google client: the user runs `DEV_SLOT=9 make dev-mcp-token EMAIL=<address> \| autologger-mcp import-tokens --server https:\/\/localhost:29787` with their email in the checkout/);
+  assert.match(check('google_client')?.fix ?? '', /; MCP can still be connected without a Google client: get import_tokens_command from autologger-mcp's `status --server https:\/\/localhost:29787 --json` .* with the user's email for <address> and `DEV_SLOT=9 ` in front of make \(/);
   assert.match(check('custom_dashboards')?.fix ?? '', /^autologger-dev up --slot 9 /);
   assert.match(check('node_extra_ca_certs')?.fix ?? '', /^run autologger-dev ca --slot 9 /);
   assert.match(check('openbao')?.detail ?? '', /container autologger-local-openbao is running/);
@@ -223,8 +223,11 @@ test('connect --slot 3 prints the slot\'s /mcp URL, an MCP server name for the s
   assert.equal(report.mcp_url, 'https://localhost:23787/mcp');
   assert.equal(report.claude_mcp_add, 'claude mcp add --transport http autologger-dev-3 https://localhost:23787/mcp');
   assert.equal(report.autologger_mcp_login, 'autologger-mcp login --server https://localhost:23787');
-  assert.equal(report.dev_mcp_token, 'DEV_SLOT=3 make dev-mcp-token EMAIL=<address> | autologger-mcp import-tokens --server https://localhost:23787');
-  assert.ok(report.steps.some((s) => s.includes('`DEV_SLOT=3 make dev-mcp-token EMAIL=<address> | autologger-mcp import-tokens --server https://localhost:23787`')));
+  assert.equal(
+    report.dev_mcp_token,
+    "get import_tokens_command from autologger-mcp's `status --server https://localhost:23787 --json` (the autologger-mcp sign-in skill runs it; it is the whole make dev-mcp-token line, piped into autologger-mcp's import-tokens in its full npx form) and run that line in the autologger-2 checkout with the user's email for <address> and `DEV_SLOT=3 ` in front of make",
+  );
+  assert.ok(report.steps.some((s) => s.includes(`dev token: ${String(report.dev_mcp_token)} (run it yourself;`)));
   const text = await cli({ env: f.env }, 'connect', '--slot', '3');
   assert.match(text.stdout, /^To connect Claude to https:\/\/localhost:23787\/mcp /);
 });

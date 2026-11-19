@@ -107,11 +107,14 @@ It prints commands and never runs them. Give the user, from its fields:
 - `claude_mcp_add`: they run it to register the MCP server, then sign in from `/mcp`.
 - or `autologger_mcp_login`, with the autologger-mcp plugin's sign-in skill: they run it in a
   terminal because it opens a browser.
-- or, with no Google client needed, `dev_mcp_token`: autologger's dev-only `make dev-mcp-token
-  EMAIL=<address>` (with `DEV_SLOT=N` in front for slot N) piped into `autologger-mcp import-tokens
-  --server <server>`. The user runs it themselves in their autologger-2 checkout, with their own
-  email in place of `<address>`: it creates that account and an MCP grant on their dev stack, and
-  the tokens go straight into autologger-mcp. Never run it, and never ask for, print or store its
+- or, with no Google client needed, `dev_mcp_token`: get `import_tokens_command` from
+  autologger-mcp's `status --server <server> --json` (the autologger-mcp sign-in skill runs it) and
+  run that line in the autologger-2 checkout with your email for `<address>` (and `DEV_SLOT=N ` in
+  front of make for slot N). That line is autologger's dev-only `make dev-mcp-token` piped into
+  autologger-mcp's `import-tokens` in its full npx form (a bare `autologger-mcp` is not on PATH for
+  a plugin install), and it reuses a client autologger-mcp has stored with `CLIENT_ID=`. Hand it to
+  the user to run themselves: it creates that account and an MCP grant on their dev stack, and the
+  tokens go straight into autologger-mcp. Never run it, and never ask for, print or store its
   output.
 - The Google OAuth client (when doctor's `google_client` is not ok, and only if the user wants
   Google sign-in): the user creates their own client with the authorized redirect `doctor` or `up`

@@ -1,7 +1,7 @@
 // import-tokens: storing the JSON line autologger's dev-only `make dev-mcp-token` prints (played by
 // the fake server's mintDevTokens), and the imported sign-in behaving like a browser login.
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { after, test } from 'node:test';
 import { FakeAutologger } from './fakeServer.ts';
 import { cli, credentialsPath, HOUR, storedCredentials, tempConfigDir, transcript } from './helpers.ts';
@@ -85,7 +85,11 @@ test('imported credentials behave like a browser login: status, tools, call, ref
   assert.equal(report.scope, 'dashboards session-data:write');
   assert.equal(report.can_write, true);
   assert.equal(report.can_refresh, true);
-  assert.match(report.import_tokens_command, /^npx --yes --offline --loglevel=error --package=.+ -- autologger-mcp import-tokens --server http:\/\/127\.0\.0\.1:\d+$/);
+  assert.equal(report.client_id, minted.client_id);
+  assert.match(
+    report.import_tokens_command,
+    new RegExp(`^make dev-mcp-token EMAIL=<address> CLIENT_ID=${String(minted.client_id)} \\| npx --yes --offline --loglevel=error --package=.+ -- autologger-mcp import-tokens --server http://127\\.0\\.0\\.1:\\d+$`),
+  );
 
   const tools = await cli({ configDir, server: server.base }, 'tools', '--json');
   assert.equal(tools.code, 0, tools.stderr);
@@ -248,4 +252,79 @@ test('tokens are never taken from an argument: any positional is a usage error (
   const option = await cli({ configDir, server: server.base, stdin: json }, 'import-tokens', '--write');
   assert.equal(option.code, 2);
   assert.match(option.stderr, /import-tokens does not take --write/);
+});
+
+// CLIENT_ID reuse: status hands out the stored client so make dev-mcp-token does not register another.
+const IMPORT_LINE = /^make dev-mcp-token EMAIL=<address> \| npx --yes --offline --loglevel=error --package=.+ -- autologger-mcp import-tokens --server http:\/\/127\.0\.0\.1:\d+$/;
+
+test('two dev-token imports in a row reuse one client through status --json client_id and CLIENT_ID=', async () => {
+  const server = await fake();
+  const configDir = tempConfigDir();
+  const before = JSON.parse((await cli({ configDir, server: server.base, now: () => NOW }, 'status', '--json')).stdout);
+  assert.equal('client_id' in before, false, 'nothing stored: no client_id');
+  assert.match(before.import_tokens_command, IMPORT_LINE);
+
+  const first = await cli({ configDir, server: server.base, stdin: server.mintDevTokens(), now: () => NOW }, 'import-tokens', '--json');
+  assert.equal(first.code, 0, first.stderr);
+  assert.equal(server.counts.registrations, 1);
+  const status = JSON.parse((await cli({ configDir, server: server.base, now: () => NOW + HOUR, fetch: noNetwork }, 'status', '--json')).stdout);
+  const clientId = JSON.parse(first.stdout).client_id as string;
+  assert.equal(status.client_id, clientId);
+  assert.ok(status.import_tokens_command.startsWith(`make dev-mcp-token EMAIL=<address> CLIENT_ID=${clientId} | npx `), status.import_tokens_command);
+
+  // The user runs that line: make reuses the client named by CLIENT_ID (no new registration).
+  const second = await cli(
+    { configDir, server: server.base, stdin: server.mintDevTokens('dashboards', status.client_id), now: () => NOW + HOUR },
+    'import-tokens',
+    '--json',
+  );
+  assert.equal(second.code, 0, second.stderr);
+  assert.equal(JSON.parse(second.stdout).client_id, clientId);
+  assert.equal(server.counts.registrations, 1, 'one client for both imports');
+  assert.equal(storedCredentials(configDir, server.base).client?.client_id, clientId);
+  const again = JSON.parse((await cli({ configDir, server: server.base, now: () => NOW + HOUR }, 'status', '--json')).stdout);
+  assert.equal(again.client_id, clientId);
+});
+
+test('status omits client_id and CLIENT_ID= when the client was registered at another registration endpoint, or is stale', async () => {
+  const { server, configDir, minted } = await imported();
+  const path = credentialsPath(configDir, server.base);
+  const status = async (...extra: string[]) => {
+    const r = await cli({ configDir, server: server.base, now: () => NOW }, 'status', '--json', ...extra);
+    assert.equal(r.code, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  const edit = (change: (c: ReturnType<typeof storedCredentials>) => void): void => {
+    const creds = storedCredentials(configDir, server.base);
+    change(creds);
+    writeFileSync(path, JSON.stringify(creds), { mode: 0o600 });
+  };
+
+  // Registered at an endpoint other than the stored (discovered) one.
+  edit((c) => {
+    if (c.client !== undefined) c.client.registration_endpoint = `${server.base}/old/register`;
+  });
+  let report = await status();
+  assert.equal('client_id' in report, false);
+  assert.match(report.import_tokens_command, IMPORT_LINE);
+
+  // Both stored from an older discovery: matches the stored endpoint, but --check discovers the
+  // server's current one, which differs.
+  edit((c) => {
+    if (c.endpoints !== undefined) c.endpoints.registration_endpoint = `${server.base}/old/register`;
+  });
+  report = await status();
+  assert.equal(report.client_id, minted.client_id);
+  report = await status('--check');
+  assert.equal('client_id' in report, false);
+  assert.match(report.import_tokens_command, IMPORT_LINE);
+
+  // Unused for longer than the server keeps clients (30 days): not offered.
+  edit((c) => {
+    if (c.endpoints !== undefined) c.endpoints.registration_endpoint = `${server.base}/as/v2/register`;
+    if (c.client !== undefined) c.client.registration_endpoint = `${server.base}/as/v2/register`;
+  });
+  assert.equal((await status()).client_id, minted.client_id);
+  const stale = JSON.parse((await cli({ configDir, server: server.base, now: () => NOW + 40 * 24 * HOUR }, 'status', '--json')).stdout);
+  assert.equal('client_id' in stale, false);
 });

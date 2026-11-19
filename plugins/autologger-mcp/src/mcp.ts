@@ -126,7 +126,7 @@ export class McpClient {
       const response = await request(this.fetchFn, this.endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
       if (response.status === 401) {
         await response.body?.cancel();
-        if (this.refreshed) throw notSignedIn(this.tokens.ctx.store.server, 'the server rejected the access token even after a refresh');
+        if (this.refreshed) throw notSignedIn(this.tokens.ctx.store, 'the server rejected the access token even after a refresh', this.tokens.ctx.now());
         this.refreshed = true;
         token = await this.tokens.afterRejection(token);
         continue;
