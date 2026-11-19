@@ -61,8 +61,10 @@ basic credentials, autologger `alm_`/`alr_` tokens, `autologger_sid` cookie valu
 `key: value`, `"key": "value"` and `--key value` where the key looks secret (token, secret,
 password, api key, cookie, credential, session, session id and similar) whatever the value's length,
 also when the pair sits inside an ordinary value (`failed: password=x`), when the key is quoted after
-other text (`{b'token': b'x'}`, a Python repr), when its quotes are escaped once or more and the
-value is quoted (`{\"password\": \"x\"}`, JSON logged inside a JSON string), and with any spaces around the separator, Unicode ones
+other text (`{b'token': b'x'}`, a Python repr), when its quotes are escaped once or more
+(`{\"password\": \"x\"}`, JSON logged inside a JSON string; also a value holding an escaped quote,
+`{\"password\": \"a\\\"b\"}`, a number, `{\"token\": 123456}`, or a bare word before a `,` or `}`,
+`{\"password\": hunter2}`), when only the value's quotes are escaped (`password: \"x\"`), and with any spaces around the separator, Unicode ones
 such as NBSP included (the separator and value stay on the key's line: `password=` at the end of a
 line leaves the next line alone), the value after
 `--password` in any command, the value after `-p` (`-p x`, `-p=x`, `-px`) only in commands where
@@ -71,8 +73,9 @@ line leaves the next line alone), the value after
 `mongodump`, `mongorestore`, `mongoexport`, `mongoimport`, ...), `sshpass`, `cqlsh`, `rabbitmqadmin`,
 `rdesktop`, `7z` and `rar`/`unrar`, also with a version after the name (`mysql8`, `mysql5.7`,
 `mariadb10.11`), up to the end of that command (a newline not continued with `\`, which trailing
-spaces or tabs may follow, or `;`, `|`, `&`), also when an authorization value earlier on its first
-line takes the rest of that line (`Authorization: x; mysql \` then `-p secret`), so `mkdir -p`, `ssh -p 2222`, `docker run -p 8080:80`, `psql -p 5433` and
+spaces or tabs may follow, or `;`, `|`, `&`), also when an authorization value on its first
+line takes the rest of that line (`Authorization: x; mysql \` then `-p secret`, `-ptoken db` or
+`-p 'a b'`; `mysql -H Authorization: x \` then `-p secret`), so `mkdir -p`, `ssh -p 2222`, `docker run -p 8080:80`, `psql -p 5433` and
 `gcc -pthread` are kept, JWTs, URL credentials, PEM private keys,
 common provider tokens (GitHub, Slack, AWS, `sk-`), and long random-looking strings (including full
 40-character git SHAs and UUIDs; short SHAs are kept) all become `[redacted]`. Redaction is one
