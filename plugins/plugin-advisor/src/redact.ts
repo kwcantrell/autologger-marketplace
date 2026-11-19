@@ -31,18 +31,52 @@ function looksRandom(text: string, needsCaseMix: boolean): boolean {
   return needsCaseMix ? digit && lower && upper : digit && (lower || upper);
 }
 
-/** A Cookie or Set-Cookie header value with every cookie's value redacted, attributes kept. */
+/** Whether `value` is an already-redacted header value, possibly followed by more text on its line. */
+function redactedValue(value: string): boolean {
+  const v = value.trim();
+  return v.startsWith(REDACTED) || v.startsWith(`"${REDACTED}"`);
+}
+
+/**
+ * A Cookie or Set-Cookie header value with every cookie's value redacted, attributes kept. Redacting
+ * replaces a cookie's whole value (or a bare cookie) with exactly `[redacted]`, so a part that starts
+ * with the marker and goes on means text was appended to an already-redacted line: a draft's evidence
+ * note, or the next line of a summary joined onto this one. The same holds for an attribute with text
+ * after it once a marker has been seen. The rest of such a line is left as it is, so a second pass
+ * changes nothing (`file` re-checks the draft with this same function).
+ */
 function redactCookies(value: string): string {
+  let seen = false;
+  let done = false;
+  const exact = (v: string): boolean => v === REDACTED || v === `"${REDACTED}"`;
   return value
     .split(';')
     .map((part) => {
+      if (done) return part;
       const eq = part.indexOf('=');
       const name = (eq === -1 ? part : part.slice(0, eq)).trim();
-      if (COOKIE_ATTRIBUTE.test(name)) return part;
-      if (eq === -1) return name === '' || keep(name) ? part : part.replace(name, REDACTED);
-      const raw = part.slice(eq + 1);
+      const raw = eq === -1 ? '' : part.slice(eq + 1);
       const v = raw.trim();
-      return v === '' || v === REDACTED || v === `"${REDACTED}"` ? part : `${part.slice(0, eq + 1)}${raw.match(/^\s*/)?.[0] ?? ''}${REDACTED}`;
+      if (name === '' && eq === -1) return part;
+      if (redactedValue(name)) {
+        seen = true;
+        done = eq !== -1 || !exact(name);
+        return part;
+      }
+      // After a marker, only the leading word: a flag attribute (`Secure`) may have text appended.
+      const word = name.match(/^[A-Za-z-]+/)?.[0] ?? '';
+      if (COOKIE_ATTRIBUTE.test(word) && (name === word || seen)) {
+        done = seen && (name !== word || /\s/.test(v));
+        return part;
+      }
+      if (eq === -1) return part.replace(name, REDACTED);
+      if (v === '') return part;
+      if (redactedValue(v)) {
+        seen = true;
+        done = !exact(v);
+        return part;
+      }
+      return `${part.slice(0, eq + 1)}${raw.match(/^\s*/)?.[0] ?? ''}${REDACTED}`;
     })
     .join(';');
 }
@@ -57,7 +91,8 @@ const RULES: Rule[] = [
   // Authorization and Proxy-Authorization headers: the whole value to the end of the line, any scheme.
   [
     /\b((?:Proxy-)?Authorization)([ \t]*:[ \t]*)([^\n]*)/gi,
-    (m, name, sep, value) => (value.trim() === '' || value.trim() === REDACTED ? m : `${name}${sep}${REDACTED}`),
+    // A value that starts with the marker is already redacted (text may follow it on the same line).
+    (m, name, sep, value) => (value.trim() === '' || redactedValue(value) ? m : `${name}${sep}${REDACTED}`),
   ],
   // Cookie and Set-Cookie headers: every cookie value, whatever its length.
   [/\b((?:Set-)?Cookie)([ \t]*:[ \t]*)([^\n]*)/gi, (_m, name, sep, value) => `${name}${sep}${redactCookies(value)}`],

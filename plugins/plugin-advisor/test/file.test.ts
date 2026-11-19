@@ -127,6 +127,29 @@ test('summaries capped next to a redacted value still file (dry run)', () => {
   assert.deepEqual(ghCalls(box), []);
 });
 
+// Review 1: renderDraft appends text after a redacted header on the same line, and file re-checks the
+// draft with redact, which used to rewrite `Authorization: [redacted]". plugin-advisor ...` and refuse.
+for (const summary of [
+  'mcp call fails with Authorization: Token abc123xyz',
+  'login fails, Cookie: session=ab1',
+  'curl failed\nAuthorization: Token abc123xyz\nstatus 401',
+]) {
+  test(`a summary with a header still files (dry run): ${JSON.stringify(summary)}`, () => {
+    box = withGh(`console.log(${JSON.stringify(ISSUE_URL)});`);
+    let sig = '';
+    for (let i = 1; i <= 3; i++) {
+      sig = json(box.call(['record', '--plugin', 'autologger-mcp', '--kind', 'workaround', '--summary', summary, '--json'])).signature;
+    }
+    assert.equal(json(box.call(['suggest', '--json'])).suggestions.length, 1);
+    const r = box.call(['file', sig, '--json']);
+    assert.equal(r.code, EXIT.ok, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.filed, false);
+    assert.ok(!/abc123xyz|session=ab1/.test(r.stdout), r.stdout);
+    assert.deepEqual(ghCalls(box), []);
+  });
+}
+
 test('file needs a draft, refuses dismissed issues, and reports gh failures', () => {
   box = withGh(`process.stderr.write('HTTP 401: Bad credentials (token ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345)\\n'); process.exit(1);`);
   let sig = '';

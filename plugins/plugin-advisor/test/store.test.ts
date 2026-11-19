@@ -26,7 +26,7 @@ test('makeDirs under a regular file fails with ENOTDIR', () => {
   assert.throws(() => makeDirs(join(file, 'x', 'y'), DIR_MODE), { code: 'ENOTDIR' });
 });
 
-test('makeDirs throws ENOTDIR when the path or a component exists as a regular file, and never chmods it', () => {
+test('makeDirs throws ENOTDIR when the path exists as a regular file, and never chmods it', () => {
   const file = join(scratch, 'plain');
   writeFileSync(file, 'x', { mode: 0o644 });
   chmodSync(file, 0o644);
