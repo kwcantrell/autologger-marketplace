@@ -29,6 +29,7 @@ attach them to any report.
 | `autologger-browser` | Keeps a browser profile per dev slot under `~/.autologger-dev/browser/slot-<N>/` (directories mode 700) holding the session cookie stored by `signin` (`autologger_sid`, `autologger_sid_N`), and a private NSS database that trusts the dev CA. It changes no system or user trust store. |
 | `plugin-advisor` | Keeps a local log of problems Claude hit, redacted on write (tokens, cookies, `KEY=value` secrets, JWTs, URL credentials, private keys). Its `file --confirm` posts that redacted text as a **public** GitHub issue via `gh`, and re-checks for secrets first. |
 | `plugin-discover` | Reads installed-plugin metadata and this marketplace's manifest, and can install a plugin from this marketplace (`claude plugin install`) in its configured mode. It handles no credentials. |
+| `autologger-clips` | Handles no credentials (it has no OAuth of its own; the session media list comes from `autologger-mcp`). Keeps a session-to-video map (`media.json`, mode 0600) under `$XDG_CONFIG_HOME/autologger-clips/` (or `~/.config/...`), downloads a session's own YouTube source with `yt-dlp` only after the user agrees, clones OpenReel at a pinned commit into `~/.autologger-clips/openreel/` and runs its `pnpm install` and `pnpm dev` on 127.0.0.1 only on `editor start`. |
 | `autologger-specs`, `plugin-builder` | Read and write files in the local checkout they are pointed at. They handle no credentials. |
 
 A plugin added to the marketplace later is covered by the same rule: it should state in its README
