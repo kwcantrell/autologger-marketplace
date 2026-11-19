@@ -10,8 +10,19 @@ export type Env = Record<string, string | undefined>;
 
 export const MARKETPLACE_NAME = 'autologger-marketplace';
 
-/** The marketplace's plugins when this file was written; each one's bin is its own name. */
-export const FALLBACK_PLUGINS = ['autologger-dev', 'autologger-mcp', 'autologger-specs', 'plugin-advisor', 'plugin-builder'] as const;
+/**
+ * The marketplace's plugins, sorted; each one's bin is its own name. test/plugins.test.ts fails when
+ * this differs from .claude-plugin/marketplace.json, so add a new plugin here too.
+ */
+export const FALLBACK_PLUGINS = [
+  'autologger-browser',
+  'autologger-dev',
+  'autologger-mcp',
+  'autologger-specs',
+  'plugin-advisor',
+  'plugin-builder',
+  'plugin-discover',
+] as const;
 
 export interface MarketplacePlugins {
   /** Plugin names, sorted. */

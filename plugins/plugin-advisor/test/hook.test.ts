@@ -2,7 +2,7 @@
 // matching and non-matching, through run() and through the exact command hooks/hooks.json runs.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { cliCalls, failureOf, quickReject } from '../src/hook.ts';
@@ -70,6 +70,16 @@ test('malformed or empty input never fails the hook', () => {
 test('a failure to write the log is swallowed', () => {
   box = sandbox({ PLUGIN_ADVISOR_CONFIG_DIR: '/proc/plugin-advisor-cannot-write-here' });
   assert.deepEqual(box.call(['hook'], { stdin: fixture('hook-npx-failure.json') }), { code: EXIT.ok, stdout: '', stderr: '' });
+});
+
+test('a regular file where the config dir should be is left alone and the failure swallowed', () => {
+  box = sandbox();
+  const file = join(box.dir, 'not-a-dir');
+  writeFileSync(file, 'keep me', { mode: 0o644 });
+  box.env.PLUGIN_ADVISOR_CONFIG_DIR = file;
+  assert.deepEqual(box.call(['hook'], { stdin: fixture('hook-npx-failure.json') }), { code: EXIT.ok, stdout: '', stderr: '' });
+  assert.equal(statSync(file).mode & 0o777, 0o644, 'not chmodded');
+  assert.equal(readFileSync(file, 'utf8'), 'keep me');
 });
 
 test('quickReject rejects anything that is not a failure mentioning npx or cli.ts, before parsing', () => {

@@ -9,7 +9,7 @@
 // error message; never the command line or the command's stdout.
 import { record } from './advisor.ts';
 import { marketplacePlugins, type Env } from './plugins.ts';
-import { cap, oneLine, redact, SUMMARY_MAX } from './redact.ts';
+import { cleanSummary } from './redact.ts';
 import { Store } from './store.ts';
 import { quickReject } from './hook-filter.ts';
 
@@ -94,7 +94,7 @@ export function failureOf(input: unknown, bins: ReadonlyMap<string, string>, plu
   const own = rest.find((line) => line.startsWith(`${call.bin}: `) || line.startsWith(`${call.plugin}: `));
   const npm = rest.find((line) => /^npm (error|ERR!) /.test(line));
   const line = own ?? npm;
-  const message = line === undefined ? undefined : cap(oneLine(redact(line)), SUMMARY_MAX);
+  const message = line === undefined ? undefined : cleanSummary(line);
   return { ...call, exitCode, ...(message === undefined || message === '' ? {} : { message }) };
 }
 

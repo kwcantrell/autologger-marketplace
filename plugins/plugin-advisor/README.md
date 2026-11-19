@@ -29,7 +29,7 @@ and from a checkout you can run `node plugins/plugin-advisor/src/cli.ts <command
 | `show <signature>` | One issue with all its occurrences (already redacted). A unique prefix of 4+ characters works. |
 | `suggest [--threshold <n>]` | For every issue seen at least `n` times (default 3) that has not been suggested yet, or whose count has grown by `n` since it was, writes a draft to `drafts/<signature>.md` and returns it. Dismissed issues are never suggested. |
 | `dismiss <signature>` | Stops all further suggestions for the issue. |
-| `file <signature> [--repo <owner/name>] [--confirm]` | Without `--confirm`, prints exactly the title, body and repo that would be filed, and files nothing. With `--confirm`, runs `gh issue create --repo <repo> --title <title> --body-file -` (body on stdin, no shell), records the issue URL, and refuses to file the same issue again. Before either, it re-runs redaction over the draft and exits 1 if anything secret-looking is left. The repo defaults to `kwcantrell/autologger-marketplace`. |
+| `file <signature> [--repo <owner/name>] [--confirm]` | Without `--confirm`, prints exactly the title, body and repo that would be filed, and files nothing. With `--confirm`, runs `gh issue create --repo <repo> --title <title> --body-file -` (body on stdin, no shell), records the issue URL, and refuses to file the same issue again. Before either, it re-checks the draft and exits 1 if anything secret-looking is left: each stored value the draft quotes (summaries, detail lines) is checked on its own, and the rest of the draft, including anything edited in by hand, without them. The repo defaults to `kwcantrell/autologger-marketplace`. |
 | `hook` | Reads a Claude Code hook input on stdin and records a failed marketplace CLI call. Used by `hooks/hooks.json`; prints nothing and always exits 0. |
 
 Exit codes: 0 success, 1 the command failed, 2 usage error. On a non-zero exit stdout is empty and the
@@ -51,12 +51,18 @@ checkout, so the log can't be committed by accident.
 | `state.json` | Per issue: when it was last suggested (and at what count), dismissed, or filed (with the issue URL). |
 | `drafts/<signature>.md` | The draft suggestion: a `# title` line, then target, problem, evidence, proposed change and the `/factory:run` line. This file is what `file` sends. |
 
-**Redaction.** Before anything is stored, the summary and detail are redacted: bearer and basic
-credentials, autologger `alm_`/`alr_` tokens, `autologger_sid` cookie values, `KEY=value`,
-`key: value`, `"key": "value"` and `--key value` where the key looks secret (token, secret,
-password, api key, cookie, credential, session id and similar), JWTs, URL credentials, PEM private
-keys, common provider tokens (GitHub, Slack, AWS, `sk-`), and long random-looking strings all become
-`[redacted]`. Then summaries are made one line and capped at 200 characters, details at 2000.
+**Redaction.** Before anything is stored, the summary and detail are redacted: everything after
+`Authorization:` or `Proxy-Authorization:` to the end of the line (any scheme), every cookie value
+after `Cookie:` or `Set-Cookie:` (attributes such as `Path` are kept), bearer and basic credentials,
+autologger `alm_`/`alr_` tokens, `autologger_sid` cookie values, `KEY=value`, `key: value`,
+`"key": "value"` and `--key value` where the key looks secret (token, secret, password, api key,
+cookie, credential, session, session id and similar) whatever the value's length, the value after
+`-p` or `--password`, JWTs, URL credentials, PEM private keys, common provider tokens (GitHub,
+Slack, AWS, `sk-`), and long random-looking strings (including full 40-character git SHAs and
+UUIDs; short SHAs are kept) all become `[redacted]`. Then summaries are made one line and capped at
+200 characters, details at 2000. A cut never lands inside a `[redacted]` marker or leaves a dangling
+`key=` behind. Only an exact `[redacted]` counts as already redacted: text after a typed marker
+(`Cookie: a=[redacted] x; b=secret`) is still redacted.
 
 **Signatures.** An issue's signature is a hash of the plugin, the kind and the summary normalised:
 lower-cased, with URLs, emails, paths, UUIDs, hex, ids and numbers masked. So "call failed for

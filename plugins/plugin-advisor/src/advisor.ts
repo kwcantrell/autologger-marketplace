@@ -216,9 +216,74 @@ function inline(text: string): string {
   return oneLine(text).replaceAll('`', "'");
 }
 
-export function draftTitle(issue: Issue, target: Target): string {
+export const TITLE_MAX = 120;
+
+/** The title's fixed start, `plugin-advisor: <who>: `; the (capped) summary follows it. */
+function titlePrefix(target: Target): string {
   const who = target.kind === 'existing' ? target.plugin : `new plugin${target.plugin === null ? '' : ` ${target.plugin}`}`;
-  return cap(`plugin-advisor: ${who}: ${inline(issue.summary)}`, 120);
+  return `plugin-advisor: ${who}: `;
+}
+
+/** The summary as the title quotes it after `prefix`: capped on its own, so it is a clean field too. */
+function titleSummary(prefix: string, summary: string): string {
+  return cap(inline(summary), Math.max(TITLE_MAX - [...prefix].length, 20));
+}
+
+export function draftTitle(issue: Issue, target: Target): string {
+  const prefix = titlePrefix(target);
+  return `${prefix}${titleSummary(prefix, issue.summary)}`;
+}
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function escapeRe(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The draft lines that quote a stored field, as `renderDraft` writes them: the fixed text before the
+ * field and after it. The field always runs between the two, so `file` can check the field and the
+ * text around it separately (see `draftFields`).
+ */
+export const FIELD_LINES: ReadonlyArray<readonly [before: RegExp, after: RegExp]> = [
+  // # <title>
+  [/^# plugin-advisor: [a-z0-9 -]+: $/, /^$/],
+  // Problem: `<Kind text>: <summary>`
+  [new RegExp(`^(?:${Object.values(KINDS).map((k) => escapeRe(capitalise(k))).join('|')}): $`), /^$/],
+  // Evidence: `- <at>: <summary> (<command, exit, source>)`
+  [/^- \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z: $/, /^(?: \([^()\n]*\))?$/],
+  // Evidence detail: `  > <line>`
+  [/^ {2}> $/, /^$/],
+  // Factory request: `/factory:run ...: "<summary>". plugin-advisor signature <sig>.`
+  [/^\/factory:run .*: "$/, /^"\. plugin-advisor signature [0-9a-f]{12}\.$/],
+];
+
+/**
+ * Every stored field of these occurrences in the form a draft quotes it: summaries (whole, and as a
+ * title cuts them) and detail lines. Each was redacted when it was stored. `file` checks each one on
+ * its own, and the draft's other text without them, rather than re-redacting the rendered lines,
+ * where appended text (` (exit 2, ...)`, `". plugin-advisor signature ...`) sits next to a redacted
+ * value and can read as part of it.
+ */
+export function draftFields(plugin: string, occurrences: readonly Occurrence[]): string[] {
+  const prefixes = [
+    titlePrefix({ kind: 'existing', plugin, text: '' }),
+    titlePrefix({ kind: 'new', plugin: plugin === 'none' ? null : plugin, text: '' }),
+  ];
+  const out = new Set<string>();
+  for (const o of occurrences) {
+    out.add(inline(o.summary));
+    for (const prefix of prefixes) out.add(titleSummary(prefix, o.summary));
+    for (const d of o.detail?.split('\n') ?? []) out.add(detailLine(d));
+  }
+  out.delete('');
+  return [...out];
+}
+
+function detailLine(line: string): string {
+  return line.replaceAll('`', "'");
 }
 
 /** The draft markdown: the first line is `# <title>`, the rest is the issue body. */
@@ -237,11 +302,11 @@ export function renderDraft(issue: Issue, occurrences: readonly Occurrence[], ta
     '',
     '## Target',
     '',
-    target.text.charAt(0).toUpperCase() + target.text.slice(1),
+    capitalise(target.text),
     '',
     '## Problem',
     '',
-    `${kindText.charAt(0).toUpperCase() + kindText.slice(1)}: ${inline(issue.summary)}`,
+    `${capitalise(kindText)}: ${inline(issue.summary)}`,
     '',
     '## Evidence',
     '',
@@ -257,7 +322,7 @@ export function renderDraft(issue: Issue, occurrences: readonly Occurrence[], ta
       .join(', ');
     lines.push(`- ${o.at}: ${inline(o.summary)}${extra === '' ? '' : ` (${extra})`}`);
     if (o.detail !== undefined && o.detail !== '') {
-      for (const d of o.detail.split('\n')) lines.push(`  > ${d.replaceAll('`', "'")}`);
+      for (const d of o.detail.split('\n')) lines.push(`  > ${detailLine(d)}`);
     }
   }
   lines.push('', '## Proposed change', '', change, '', '## Factory request', '', 'Paste this into Claude Code to build the change through the factory:', '', '```', factoryRun, '```', '');
