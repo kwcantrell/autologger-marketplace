@@ -172,6 +172,18 @@ export function isPadded(value: string | undefined): boolean {
   return value !== undefined && value.trim() !== '' && value.trim() !== value && !isQuoted(value);
 }
 
+/**
+ * A quoted value (isQuoted) that also has whitespace outside its quotes (`KEY= "abc" `) or just
+ * inside them (`KEY=" abc "`). Its state stays `quoted`; the fix names the quotes and the spaces
+ * together, so the user does not fix one and learn of the other on the next run.
+ */
+export function isQuotedAndPadded(value: string | undefined): boolean {
+  if (value === undefined || !isQuoted(value)) return false;
+  const trimmed = value.trim();
+  const inner = trimmed.slice(1, -1);
+  return trimmed !== value || inner.trim() !== inner;
+}
+
 export type GoogleKeyState = 'set' | 'placeholder' | 'quoted' | 'padded' | 'not set';
 
 export interface GoogleClient {
@@ -184,6 +196,8 @@ export interface GoogleClient {
    * placeholder applies, or an empty value: `KEY=`, `KEY=""` or `KEY=''`).
    */
   keys: Record<(typeof GOOGLE_KEYS)[number], GoogleKeyState>;
+  /** The `quoted` keys whose value also has spaces around it (isQuotedAndPadded), in GOOGLE_KEYS order. */
+  quotedAndPadded: string[];
 }
 
 export function googleClient(values: Map<string, string>): GoogleClient {
@@ -195,7 +209,8 @@ export function googleClient(values: Map<string, string>): GoogleClient {
     return isPadded(value) ? 'padded' : 'set';
   };
   const keys = { GOOGLE_CLIENT_ID: state('GOOGLE_CLIENT_ID'), GOOGLE_CLIENT_SECRET: state('GOOGLE_CLIENT_SECRET') };
-  return { ok: keys.GOOGLE_CLIENT_ID === 'set' && keys.GOOGLE_CLIENT_SECRET === 'set', keys };
+  const quotedAndPadded = GOOGLE_KEYS.filter((k) => keys[k] === 'quoted' && isQuotedAndPadded(values.get(k)));
+  return { ok: keys.GOOGLE_CLIENT_ID === 'set' && keys.GOOGLE_CLIENT_SECRET === 'set', keys, quotedAndPadded };
 }
 
 /** The Google keys in a given state, in GOOGLE_KEYS order. */
@@ -203,19 +218,29 @@ export function googleKeysIn(google: GoogleClient, state: GoogleKeyState): strin
   return GOOGLE_KEYS.filter((k) => google.keys[k] === state);
 }
 
+/** The CUSTOM_DASHBOARDS_ENABLED values autologger's server reads as on, after trimming and lower-casing. */
+export const DASHBOARDS_ON = ['1', 'true', 'yes'] as const;
+
 /**
- * CUSTOM_DASHBOARDS_ENABLED: 'enabled' (exactly 1), 'quoted' ("1" or '1', which autologger reads as
- * the quoted string, not 1), 'padded' (1 with spaces before or after it, stored verbatim) or
- * 'not enabled' (anything else, or no line).
+ * Whether autologger's server reads a CUSTOM_DASHBOARDS_ENABLED value as on, the way
+ * `customDashboardsEnabled` (server/src/env.ts) does: trimmed and lower-cased, it is 1, true or yes.
+ * Quotes are not removed, so `"1"` is off.
  */
-export type DashboardsState = 'enabled' | 'quoted' | 'padded' | 'not enabled';
+export function isDashboardsOn(value: string | undefined): boolean {
+  return value !== undefined && (DASHBOARDS_ON as readonly string[]).includes(value.trim().toLowerCase());
+}
+
+/**
+ * CUSTOM_DASHBOARDS_ENABLED: 'enabled' (what the server reads as on: 1, true or yes in any case,
+ * spaces around it allowed), 'quoted' (one of those in matching quotes, "1" or 'true', which the
+ * server reads as the quoted string, so off) or 'not enabled' (anything else, or no line).
+ */
+export type DashboardsState = 'enabled' | 'quoted' | 'not enabled';
 
 export function dashboardsState(values: Map<string, string>): DashboardsState {
   const value = values.get(DASHBOARDS_KEY);
-  if (value === '1') return 'enabled';
-  if (value === undefined || unquote(value) !== '1') return 'not enabled';
-  if (isQuoted(value)) return 'quoted';
-  return isPadded(value) ? 'padded' : 'not enabled';
+  if (isDashboardsOn(value)) return 'enabled';
+  return value !== undefined && isQuoted(value) && isDashboardsOn(unquote(value)) ? 'quoted' : 'not enabled';
 }
 
 /** Why a quoted value is wrong, for messages (never the value itself). */
@@ -223,6 +248,9 @@ export const QUOTES_WHY = 'autologger stores the value verbatim, quotes included
 
 /** Why a value with surrounding spaces is wrong, for messages (never the value itself). */
 export const SPACES_WHY = 'autologger stores the value verbatim, surrounding spaces included';
+
+/** Why a quoted value with spaces around it is wrong, for messages (never the value itself). */
+export const QUOTES_AND_SPACES_WHY = 'autologger stores the value verbatim, quotes and surrounding spaces included';
 
 export type ContainerState =
   | { state: 'running' }

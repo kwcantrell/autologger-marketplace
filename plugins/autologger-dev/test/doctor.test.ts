@@ -4,7 +4,7 @@ import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Check } from '../src/doctor.ts';
-import { dashboardsState, googleClient, isPadded, isQuoted, parseEnvText } from '../src/stack.ts';
+import { dashboardsState, googleClient, isDashboardsOn, isPadded, isQuoted, isQuotedAndPadded, parseEnvText } from '../src/stack.ts';
 import { EXIT } from '../src/run.ts';
 import { answering, cli, type CliOptions, fakeRunner, fixture, GOOD_OVERRIDES, GOOGLE_ID, GOOGLE_SECRET, NOT_FOUND, untrusted } from './helpers.ts';
 
@@ -334,7 +334,7 @@ for (const q of ['"', "'"]) {
     const c = checks.get('custom_dashboards');
     assert.equal(c?.status, 'fail');
     assert.deepEqual(c?.keys, { CUSTOM_DASHBOARDS_ENABLED: 'quoted' });
-    assert.match(c?.detail ?? '', /CUSTOM_DASHBOARDS_ENABLED is quoted .*not 1 to autologger/);
+    assert.match(c?.detail ?? '', /CUSTOM_DASHBOARDS_ENABLED is quoted .*autologger does not read it as on/);
     assert.match(c?.fix ?? '', /remove the quotes around the value of CUSTOM_DASHBOARDS_ENABLED in /);
     assert.match(c?.fix ?? '', QUOTES_FIX);
     assert.doesNotMatch(c?.fix ?? '', /runs make dev-bao-set/, 'not the generic set-it-to-1 fix');
@@ -355,7 +355,8 @@ test('isPadded, googleClient and dashboardsState: spaces before or after a real 
   assert.deepEqual(google('GOOGLE_CLIENT_ID=   \nGOOGLE_CLIENT_SECRET=\n'), { GOOGLE_CLIENT_ID: 'not set', GOOGLE_CLIENT_SECRET: 'not set' });
 
   const dashboards = (line: string) => dashboardsState(parseEnvText(`${line}\n`));
-  for (const line of ['CUSTOM_DASHBOARDS_ENABLED= 1', 'CUSTOM_DASHBOARDS_ENABLED=1 ', 'CUSTOM_DASHBOARDS_ENABLED=\t1\t']) assert.equal(dashboards(line), 'padded', JSON.stringify(line));
+  // The server trims CUSTOM_DASHBOARDS_ENABLED, so spaces around an on value leave it on.
+  for (const line of ['CUSTOM_DASHBOARDS_ENABLED= 1', 'CUSTOM_DASHBOARDS_ENABLED=1 ', 'CUSTOM_DASHBOARDS_ENABLED=\t1\t']) assert.equal(dashboards(line), 'enabled', JSON.stringify(line));
   assert.equal(dashboards('CUSTOM_DASHBOARDS_ENABLED= "1" '), 'quoted');
   for (const line of ['CUSTOM_DASHBOARDS_ENABLED= 0', 'CUSTOM_DASHBOARDS_ENABLED=  ', 'CUSTOM_DASHBOARDS_ENABLED=1 1']) assert.equal(dashboards(line), 'not enabled', JSON.stringify(line));
 });
@@ -401,21 +402,67 @@ test('doctor: one Google key quoted and the other padded gets both fixes', async
 
 const UP_REWRITES = /or just run autologger-dev up, which rewrites it as CUSTOM_DASHBOARDS_ENABLED=1 \(make dev-bao-set\), so editing it by hand is optional/;
 
-for (const [where, value] of [
-  ['leading', ' 1'],
-  ['trailing', '1 '],
-] as const) {
-  test(`doctor reports CUSTOM_DASHBOARDS_ENABLED with ${where} spaces as padded, with the remove-the-spaces fix and the up alternative`, async () => {
+// CUSTOM_DASHBOARDS_ENABLED is on exactly when autologger's server reads it as on
+// (customDashboardsEnabled, server/src/env.ts): trimmed and lower-cased, it is 1, true or yes.
+const DASHBOARDS_ON_SPELLINGS = ['1', 'true', 'TRUE', 'True', 'yes', 'YES', 'Yes', ' 1', '1 ', ' 1 ', '\t1', 'yes ', ' true', ' YES\t'];
+const DASHBOARDS_OFF_SPELLINGS = ['0', 'false', 'no', 'on', 'enabled', '2', '1 1', 'yes please', '', '   '];
+
+test('isDashboardsOn and dashboardsState mirror the server: 1, true or yes, any case, spaces around allowed', () => {
+  const dashboards = (line: string) => dashboardsState(parseEnvText(`${line}\n`));
+  for (const v of DASHBOARDS_ON_SPELLINGS) {
+    assert.equal(isDashboardsOn(v), true, JSON.stringify(v));
+    assert.equal(dashboards(`CUSTOM_DASHBOARDS_ENABLED=${v}`), 'enabled', JSON.stringify(v));
+  }
+  for (const v of DASHBOARDS_OFF_SPELLINGS) {
+    assert.equal(isDashboardsOn(v), false, JSON.stringify(v));
+    assert.equal(dashboards(`CUSTOM_DASHBOARDS_ENABLED=${v}`), 'not enabled', JSON.stringify(v));
+  }
+  assert.equal(isDashboardsOn(undefined), false);
+  assert.equal(dashboards('# no line'), 'not enabled');
+  // The server does not remove quotes: a quoted on value is off, and reported as quoted.
+  for (const v of ['"1"', "'1'", '"true"', "'true'", '"YES"', ' "yes" ', '" 1 "']) {
+    assert.equal(isDashboardsOn(v), false, v);
+    assert.equal(dashboards(`CUSTOM_DASHBOARDS_ENABLED=${v}`), 'quoted', v);
+  }
+  // A quoted off value is just not enabled (up sets it to 1 either way).
+  for (const v of ['"0"', "'false'", '""', `"1'`]) assert.equal(dashboards(`CUSTOM_DASHBOARDS_ENABLED=${v}`), 'not enabled', v);
+});
+
+for (const value of DASHBOARDS_ON_SPELLINGS) {
+  test(`doctor reports CUSTOM_DASHBOARDS_ENABLED=${JSON.stringify(value)} as enabled (ok), as the server reads it`, async () => {
     const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${GOOGLE_ID}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\nCUSTOM_DASHBOARDS_ENABLED=${value}\n` });
-    const { checks } = await doctorChecks({ env: f.env }, '--repo', f.repo);
-    const c = checks.get('custom_dashboards');
+    const c = (await doctorChecks({ env: f.env }, '--repo', f.repo)).checks.get('custom_dashboards');
+    assert.equal(c?.status, 'ok');
+    assert.equal(c?.fix, null);
+    assert.deepEqual(c?.keys, { CUSTOM_DASHBOARDS_ENABLED: 'enabled' });
+    assert.match(c?.detail ?? '', /^CUSTOM_DASHBOARDS_ENABLED is on \(in /);
+  });
+}
+
+for (const [label, line] of [
+  ['0', 'CUSTOM_DASHBOARDS_ENABLED=0\n'],
+  ['false', 'CUSTOM_DASHBOARDS_ENABLED=false\n'],
+  ['empty', 'CUSTOM_DASHBOARDS_ENABLED=\n'],
+  ['unset', ''],
+] as const) {
+  test(`doctor reports CUSTOM_DASHBOARDS_ENABLED ${label} as not enabled (missing) with the up fix`, async () => {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${GOOGLE_ID}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\n${line}` });
+    const c = (await doctorChecks({ env: f.env }, '--repo', f.repo)).checks.get('custom_dashboards');
+    assert.equal(c?.status, 'missing');
+    assert.deepEqual(c?.keys, { CUSTOM_DASHBOARDS_ENABLED: 'not enabled' });
+    assert.match(c?.detail ?? '', /^CUSTOM_DASHBOARDS_ENABLED is not 1, true or yes \(/);
+    assert.equal(c?.fix, 'autologger-dev up (runs make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1)');
+  });
+}
+
+for (const value of ["'true'", '"YES"']) {
+  test(`doctor reports CUSTOM_DASHBOARDS_ENABLED=${value} as quoted (fail) with the remove-the-quotes fix`, async () => {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${GOOGLE_ID}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\nCUSTOM_DASHBOARDS_ENABLED=${value}\n` });
+    const c = (await doctorChecks({ env: f.env }, '--repo', f.repo)).checks.get('custom_dashboards');
     assert.equal(c?.status, 'fail');
-    assert.deepEqual(c?.keys, { CUSTOM_DASHBOARDS_ENABLED: 'padded' });
-    assert.match(c?.detail ?? '', /CUSTOM_DASHBOARDS_ENABLED has spaces around its value .*not exactly 1/);
-    assert.match(c?.fix ?? '', /remove the spaces around the value of CUSTOM_DASHBOARDS_ENABLED in /);
-    assert.match(c?.fix ?? '', SPACES_FIX);
+    assert.deepEqual(c?.keys, { CUSTOM_DASHBOARDS_ENABLED: 'quoted' });
+    assert.match(c?.fix ?? '', /^remove the quotes around the value of CUSTOM_DASHBOARDS_ENABLED in /);
     assert.match(c?.fix ?? '', UP_REWRITES);
-    assert.equal(checks.get('google_client')?.status, 'ok');
   });
 }
 
@@ -425,3 +472,54 @@ test("doctor's fix for a quoted CUSTOM_DASHBOARDS_ENABLED says up rewrites it, s
   assert.match(c?.fix ?? '', QUOTES_FIX);
   assert.match(c?.fix ?? '', UP_REWRITES);
 });
+
+test('isQuotedAndPadded: a quoted value with spaces outside or just inside its quotes', () => {
+  for (const v of [' "abc"', '"abc" ', ' "abc" ', '\t\'abc\'', '" abc"', '"abc "', "' abc '"]) assert.equal(isQuotedAndPadded(v), true, JSON.stringify(v));
+  for (const v of ['"abc"', "'abc'", ' abc ', 'abc', '"a b"', '" "', '""', ` "abc'`, undefined]) assert.equal(isQuotedAndPadded(v), false, JSON.stringify(v));
+  const google = googleClient(parseEnvText(`GOOGLE_CLIENT_ID= "${GOOGLE_ID}" \nGOOGLE_CLIENT_SECRET="${GOOGLE_SECRET}"\n`));
+  assert.deepEqual(google.keys, { GOOGLE_CLIENT_ID: 'quoted', GOOGLE_CLIENT_SECRET: 'quoted' });
+  assert.deepEqual(google.quotedAndPadded, ['GOOGLE_CLIENT_ID']);
+});
+
+const QUOTES_AND_SPACES_FIX =
+  /remove both the quotes and the spaces around the value of .*autologger stores the value verbatim, quotes and surrounding spaces included.*then run make dev-bao and autologger-dev up again/;
+
+for (const key of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'] as const) {
+  for (const wrap of [(v: string) => ` "${v}" `, (v: string) => `'${v}'  `, (v: string) => `" ${v}"`]) {
+    const shape = wrap('v');
+    test(`doctor reports ${key}=${shape.replace('v', '...')} as quoted (fail) with one fix for the quotes and the spaces, never the value`, async () => {
+      const value = key === 'GOOGLE_CLIENT_ID' ? GOOGLE_ID : GOOGLE_SECRET;
+      const other = key === 'GOOGLE_CLIENT_ID' ? `GOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}` : `GOOGLE_CLIENT_ID=${GOOGLE_ID}`;
+      const f = fixture({ overrides: `${other}\n${key}=${wrap(value)}\nCUSTOM_DASHBOARDS_ENABLED=1\n` });
+      const c = (await doctorChecks({ env: f.env }, '--repo', f.repo)).checks.get('google_client');
+      assert.equal(c?.status, 'fail');
+      assert.equal(c?.keys?.[key], 'quoted');
+      assert.match(c?.detail ?? '', /quotes and surrounding spaces included, so Google sign-in will not work/);
+      assert.match(c?.fix ?? '', new RegExp(`^remove both the quotes and the spaces around the value of ${key} in `));
+      assert.match(c?.fix ?? '', QUOTES_AND_SPACES_FIX);
+      assert.doesNotMatch(c?.fix ?? '', /remove the quotes around|remove the spaces around|adds their own Google OAuth client/, 'one fix, not two');
+      const text = await cli({ env: f.env }, 'doctor', '--repo', f.repo);
+      const json = await cli({ env: f.env }, 'doctor', '--repo', f.repo, '--json');
+      for (const out of [text, json]) for (const v of [GOOGLE_ID, GOOGLE_SECRET]) assert.ok(!(out.stdout + out.stderr).includes(v), 'no value printed');
+    });
+  }
+}
+
+test('doctor: one Google key quoted and padded, the other only quoted, gets each its own fix', async () => {
+  const f = fixture({ overrides: `GOOGLE_CLIENT_ID= "${GOOGLE_ID}"\nGOOGLE_CLIENT_SECRET='${GOOGLE_SECRET}'\nCUSTOM_DASHBOARDS_ENABLED=1\n` });
+  const c = (await doctorChecks({ env: f.env }, '--repo', f.repo)).checks.get('google_client');
+  assert.deepEqual(c?.keys, { GOOGLE_CLIENT_ID: 'quoted', GOOGLE_CLIENT_SECRET: 'quoted' });
+  assert.match(c?.fix ?? '', /remove the quotes around the value of GOOGLE_CLIENT_SECRET in /);
+  assert.match(c?.fix ?? '', /remove both the quotes and the spaces around the value of GOOGLE_CLIENT_ID in /);
+});
+
+for (const value of [' "1" ', '"true" ', "' yes'"]) {
+  test(`doctor reports CUSTOM_DASHBOARDS_ENABLED=${value} as quoted with one fix for the quotes and the spaces`, async () => {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${GOOGLE_ID}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\nCUSTOM_DASHBOARDS_ENABLED=${value}\n` });
+    const c = (await doctorChecks({ env: f.env }, '--repo', f.repo)).checks.get('custom_dashboards');
+    assert.equal(c?.status, 'fail');
+    assert.deepEqual(c?.keys, { CUSTOM_DASHBOARDS_ENABLED: 'quoted' });
+    assert.match(c?.fix ?? '', /^remove both the quotes and the spaces around the value of CUSTOM_DASHBOARDS_ENABLED in /);
+    assert.match(c?.fix ?? '', UP_REWRITES);
+  });
+}

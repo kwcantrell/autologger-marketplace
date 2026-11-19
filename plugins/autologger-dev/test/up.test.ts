@@ -48,7 +48,7 @@ test('up with the OpenBao running, credentials present and dashboards on runs on
   assert.equal(code, EXIT.ok, stderr);
   assert.deepEqual(makeCalls(runner), ['DEV_HTTPS=1 make dev-up']);
   assert.match(stdout, /\[skip\] make dev-bao /);
-  assert.match(stdout, /\[skip\] make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1 {2}\(CUSTOM_DASHBOARDS_ENABLED=1 is already in /);
+  assert.match(stdout, /\[skip\] make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1 {2}\(CUSTOM_DASHBOARDS_ENABLED is already on in /);
   assert.match(stdout, /\[ok\] DEV_HTTPS=1 make dev-up/);
   assert.doesNotMatch(stdout + stderr, /warning/i);
 });
@@ -146,7 +146,7 @@ test('up refuses a directory that is not an autologger-2 checkout (exit 1, nothi
 interface DryRun {
   google_client: string;
   warnings: string[];
-  steps: { id: string; run: boolean; reason: string }[];
+  steps: { id: string; run: boolean; reason: string; status: string }[];
 }
 
 test('up and up --dry-run warn about a quoted Google value, naming the quotes, like a placeholder', async () => {
@@ -231,15 +231,59 @@ test('up and up --dry-run warn about a Google value with spaces around it, namin
   }
 });
 
-test('up plans make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1 for a value with spaces around it, and says why', async () => {
-  for (const value of [' 1', '1 ', '\t1']) {
+test('up does not plan make dev-bao-set for a value the server reads as on (1, true or yes, any case, spaces around it)', async () => {
+  for (const value of ['1', 'true', 'TRUE', 'yes', 'YES', ' 1', '1 ', '\t1', 'yes ', ' True ']) {
     const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${GOOGLE_ID}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\nCUSTOM_DASHBOARDS_ENABLED=${value}\n` });
     const dry = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo, '--dry-run', '--json');
     assert.equal(dry.code, EXIT.ok, dry.stderr);
     const report = JSON.parse(dry.stdout) as DryRun;
     const step = report.steps.find((s) => s.id === 'dev-bao-set');
-    assert.equal(step?.run, true, JSON.stringify(value));
-    assert.match(step?.reason ?? '', /CUSTOM_DASHBOARDS_ENABLED has spaces around its value in .*surrounding spaces included.*rewrites it without them/);
+    assert.equal(step?.run, false, JSON.stringify(value));
+    assert.equal(step?.status, 'skipped');
+    assert.match(step?.reason ?? '', /^CUSTOM_DASHBOARDS_ENABLED is already on in /);
     assert.deepEqual(report.warnings, []);
+    const runner = fakeRunner();
+    const run = await cli({ env: f.env, runner }, 'up', '--repo', f.repo);
+    assert.equal(run.code, EXIT.ok, run.stderr);
+    assert.ok(!makeCalls(runner).some((c) => c.startsWith('make dev-bao-set')), JSON.stringify(value));
+  }
+});
+
+test('up plans make dev-bao-set for a quoted on value, and for 0, false or empty', async () => {
+  for (const [value, reason] of [
+    ['"true"', /is quoted in .*rewrites it unquoted/],
+    [" 'yes' ", /is quoted in .*rewrites it unquoted/],
+    ['0', /is not 1, true or yes in /],
+    ['false', /is not 1, true or yes in /],
+    ['', /is not 1, true or yes in /],
+  ] as const) {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${GOOGLE_ID}\nGOOGLE_CLIENT_SECRET=${GOOGLE_SECRET}\nCUSTOM_DASHBOARDS_ENABLED=${value}\n` });
+    const report = JSON.parse((await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo, '--dry-run', '--json')).stdout) as DryRun;
+    const step = report.steps.find((s) => s.id === 'dev-bao-set');
+    assert.equal(step?.run, true, JSON.stringify(value));
+    assert.match(step?.reason ?? '', reason);
+  }
+});
+
+test('up warns about a Google value that is quoted and padded with one warning naming both, never the value', async () => {
+  for (const [id, secret, key] of [
+    [` "${GOOGLE_ID}" `, GOOGLE_SECRET, 'GOOGLE_CLIENT_ID'],
+    [GOOGLE_ID, `'${GOOGLE_SECRET}' `, 'GOOGLE_CLIENT_SECRET'],
+  ] as const) {
+    const f = fixture({ overrides: `GOOGLE_CLIENT_ID=${id}\nGOOGLE_CLIENT_SECRET=${secret}\nCUSTOM_DASHBOARDS_ENABLED=1\n` });
+    const dry = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo, '--dry-run', '--json');
+    assert.equal(dry.code, EXIT.ok, dry.stderr);
+    const report = JSON.parse(dry.stdout) as DryRun;
+    assert.equal(report.google_client, 'placeholder');
+    assert.equal(report.warnings.length, 1, 'one warning, not one for the quotes and one for the spaces');
+    assert.match(
+      report.warnings[0] ?? '',
+      new RegExp(`^${key} in .* is wrapped in quotes with spaces around them, and autologger stores the value verbatim, quotes and surrounding spaces included, so Google will reject the client.*Remove both the quotes and the spaces, then run make dev-bao and up again\\.$`),
+    );
+    const run = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo);
+    assert.equal(run.code, EXIT.ok, run.stderr);
+    for (const out of [dry, run]) {
+      for (const v of [GOOGLE_ID, GOOGLE_SECRET]) assert.ok(!(out.stdout + out.stderr).includes(v), 'no value printed');
+    }
   }
 });
