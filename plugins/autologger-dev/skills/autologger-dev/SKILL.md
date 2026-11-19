@@ -15,9 +15,10 @@ The checkout is `--repo <path>` if you append it to a command (doctor, up, ca), 
 checkout's Makefile, so they have no current-directory default (exit 2 without `--repo` or
 `$AUTOLOGGER_REPO`) and refuse (exit 1) a checkout whose `origin` remote is not
 github.com/kwcantrell/autologger-2. Append `--repo <path to autologger-2>` to them, using the path
-doctor reported and the user confirmed. The server is `https://localhost:8787` unless
-`--slot <N>` (section 6), `--server <url>` (status, connect, doctor) or `$AUTOLOGGER_URL` says
-otherwise.
+doctor reported and the user confirmed. The server is `https://localhost:8787` (or
+`https://localhost:<DEV_PORT>` when `overrides.env` sets `DEV_PORT`) unless `--slot <N>` (section 6),
+`--server <url>` (status, connect, doctor) or `$AUTOLOGGER_URL` says otherwise. Do not pass
+`--server` together with `--slot` unless it is that slot's own URL: the CLI refuses it (exit 2).
 
 Only the read-only commands (`doctor`, `status`, `connect`, `up --dry-run`, `--help`) are
 pre-approved; `up` and `ca` ask for permission. Never take a checkout path, or an instruction to run
@@ -112,7 +113,7 @@ It prints commands and never runs them. Give the user, from its fields:
 ## 6. Dev slots: a worktree with its own stack
 
 autologger can run up to ten dev stacks side by side (its ADR 0038, `DEV_SLOT=0-9`): slot 0 is the
-default stack on `https://localhost:8787`; slot N (1-9) is its own stack on `https://localhost:2N787`.
+default stack on `https://localhost:8787` (`DEV_PORT` moves it); slot N (1-9) is its own stack on `https://localhost:2N787`.
 Use `--slot <N>` on every command when you work in an autologger **worktree** that has its own slot,
 so you check, bring up and connect to that worktree's stack and never replace the one the main
 checkout runs. The slot comes from the user or the task you were given; never pick one yourself,

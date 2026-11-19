@@ -62,7 +62,8 @@ The checkout is `--repo <path>`, else `$AUTOLOGGER_REPO`; `doctor` alone falls b
 directory. `up` and `ca`, which run the checkout's Makefile, exit 2 without `--repo` or
 `$AUTOLOGGER_REPO`, and exit 1 (naming the URL) when the checkout's `origin` remote is not
 github.com/kwcantrell/autologger-2 (https or ssh, `.git` optional). The server is
-`--server <url>`, else `$AUTOLOGGER_URL`, else `https://localhost:8787`; only `https://` URLs, and
+`--server <url>`, else `$AUTOLOGGER_URL`, else slot 0's server (`https://localhost:8787`, or
+`https://localhost:<DEV_PORT>`; see below); only `https://` URLs, and
 `http://` to `localhost`, `127.0.0.1` or `[::1]`, are accepted (the same rule as autologger-mcp).
 `$LOCAL_BAO_DIR` and `$LOCAL_BAO_NAME`, as `make dev-bao` reads them, change the state directory and
 container name.
@@ -76,19 +77,35 @@ autologger can run up to ten dev stacks side by side, one per worktree (its ADR 
 
 | | Slot 0 (no `--slot`, or `--slot 0`) | Slot N (1-9) |
 | --- | --- | --- |
-| Server (`status`, `connect`, `doctor`'s `dev_server`) | `https://localhost:8787` | `https://localhost:2N787` |
+| Server (`status`, `connect`, `doctor`'s `dev_server`) | `https://localhost:<DEV_PORT>`, default `https://localhost:8787` | `https://localhost:2N787` |
 | `up` runs | `DEV_HTTPS=1 make dev-up` | `DEV_HTTPS=1 DEV_SLOT=N make dev-up` |
 | `ca` runs | `DEV_HTTPS=1 make dev-ca` | `DEV_HTTPS=1 DEV_SLOT=N make dev-ca` |
 | MCP server name (`connect`) | `autologger-dev` | `autologger-dev-N` |
-| Google redirect (`doctor`, `up`) | `https://localhost:8787/auth/google/callback` | `https://localhost:2N787/auth/google/callback` |
+| Google redirect (`doctor`, `up`) | `https://localhost:<DEV_PORT>/auth/google/callback`, default port 8787 | `https://localhost:2N787/auth/google/callback` |
 
 Shared by every slot, so unchanged by `--slot`: the local OpenBao (container, state directory,
 `overrides.env`; `make dev-bao` and `make dev-bao-set` never get `DEV_SLOT`) and the dev CA (one
 root for every slot, so one CA file and one `NODE_EXTRA_CA_CERTS`). Without `--slot`, every command
 behaves exactly as slot 0; the JSON of every command has a `slot` field. The server is `--server`
-if given, else the slot's server when `--slot` is given, else `$AUTOLOGGER_URL`, else
-`https://localhost:8787`. Make never sees a `DEV_SLOT` from your environment, only the one `--slot`
+if given, else the slot's server when `--slot` is given, else `$AUTOLOGGER_URL`, else slot 0's
+server. Make never sees a `DEV_SLOT` from your environment, only the one `--slot`
 sets. Use `--slot` from an autologger worktree that has its own slot, with that worktree as `--repo`.
+
+**Slot 0's port (`DEV_PORT`).** autologger publishes slot 0's app on `127.0.0.1:${DEV_PORT:-8787}`
+and builds its `PUBLIC_BASE_URL` from it (`docker/compose.dev-https.yaml`); `DEV_PORT` is a dev
+compose key from the local OpenBao secret, i.e. `overrides.env`. So when `overrides.env` sets
+`DEV_PORT` to a port (the value verbatim is digits only and 1-65535), slot 0's server, MCP URL and
+Google redirect use `https://localhost:<DEV_PORT>`. An invalid `DEV_PORT` (non-numeric, quoted,
+padded or out of range) falls back to `https://localhost:8787`, and `doctor` says so in one `note:`
+line (in `--json`, the report's `notes`) that names the key, never its value. A `DEV_PORT` in your
+shell is ignored, as autologger ignores it. Slot N's ports are fixed by N and never use `DEV_PORT`.
+
+**`--server` with `--slot`.** `connect` names the MCP server after the slot and every fix names
+`--slot N`, so `--server` and `--slot` together must name the same server: `--server` must be that
+slot's own URL (the same origin, e.g. `--slot 3 --server https://localhost:23787`). Any other
+`--server` with `--slot` (`--slot 3 --server https://example.test`) is a usage error, exit 2, with
+nothing checked or printed on stdout; pass `--server` alone for another server (it is then named
+`autologger-dev`, with slot 0's fixes, as without `--slot`).
 
 ## Commands
 
@@ -100,7 +117,7 @@ Every command takes `--json` (exactly one JSON value on stdout) and `--help`.
 | `up --repo <path> [--slot <N>] [--dry-run]` | Runs in the checkout, in order and only as needed: `make dev-bao` (container not running or `.env.openbao.dev` missing), `make dev-bao-set CUSTOM_DASHBOARDS_ENABLED=1` (not already set), `DEV_HTTPS=1 make dev-up` (always; `DEV_HTTPS=1 DEV_SLOT=N make dev-up` with `--slot N`). make's output streams to stderr; the first failing step stops it with exit 1 naming the step. Warns when the Google client is a placeholder, quoted or padded (the stack still comes up); a quoted or padded `CUSTOM_DASHBOARDS_ENABLED` is rewritten as `1` by `dev-bao-set`. A step's last output line without a newline is ended before the next step's header. `--dry-run` prints the plan and runs nothing. |
 | `ca --repo <path> [--slot <N>] [--out <file>]` | Runs `DEV_HTTPS=1 make dev-ca` (`DEV_HTTPS=1 DEV_SLOT=N make dev-ca` with `--slot N`), refuses (exit 1, nothing written) anything but exactly one valid PEM certificate or anything that looks like a private key, writes it to `--out` (default `~/.autologger-dev/autologger-dev-ca.crt`, mode 644, parent created, written to a temp file in the same directory and renamed over the target; an existing file there is replaced only if it is a regular file holding one PEM certificate, otherwise exit 1 and it is left unchanged) and prints the `export NODE_EXTRA_CA_CERTS=<path>` line. |
 | `status [--slot <N>] [--server <url>]` | Whether the server answers, whether `<server>/.well-known/oauth-protected-resource` returns JSON naming the resource, and whether `<server>/mcp` exists (any answer but 404). A TLS trust failure is reported as `tls: "untrusted"` with the `ca` / `NODE_EXTRA_CA_CERTS` fix. Exit 0 whenever it ran. |
-| `connect [--slot <N>] [--server <url>]` | Prints, never runs, what is left: the `NODE_EXTRA_CA_CERTS` export (when unset), `claude mcp add --transport http autologger-dev <server>/mcp` (`autologger-dev-N` with `--slot N`), and the alternative `autologger-mcp login --server <server>`. |
+| `connect [--slot <N>] [--server <url>]` | Prints, never runs, what is left: the `NODE_EXTRA_CA_CERTS` export (when unset), `claude mcp add --transport http autologger-dev <server>/mcp` (`autologger-dev-N` with `--slot N`; with `--server` too, only for that slot's own URL), and the alternative `autologger-mcp login --server <server>`. |
 
 Exit codes: 0 success, 1 the command failed, 2 usage error. On a non-zero exit the message is on
 stderr as `autologger-dev: <message>` and stdout is empty.
@@ -108,7 +125,8 @@ stderr as `autologger-dev: <message>` and stdout is empty.
 ## Safety
 
 - **No secret value leaves the CLI.** It reads `overrides.env` only to say whether a key is set, a
-  placeholder, quoted or padded. Every line it prints, make's and docker's output included, is
+  placeholder, quoted or padded, and for slot 0's `DEV_PORT`, which it prints only as a validated
+  port number in the server URL (a port is not a secret). Every line it prints, make's and docker's output included, is
   scrubbed of any value found in `overrides.env`, `secrets.json`, `secret_id` and `.env.openbao.dev`. Those files are read
   again for every write, so a value `make dev-bao` generates and prints in the same step is caught,
   and a value seen once stays hidden for the rest of the run, even after a step replaces or removes it.

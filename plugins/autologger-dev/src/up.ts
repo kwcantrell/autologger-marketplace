@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { CliError } from './errors.ts';
 import type { Env } from './http.ts';
 import type { Runner } from './runner.ts';
-import { cliCommand, googleRedirect, slotEnv, slotPrefix } from './slot.ts';
+import { cliCommand, type DevPort, googleRedirect, slotEnv, slotPrefix } from './slot.ts';
 import {
   type Checkout,
   childEnv,
@@ -86,6 +86,8 @@ export interface UpContext {
   checkout: Checkout;
   /** The dev slot (0, the default stack, when left out). */
   slot?: number;
+  /** Slot 0's DEV_PORT from overrides.env, for the Google redirect in warnings (8787 when left out). */
+  devPort?: DevPort;
   /** Receives the make output (and the step headers) as it arrives. */
   progress: (text: string) => void;
   /**
@@ -156,7 +158,7 @@ export async function planUp(ctx: UpContext): Promise<UpReport> {
   const unset = google === null ? [] : [...googleKeysIn(google, 'placeholder'), ...googleKeysIn(google, 'not set')];
   if (google === null || unset.length > 0) {
     warnings.push(
-      `the Google OAuth client in ${overridesPath} is ${google === null ? 'unreadable' : 'a placeholder or not set'}: the stack will come up, but Google sign-in (and so the MCP sign-in) will not work. The user must add their own GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (authorized redirect ${googleRedirect(slot)}) to that file, then run make dev-bao and up again.`,
+      `the Google OAuth client in ${overridesPath} is ${google === null ? 'unreadable' : 'a placeholder or not set'}: the stack will come up, but Google sign-in (and so the MCP sign-in) will not work. The user must add their own GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (authorized redirect ${googleRedirect(slot, ctx.devPort)}) to that file, then run make dev-bao and up again.`,
     );
   }
   return { repo: checkout.path, slot, dry_run: true, steps, google_client: google?.ok === true ? 'set' : 'placeholder', warnings };

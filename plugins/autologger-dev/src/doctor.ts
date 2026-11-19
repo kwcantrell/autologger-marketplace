@@ -4,9 +4,9 @@
 // dev server.
 import { accessSync, constants, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { type Env, type Fetch, probe } from './http.ts';
+import { DEFAULT_SERVER, type Env, type Fetch, probe } from './http.ts';
 import type { Runner } from './runner.ts';
-import { cliCommand, googleRedirect } from './slot.ts';
+import { cliCommand, DEV_PORT_KEY, type DevPort, googleRedirect } from './slot.ts';
 import { stepFor } from './up.ts';
 import {
   type Checkout,
@@ -50,6 +50,8 @@ export interface DoctorContext {
   server: string;
   /** The dev slot (0, the default stack, when left out). */
   slot?: number;
+  /** Slot 0's DEV_PORT from overrides.env (not set when left out). */
+  devPort?: DevPort;
 }
 
 export interface DoctorReport {
@@ -58,6 +60,8 @@ export interface DoctorReport {
   /** The dev slot the fixes name (0 is the default stack). */
   slot: number;
   ok: boolean;
+  /** One-line notes beside the checks (an invalid DEV_PORT for slot 0); never a value from overrides.env. */
+  notes: string[];
   checks: Check[];
 }
 
@@ -132,7 +136,7 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
       fixes.push(`remove the spaces around the value of ${padded.join(' and ')} in ${overridesPath} (${SPACES_WHY}, so Google rejects the client), then run make dev-bao and ${up} again`);
     }
     if (unset.length > 0) {
-      fixes.push(`the user adds their own Google OAuth client (redirect ${googleRedirect(slot)}) to ${overridesPath}, then runs make dev-bao and ${up}`);
+      fixes.push(`the user adds their own Google OAuth client (redirect ${googleRedirect(slot, ctx.devPort)}) to ${overridesPath}, then runs make dev-bao and ${up}`);
     }
     checks.push({
       ...(google.ok
@@ -168,7 +172,11 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
   checks.push(caCheck(env, slot));
   checks.push(await serverCheck(ctx, slot));
 
-  return { repo: checkout.path, server: ctx.server, slot, ok: checks.every((c) => c.status === 'ok'), checks };
+  const notes: string[] = [];
+  if (slot === 0 && ctx.devPort?.state === 'invalid') {
+    notes.push(`${DEV_PORT_KEY} in ${overridesPath} is not a port number (digits only, 1-65535, no quotes or spaces), so slot 0's server falls back to ${DEFAULT_SERVER}`);
+  }
+  return { repo: checkout.path, server: ctx.server, slot, ok: checks.every((c) => c.status === 'ok'), notes, checks };
 }
 
 async function dockerCheck(runner: Runner, env: Env): Promise<Check> {
@@ -230,6 +238,7 @@ async function serverCheck(ctx: DoctorContext, slot: number): Promise<Check> {
 
 export function formatDoctor(report: DoctorReport): string {
   const lines = [`autologger dev stack: ${report.repo} -> ${report.server}${report.slot === 0 ? '' : ` (dev slot ${report.slot})`}`];
+  for (const note of report.notes) lines.push(`note: ${note}`);
   for (const c of report.checks) {
     lines.push(`[${c.status}] ${c.name}: ${c.detail}`);
     if (c.fix !== null) lines.push(`    fix: ${c.fix}`);
