@@ -111,6 +111,22 @@ test('file refuses (exit 1) when the draft holds secret-looking text, without ru
   assert.deepEqual(ghCalls(box), []);
 });
 
+// Follow-up 012 #5: capping a ~190-character summary after redaction cut 'token=[redacted]' to
+// 'token=[r…', which redact rewrites, so file refused a draft that held no secret.
+test('summaries capped next to a redacted value still file (dry run)', () => {
+  box = withGh(`console.log(${JSON.stringify(ISSUE_URL)});`);
+  let sig = '';
+  for (let i = 1; i <= 3; i++) {
+    const summary = `${'x'.repeat(190)} token=abc${i}`;
+    sig = json(box.call(['record', '--plugin', 'autologger-mcp', '--kind', 'workaround', '--summary', summary, '--json'])).signature;
+  }
+  assert.equal(json(box.call(['suggest', '--json'])).suggestions.length, 1);
+  const r = box.call(['file', sig, '--json']);
+  assert.equal(r.code, EXIT.ok, r.stderr);
+  assert.equal(JSON.parse(r.stdout).filed, false);
+  assert.deepEqual(ghCalls(box), []);
+});
+
 test('file needs a draft, refuses dismissed issues, and reports gh failures', () => {
   box = withGh(`process.stderr.write('HTTP 401: Bad credentials (token ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345)\\n'); process.exit(1);`);
   let sig = '';

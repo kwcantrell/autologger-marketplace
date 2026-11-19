@@ -51,12 +51,17 @@ checkout, so the log can't be committed by accident.
 | `state.json` | Per issue: when it was last suggested (and at what count), dismissed, or filed (with the issue URL). |
 | `drafts/<signature>.md` | The draft suggestion: a `# title` line, then target, problem, evidence, proposed change and the `/factory:run` line. This file is what `file` sends. |
 
-**Redaction.** Before anything is stored, the summary and detail are redacted: bearer and basic
-credentials, autologger `alm_`/`alr_` tokens, `autologger_sid` cookie values, `KEY=value`,
-`key: value`, `"key": "value"` and `--key value` where the key looks secret (token, secret,
-password, api key, cookie, credential, session id and similar), JWTs, URL credentials, PEM private
-keys, common provider tokens (GitHub, Slack, AWS, `sk-`), and long random-looking strings all become
-`[redacted]`. Then summaries are made one line and capped at 200 characters, details at 2000.
+**Redaction.** Before anything is stored, the summary and detail are redacted: everything after
+`Authorization:` or `Proxy-Authorization:` to the end of the line (any scheme), every cookie value
+after `Cookie:` or `Set-Cookie:` (attributes such as `Path` are kept), bearer and basic credentials,
+autologger `alm_`/`alr_` tokens, `autologger_sid` cookie values, `KEY=value`, `key: value`,
+`"key": "value"` and `--key value` where the key looks secret (token, secret, password, api key,
+cookie, credential, session, session id and similar) whatever the value's length, the value after
+`-p` or `--password`, JWTs, URL credentials, PEM private keys, common provider tokens (GitHub,
+Slack, AWS, `sk-`), and long random-looking strings (including full 40-character git SHAs and
+UUIDs; short SHAs are kept) all become `[redacted]`. Then summaries are made one line and capped at
+200 characters, details at 2000. A cut never lands inside a `[redacted]` marker or leaves a dangling
+`key=` behind, so a capped draft always passes `file`'s re-check.
 
 **Signatures.** An issue's signature is a hash of the plugin, the kind and the summary normalised:
 lower-cased, with URLs, emails, paths, UUIDs, hex, ids and numbers masked. So "call failed for

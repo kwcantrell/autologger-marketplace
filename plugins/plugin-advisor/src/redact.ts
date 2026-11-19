@@ -9,7 +9,10 @@ export const SUMMARY_MAX = 200;
 export const DETAIL_MAX = 2000;
 
 /** Key names whose values are treated as secrets in `key=value`, `key: value` and `--key value`. */
-const SECRET_KEY = /(secret|token|passw(or)?d|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|cookie|(^|[_.-])sid$|^sid$|^auth$|authorization|session[_-]?id|jwt)/i;
+const SECRET_KEY = /(secret|token|passw(or)?d|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|cookie|(^|[_.-])sid$|^sid$|^auth$|authorization|session[_-]?id|(^|[_.-])session$|jwt)/i;
+
+/** Set-Cookie attributes: their values describe the cookie and are not secret. */
+const COOKIE_ATTRIBUTE = /^(path|domain|expires|max-age|samesite|secure|httponly|partitioned|priority)$/i;
 
 export function isSecretKey(key: string): boolean {
   return SECRET_KEY.test(key);
@@ -28,6 +31,22 @@ function looksRandom(text: string, needsCaseMix: boolean): boolean {
   return needsCaseMix ? digit && lower && upper : digit && (lower || upper);
 }
 
+/** A Cookie or Set-Cookie header value with every cookie's value redacted, attributes kept. */
+function redactCookies(value: string): string {
+  return value
+    .split(';')
+    .map((part) => {
+      const eq = part.indexOf('=');
+      const name = (eq === -1 ? part : part.slice(0, eq)).trim();
+      if (COOKIE_ATTRIBUTE.test(name)) return part;
+      if (eq === -1) return name === '' || keep(name) ? part : part.replace(name, REDACTED);
+      const raw = part.slice(eq + 1);
+      const v = raw.trim();
+      return v === '' || v === REDACTED || v === `"${REDACTED}"` ? part : `${part.slice(0, eq + 1)}${raw.match(/^\s*/)?.[0] ?? ''}${REDACTED}`;
+    })
+    .join(';');
+}
+
 type Rule = [RegExp, (match: string, ...groups: string[]) => string];
 
 const RULES: Rule[] = [
@@ -35,7 +54,14 @@ const RULES: Rule[] = [
   [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, () => REDACTED],
   // user:password@ in URLs.
   [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi, (_m, scheme) => `${scheme}${REDACTED}@`],
-  // Authorization header schemes.
+  // Authorization and Proxy-Authorization headers: the whole value to the end of the line, any scheme.
+  [
+    /\b((?:Proxy-)?Authorization)([ \t]*:[ \t]*)([^\n]*)/gi,
+    (m, name, sep, value) => (value.trim() === '' || value.trim() === REDACTED ? m : `${name}${sep}${REDACTED}`),
+  ],
+  // Cookie and Set-Cookie headers: every cookie value, whatever its length.
+  [/\b((?:Set-)?Cookie)([ \t]*:[ \t]*)([^\n]*)/gi, (_m, name, sep, value) => `${name}${sep}${redactCookies(value)}`],
+  // Authorization header schemes elsewhere in text.
   [/\b(Bearer|Basic)(\s+)[A-Za-z0-9._~+/=-]{8,}/gi, (_m, scheme, space) => `${scheme}${space}${REDACTED}`],
   // autologger tokens (MCP access and refresh), and common provider token shapes.
   [/\b(alm|alr)_[A-Za-z0-9_-]{4,}/g, () => REDACTED],
@@ -59,6 +85,15 @@ const RULES: Rule[] = [
     /(--?[A-Za-z0-9-]*(?:token|secret|password|passwd|api-key|apikey|cookie)[A-Za-z0-9-]*)(\s+)(["']?)([^\s"'-][^\s"']*)\3/gi,
     (m, flag, space, q, value) => (keep(value) ? m : `${flag}${space}${q}${REDACTED}${q}`),
   ],
+  // -p value / -p=value / -pvalue (a password flag for mysql and others), whatever the value's length.
+  [
+    /(^|[\s"'`(])(-p)(\s+|=)?(?:"([^"\n]*)"|'([^'\n]*)'|([^\s"'-][^\s"']*))/g,
+    (m, lead, flag, sep = '', dq, sq, bare) => {
+      if (dq !== undefined) return keep(dq) ? m : `${lead}${flag}${sep}"${REDACTED}"`;
+      if (sq !== undefined) return keep(sq) ? m : `${lead}${flag}${sep}'${REDACTED}'`;
+      return keep(bare ?? '') ? m : `${lead}${flag}${sep}${REDACTED}`;
+    },
+  ],
   // Long random-looking strings: base64 with slashes (40+), then token characters (32+).
   [/[A-Za-z0-9+/]{40,}={0,2}/g, (m) => (looksRandom(m, true) ? REDACTED : m)],
   [/[A-Za-z0-9_+=-]{32,}/g, (m) => (looksRandom(m, false) ? REDACTED : m)],
@@ -76,10 +111,23 @@ export function containsSecret(text: string): boolean {
   return redact(text) !== text;
 }
 
-/** Cuts `text` to at most `max` characters, marking the cut with an ellipsis. */
+/**
+ * Cuts `text` to at most `max` characters, marking the cut with an ellipsis. The cut never lands
+ * inside a `[redacted]` marker (it moves to before the marker), and when `text` itself holds nothing
+ * secret-looking, trailing words are dropped until the result holds nothing either: a cut can leave
+ * `token=…` or `Authorization: …`, which `redact` would rewrite, and `file` would then refuse the draft.
+ */
 export function cap(text: string, max: number): string {
   const chars = [...text];
-  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
+  if (chars.length <= max) return text;
+  let head = chars.slice(0, max - 1).join('');
+  for (let at = text.indexOf(REDACTED); at !== -1 && at < head.length; at = text.indexOf(REDACTED, at + 1)) {
+    if (head.length < at + REDACTED.length) head = text.slice(0, at);
+  }
+  if (!containsSecret(text)) {
+    while (head !== '' && containsSecret(`${head}…`)) head = head.replace(/\s*\S*\s*$/, '');
+  }
+  return `${head}…`;
 }
 
 /** One line: control characters and runs of whitespace become single spaces. */

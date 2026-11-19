@@ -65,7 +65,8 @@ export function enclosingRepo(dir: string): string | null {
  * `mkdir -p`, with `mode` on each directory it creates. Not `mkdirSync(dir, { recursive: true })`:
  * on Node 24 (seen on 24.22.2) that never returns when mkdir keeps failing with ENOENT although the
  * parent exists, as it does under /proc, so the hook would spin until it is killed. Walking up by
- * hand throws that ENOENT instead.
+ * hand throws that ENOENT instead. An existing path that is not a directory (a regular file where
+ * the config dir should be) throws ENOTDIR, so the caller never chmods or writes through it.
  */
 export function makeDirs(dir: string, mode: number): void {
   const mkdir = (path: string): void => {
@@ -73,6 +74,9 @@ export function makeDirs(dir: string, mode: number): void {
       mkdirSync(path, { mode });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      if (!statSync(path).isDirectory()) {
+        throw Object.assign(new Error(`ENOTDIR: not a directory, mkdir '${path}'`), { code: 'ENOTDIR', path });
+      }
     }
   };
   try {

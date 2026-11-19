@@ -20,6 +20,23 @@ const SECRETS: Array<[string, string, string]> = [
   ['long random string', 'got 9fQ2xLk7Pz0aB3cD4eF5gH6iJ7kL8mN9oP back', `got ${R} back`],
   ['github token', 'GH_TOKEN is ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345', `GH_TOKEN is ${R}`],
   ['private key', 'key -----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY----- end', `key ${R} end`],
+  // Follow-up 012 #4: any Authorization scheme, short cookie values, session keys, -p values.
+  ['Authorization: Token (follow-up repro)', 'Authorization: Token abc123xyz', `Authorization: ${R}`],
+  ['Authorization, any scheme, to the end of the line', 'sent authorization: Digest username="ada", nonce="x1"\nnext line', `sent authorization: ${R}\nnext line`],
+  ['Authorization: Bearer with a short token', 'Authorization: Bearer abc', `Authorization: ${R}`],
+  ['Proxy-Authorization', 'Proxy-Authorization: Negotiate YII', `Proxy-Authorization: ${R}`],
+  ['Cookie: session=<short value> (follow-up repro)', 'Cookie: session=ab1', `Cookie: session=${R}`],
+  ['every cookie value in a Cookie header', 'Cookie: a=1; theme=x; autologger_sid=z', `Cookie: a=${R}; theme=${R}; autologger_sid=${R}`],
+  ['Set-Cookie keeps attributes', 'Set-Cookie: sid2=q; Path=/; HttpOnly; Secure', `Set-Cookie: sid2=${R}; Path=/; HttpOnly; Secure`],
+  ['session key', 'login set session=k9 and DEV_PORT=1', `login set session=${R} and DEV_PORT=1`],
+  ['session key in JSON', '{"session": "x"}', `{"session": "${R}"}`],
+  ['dotted session key', 'flask.session: ab', `flask.session: ${R}`],
+  ['short secret key value', 'retry with token=a', `retry with token=${R}`],
+  ['-p value (follow-up repro)', 'mysql -u root -p hunter2 db', `mysql -u root -p ${R} db`],
+  ['-p attached value', 'ran mysql -pab', `ran mysql -p${R}`],
+  ['-p quoted value', "psql -p 'a b' x", `psql -p '${R}' x`],
+  ['--password value', 'login --password x', `login --password ${R}`],
+  ['--password=value', 'login --password=x', `login --password=${R}`],
 ];
 
 for (const [name, input, expected] of SECRETS) {
@@ -42,6 +59,16 @@ test('redact leaves ordinary text alone', () => {
   ]) {
     assert.equal(redact(text), text, text);
   }
+});
+
+test('git SHAs and UUIDs: short SHAs are kept; full 40-character SHAs and UUIDs are redacted, as before', () => {
+  assert.equal(redact('commit 3f9a2b7 broke it'), 'commit 3f9a2b7 broke it');
+  assert.equal(redact('commit 3f9a2b7c4d5e6f708192a3b4c5d6e7f8091a2b3c broke it'), `commit ${R} broke it`);
+  assert.equal(redact('id 123e4567-e89b-12d3-a456-426614174000 missing'), `id ${R} missing`);
+});
+
+test('a -p with no value, or followed by another flag, is left alone', () => {
+  for (const text of ['ran it with -p', 'ran it with -p -v', 'a-p b', 'see the Authorization header']) assert.equal(redact(text), text, text);
 });
 
 test('cap cuts to the limit with an ellipsis', () => {
@@ -87,4 +114,49 @@ test('signature is stable across wording noise and differs by plugin, kind and w
   assert.notEqual(signature('autologger-mcp', 'workaround', 'call list_topics failed for session 7 at /tmp/z'), a);
   // Different secrets in the same place count as one issue.
   assert.equal(signature('p', 'workaround', 'login with Bearer abcdefghij1234567890'), signature('p', 'workaround', 'login with Bearer zyxwvutsrq0987654321'));
+});
+
+test('cap never cuts inside a [redacted] marker', () => {
+  const text = `abc ${R} def`;
+  for (let max = 1; max <= text.length + 1; max++) {
+    const out = cap(text, max);
+    assert.ok([...out].length <= max, `${max}: ${out}`);
+    const rest = out.endsWith('…') ? out.slice(0, -1) : out;
+    assert.ok(!/\[[a-z]*$/.test(rest) || rest.endsWith(R), `${max}: ${out}`);
+    for (let i = 1; i < R.length; i++) assert.ok(!(rest.endsWith(R.slice(0, i)) && !rest.endsWith(R)), `${max}: ${out}`);
+  }
+});
+
+// Follow-up 012 #5: a cap after redaction could leave 'token=[r…' or 'token=…', which redact rewrites,
+// so file refused a draft that held no secret.
+const TAILS = [
+  'token=abc1',
+  'password=hunter22',
+  'session=k9',
+  'Authorization: Token abc123xyz',
+  'Cookie: session=ab1; theme=x',
+  '-p hunter2',
+  '--password x',
+  'api_key: "s3cr3t value"',
+  'and Bearer abcdefghijklmnop',
+];
+
+test('cleanSummary output never looks secret, for every length from 150 to 260 characters', () => {
+  for (const tail of TAILS) {
+    for (let length = 150; length <= 260; length++) {
+      for (const word of ['x', 'word', 'a-b']) {
+        let prefix = '';
+        while (prefix.length + tail.length + 1 < length) prefix += `${word} `;
+        const input = `${prefix}${tail}`.slice(-length);
+        const out = cleanSummary(input);
+        assert.equal(containsSecret(out), false, `${JSON.stringify(input)} -> ${JSON.stringify(out)}`);
+        assert.ok([...out].length <= SUMMARY_MAX, out);
+        assert.equal(/\[r[a-z]*…$/.test(out), false, `cut marker: ${out}`);
+      }
+    }
+  }
+});
+
+test('cap leaves text that already looks secret to the caller (it never redacts)', () => {
+  assert.equal(cap('token=abc and more words', 10), 'token=abc…');
 });

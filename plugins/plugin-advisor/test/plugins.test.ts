@@ -49,3 +49,10 @@ test('with no manifest anywhere, the fallback list is used', () => {
   assert.deepEqual(found.plugins, [...FALLBACK_PLUGINS]);
   for (const p of FALLBACK_PLUGINS) assert.equal(found.bins.get(p), p);
 });
+
+test('FALLBACK_PLUGINS equals the sorted plugin names in the repo marketplace.json', () => {
+  const manifest = JSON.parse(readFileSync(join(REPO_ROOT, '.claude-plugin', 'marketplace.json'), 'utf8'));
+  const names = (manifest.plugins as Array<{ name: string }>).map((p) => p.name).sort();
+  assert.deepEqual([...FALLBACK_PLUGINS], names, 'update FALLBACK_PLUGINS in src/plugins.ts when a plugin is added to or removed from the marketplace');
+  assert.deepEqual([...FALLBACK_PLUGINS], [...FALLBACK_PLUGINS].sort(), 'FALLBACK_PLUGINS is sorted');
+});

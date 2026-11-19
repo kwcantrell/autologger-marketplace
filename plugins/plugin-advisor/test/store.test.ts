@@ -1,11 +1,11 @@
 // Creating the config dir: owner-only, and failing (never hanging) where a directory cannot be made.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { DIR_MODE, makeDirs } from '../src/store.ts';
+import { DIR_MODE, makeDirs, Store } from '../src/store.ts';
 
 const scratch = mkdtempSync(join(tmpdir(), 'plugin-advisor-store-'));
 after(() => rmSync(scratch, { recursive: true, force: true }));
@@ -24,6 +24,23 @@ test('makeDirs under a regular file fails with ENOTDIR', () => {
   const file = join(scratch, 'file');
   writeFileSync(file, '');
   assert.throws(() => makeDirs(join(file, 'x', 'y'), DIR_MODE), { code: 'ENOTDIR' });
+});
+
+test('makeDirs throws ENOTDIR when the path or a component exists as a regular file, and never chmods it', () => {
+  const file = join(scratch, 'plain');
+  writeFileSync(file, 'x', { mode: 0o644 });
+  chmodSync(file, 0o644);
+  assert.throws(() => makeDirs(file, DIR_MODE), { code: 'ENOTDIR' });
+  assert.equal(statSync(file).mode & 0o777, 0o644);
+  assert.equal(statSync(file).isFile(), true);
+});
+
+test('Store.prepare refuses a config dir that is a regular file instead of chmodding it', () => {
+  const file = join(scratch, 'config-file');
+  writeFileSync(file, 'x', { mode: 0o644 });
+  chmodSync(file, 0o644);
+  assert.throws(() => new Store({ PLUGIN_ADVISOR_CONFIG_DIR: file }).prepare(), { code: 'ENOTDIR' });
+  assert.equal(statSync(file).mode & 0o777, 0o644);
 });
 
 // mkdir under /proc fails with ENOENT although /proc exists. Node 24's mkdirSync({ recursive: true })

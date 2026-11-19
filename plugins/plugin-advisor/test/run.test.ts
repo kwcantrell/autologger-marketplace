@@ -80,8 +80,8 @@ test('record reads stdin JSON with --stdin, and accepts none or a proposed new p
   box = sandbox();
   const a = json(box.call(['record', '--stdin', '--json'], { stdin: JSON.stringify({ plugin: 'none', kind: 'manual-step', summary: 'Copied the dev CA by hand' }) }));
   assert.equal(a.plugin, 'none');
-  const b = json(box.call(['record', '--stdin', '--json'], { stdin: JSON.stringify({ plugin: 'autologger-browser', kind: 'missing-guidance', summary: 'No skill says how to screenshot', detail: 'd' }) }));
-  assert.equal(b.plugin, 'autologger-browser');
+  const b = json(box.call(['record', '--stdin', '--json'], { stdin: JSON.stringify({ plugin: 'autologger-made-up-plugin', kind: 'missing-guidance', summary: 'No skill says how to screenshot', detail: 'd' }) }));
+  assert.equal(b.plugin, 'autologger-made-up-plugin');
   assert.equal(box.call(['record', '--stdin'], { stdin: '{"plugin":"x","kind":"workaround"}' }).code, EXIT.usage);
   assert.equal(box.call(['record', '--stdin'], { stdin: 'not json' }).code, EXIT.usage);
   assert.equal(box.call(['record', '--stdin'], { stdin: '{"plugin":"x","kind":"workaround","summary":"s","command":"rm"}' }).code, EXIT.usage);
