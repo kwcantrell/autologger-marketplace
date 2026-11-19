@@ -49,7 +49,7 @@ or not inside a marketplace checkout. On a non-zero exit stdout is empty and the
 | `npx-quoted-root` | every skill `npx` line has `--package="${CLAUDE_PLUGIN_ROOT}"`, double-quoted |
 | `npx-bin-name` | every skill `npx` line runs the plugin's own bin |
 | `npx-prefix` | every skill `npx` line starts with the exact prefix (flags and their order) |
-| `allowed-tools` | the frontmatter `allowed-tools` has `Bash(<prefix> <bin>:*)` |
+| `allowed-tools` | the frontmatter `allowed-tools` has `Bash(<prefix> <bin>:*)`, or per-command `Bash(<prefix> <bin> <command>:*)` rules |
 | `tests-present` | `test/` has at least one `*.test.ts` |
 | `e2e-test` | a test reads `SKILL.md` and runs its lines through `npx` with `CLAUDE_PLUGIN_ROOT` set |
 | `relative-imports` | relative imports in `src/` and `test/` end in `.ts` (or `.json`) |
