@@ -177,6 +177,11 @@ for (const [summary, secrets] of [
   ['Cookie: a=[redacted] x; b=realsecret', ['realsecret']],
   ['Authorization: [redacted] abc123', ['abc123']],
   ['retry with token=[redacted]realsecret', ['realsecret']],
+  // Job 024: the authorization= form, Cookie attribute names and -p in mysql.
+  ['authorization=Token abc123xyz', ['abc123xyz']],
+  ['curl -d "AUTHORIZATION=Bearer abc123xyz" then 401', ['abc123xyz']],
+  ['Cookie: a=b; path=s3cret', ['s3cret']],
+  ['mysql -u root -phunter2 db failed', ['hunter2']],
 ] as const) {
   test(`a draft with stored text next to its own text files (dry run): ${JSON.stringify(summary.slice(-40))}`, () => {
     box = withGh(`console.log(${JSON.stringify(ISSUE_URL)});`);
@@ -254,6 +259,10 @@ test('text edited into a draft is checked as it is: a typed [redacted] or a stor
     original.replace(`: ${summary}\n`, `: ${summary} token=abc123\n`),
     // The Problem line with a secret put in front of the stored summary.
     original.replace(`failed: ${summary}`, `failed: password=hunter2 ${summary}`),
+    // Job 024: pasted secrets in the newly covered forms.
+    `${original}\nauthorization=Token abc123\n`,
+    `${original}\nCookie: a=[redacted]; path=s3cret\n`,
+    `${original}\nran mysql -u root -phunter2\n`,
   ]) {
     assert.notEqual(edit, original);
     writeFileSync(path, edit);
