@@ -1,10 +1,14 @@
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import { parseArgs } from 'node:util';
 import { importTokens, isExpired, login, logout, parseDevTokenGrant, requireSignedIn, TokenSource } from './auth.ts';
 import { CLI_NAME, devTokenHint, importTokensCommand, loginCommand, reusableClientId } from './commands.ts';
 import { CliError, messageOf, UsageError } from './errors.ts';
 import { DEFAULT_SERVER, type Fetch, isObject, resolveServer } from './http.ts';
+import { type Caller, RateLimitStop, readSnapshot, readState, statePath, writeJsonFile } from './copy.ts';
+import { exportSessions, summarize } from './export.ts';
+import { execute, plan, type Plan, type RunResult, targetSession, targetState, type TargetSession } from './importer.ts';
 import { checkLinks } from './links.ts';
 import { McpClient, resultText } from './mcp.ts';
 import { discover, WRITE_SCOPE } from './oauth.ts';
@@ -27,6 +31,8 @@ export interface Io {
   /** Reads standard input (default: the process's). */
   readStdin?: () => Promise<string>;
   fetch?: Fetch;
+  /** Waits `ms` (default: a timer); import and export wait out rate limits with it. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_LOGIN_TIMEOUT_S = 300;
@@ -54,6 +60,23 @@ Commands:
                                (--json: the raw MCP result).
   check-links <file|->         Report [[...]] links and malformed wiki:/cite: links in a wiki body
                                (Markdown); exit 1 if any are found.
+  export --session <id> [--session <id> ...] --out <file.json> [--no-wait]
+                               Read sessions from the server (read tools only) into a JSON snapshot
+                               (mode 0600; --out must end in .json): each session's get_session,
+                               all events, topics and wiki pages with whole bodies. Refuses an
+                               existing --out; 'export --force ...' replaces it (--force must come
+                               right after export). A rate limit is waited out (--no-wait: stop).
+  import --snapshot <file> --map <source_session>=<target_session> [--map ...] [--no-wait]
+                               Plan copying the snapshot's events, topics and wiki pages into
+                               existing sessions of the server (the target): a dry run that writes
+                               nothing. Wiki links are rewritten to the target's ids; fields the
+                               target's tools do not accept are listed as dropped_fields.
+  import --confirm --snapshot <file> --map ... [--no-wait]
+                               Do it (--confirm must come right after import). Progress is kept in
+                               <file>.import-state.json, so running it again resumes without
+                               duplicates. A rate limit is waited out (--no-wait: stop instead).
+                               Needs a 'login --write' sign-in to the target; refuses a target that
+                               is the snapshot's source server.
 
 Options:
   --server <url>   autologger server (default: $AUTOLOGGER_URL, else ${DEFAULT_SERVER})
@@ -82,6 +105,13 @@ const OPTIONS = {
   check: { type: 'boolean', default: false },
   args: { type: 'string' },
   'args-file': { type: 'string' },
+  session: { type: 'string', multiple: true },
+  out: { type: 'string' },
+  force: { type: 'boolean', default: false },
+  snapshot: { type: 'string' },
+  map: { type: 'string', multiple: true },
+  confirm: { type: 'boolean', default: false },
+  'no-wait': { type: 'boolean', default: false },
 } as const;
 
 type OptionName = keyof typeof OPTIONS;
@@ -94,6 +124,8 @@ const COMMAND_OPTIONS: Record<string, OptionName[]> = {
   tools: ['server'],
   call: ['server', 'args', 'args-file'],
   'check-links': [],
+  export: ['server', 'session', 'out', 'force', 'no-wait'],
+  import: ['server', 'snapshot', 'map', 'confirm', 'no-wait'],
 };
 
 function version(): string {
@@ -162,7 +194,7 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
   if (allowed === undefined) return usageError(io, `unknown command '${command}'`);
   for (const [name, value] of Object.entries(values)) {
     const key = name as OptionName;
-    if (value === undefined || value === false || COMMON.includes(key) || allowed.includes(key)) continue;
+    if (value === undefined || value === false || (Array.isArray(value) && value.length === 0) || COMMON.includes(key) || allowed.includes(key)) continue;
     return usageError(io, `${command} does not take --${name}`);
   }
 
@@ -331,6 +363,97 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
         );
         return EXIT.ok;
       }
+      case 'export': {
+        if (rest.length > 0) throw new UsageError('export takes no positional arguments');
+        const sessionIds = values.session ?? [];
+        if (sessionIds.length === 0) throw new UsageError('export needs --session <id> (one or more)');
+        for (const id of sessionIds) if (!ID_RE.test(id)) throw new UsageError(`--session '${id}' is not a session id`);
+        // A pre-approved `export --server ...` command line must never be able to replace a file.
+        if (values.force && argv[argv.indexOf('export') + 1] !== '--force') {
+          throw new UsageError('--force must come right after export: export --force --server <url> --session <id> --out <file.json>');
+        }
+        if (values.out === undefined || values.out === '') throw new UsageError('export needs --out <file.json>');
+        // Only a .json name: a new file can never be one a shell or a desktop session reads (~/.bash_aliases).
+        if (!values.out.endsWith('.json')) throw new UsageError(`--out '${values.out}' must be a .json file`);
+        const outPath = resolvePath(values.out);
+        if (!values.force && existsSync(outPath)) throw new CliError(`${outPath} already exists; run 'export --force ...' to overwrite it`);
+        const client = connect(ctx);
+        await client.initialize();
+        const snapshot = await exportSessions(caller(client, values['no-wait']), server, sessionIds, ctx.now(), warn);
+        writeJsonFile(outPath, snapshot, values.force);
+        const summary = summarize(snapshot, outPath);
+        out(
+          summary,
+          `Exported from ${server} to ${outPath}:\n${summary.sessions
+            .map((s) => `  session ${s.session_id}: ${s.events} events, ${s.topics} topics, ${s.wiki_pages} wiki pages`)
+            .join('\n')}\n`,
+        );
+        return EXIT.ok;
+      }
+      case 'import': {
+        if (rest.length > 0) throw new UsageError('import takes no positional arguments');
+        // A pre-approved `import --snapshot ...` command line must never be able to write.
+        if (values.confirm && argv[argv.indexOf('import') + 1] !== '--confirm') {
+          throw new UsageError('--confirm must come right after import: import --confirm --snapshot <file> --map ...');
+        }
+        if (values.snapshot === undefined || values.snapshot === '') throw new UsageError('import needs --snapshot <file>');
+        const maps = parseMaps(values.map ?? []);
+        const snapshotPath = resolvePath(values.snapshot);
+        const snapshot = readSnapshot(snapshotPath);
+        const inSnapshot = new Set(snapshot.sessions.map((s) => s.session_id));
+        for (const [source] of maps) {
+          if (!inSnapshot.has(source)) {
+            throw new CliError(`--map ${source}=...: session ${source} is not in the snapshot (it holds ${[...inSnapshot].join(', ') || 'no sessions'}); nothing was written`);
+          }
+        }
+        if (snapshot.source_server === server) {
+          throw new CliError(`the target ${server} is the snapshot's source server; import copies into another server (such as a local dev stack). Nothing was written`);
+        }
+        const tokens = new TokenSource(ctx);
+        if (!tokens.scope.split(' ').includes(WRITE_SCOPE)) {
+          throw new CliError(`the sign-in to ${server} is read-only (scope '${tokens.scope}'); import needs ${WRITE_SCOPE}. Nothing was written. To sign in with it, run in a terminal:\n  ${loginCommand(server, true)}`);
+        }
+        const client = connect(ctx, tokens);
+        await client.initialize();
+        const tools = new Map((await client.listTools()).map((t) => [t.name, t]));
+        const call = caller(client, values['no-wait']);
+        const targets: TargetSession[] = [];
+        for (const [source, target] of maps) targets.push(await targetSession(call, server, source, target));
+        const stateFile = statePath(snapshotPath);
+        const state = readState(stateFile, snapshot.source_server);
+        const input = { snapshot, targets, state: targetState(state, server), tools };
+        const thePlan = plan(input);
+        const missing = thePlan.tools.filter((t) => !tools.has(t));
+        if (missing.length > 0) {
+          throw new CliError(`the target ${server} has no ${missing.join(', ')} tool${missing.length === 1 ? '' : 's'}, which this import needs; nothing was written`);
+        }
+        const header = { source_server: snapshot.source_server, target_server: server, snapshot: snapshotPath, state_file: stateFile, sessions: targets };
+        if (!values.confirm) {
+          const report = { mode: 'dry-run', ...header, ...planReport(thePlan) };
+          out(report, importText(report, thePlan));
+          return EXIT.ok;
+        }
+        let result: RunResult;
+        try {
+          result = await execute({ ...input, caller: call, save: () => writeJsonFile(stateFile, state, true) }, thePlan);
+        } catch (error) {
+          const saved = existsSync(stateFile) ? ` Progress is saved in ${stateFile}; run the same import --confirm command again to resume (nothing is created twice).` : '';
+          if (error instanceof RateLimitStop) throw new CliError(`${error.message}; stopped.${saved}`);
+          throw new CliError(`${messageOf(error)}${saved}`);
+        }
+        const report = {
+          mode: 'confirm',
+          ...header,
+          ...planReport(thePlan),
+          created: result.created,
+          links_fixed: result.links_fixed,
+          skipped: result.skipped,
+          failed: result.failed,
+          unresolved_links: result.unresolved_links,
+        };
+        out(report, importText(report, thePlan));
+        return EXIT.ok;
+      }
       case 'call': {
         const [tool, ...extra] = rest;
         if (tool === undefined || tool === '') throw new UsageError('call needs a tool name');
@@ -358,9 +481,77 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
     return EXIT.failure;
   }
 
+  function caller(client: McpClient, noWait: boolean): Caller {
+    return {
+      call: (name, args) => client.callTool(name, args),
+      sleep: rawIo.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+      noWait,
+      notice: (text) => io.stderr(`${CLI_NAME}: ${text}`),
+    };
+  }
+
   function connect(ctx: ConstructorParameters<typeof TokenSource>[0], tokens = new TokenSource(ctx)): McpClient {
     return new McpClient({ endpoint: tokens.endpoints.resource, tokens, fetch: ctx.fetch, clientVersion: version() });
   }
+}
+
+/** Session ids as autologger issues them. */
+const ID_RE = /^[A-Za-z0-9_-]{1,200}$/;
+
+/** `--map <source>=<target>` pairs, each source once. */
+function parseMaps(raw: readonly string[]): [string, string][] {
+  if (raw.length === 0) throw new UsageError('import needs --map <source_session>=<target_session> (one or more)');
+  const pairs: [string, string][] = [];
+  for (const text of raw) {
+    const m = /^([^=]+)=([^=]+)$/.exec(text);
+    if (m?.[1] === undefined || m[2] === undefined || !ID_RE.test(m[1]) || !ID_RE.test(m[2])) {
+      throw new UsageError(`--map '${text}' is not <source_session>=<target_session>`);
+    }
+    if (pairs.some(([s]) => s === m[1])) throw new UsageError(`--map names source session ${m[1]} twice`);
+    pairs.push([m[1], m[2]]);
+  }
+  return pairs;
+}
+
+function planReport(p: Plan): Record<string, unknown> {
+  const count = (action: string) => p.items.filter((i) => i.action === action).length;
+  const create = { events: 0, topics: 0, wiki_pages: 0 };
+  for (const i of p.items) if (i.action === 'create') create[i.kind]++;
+  return {
+    plan: { create, already_done: count('done'), fix_links: count('fix-links'), skip: count('skip') },
+    items: p.items,
+    dropped_fields: p.dropped_fields,
+    unresolved_links: p.unresolved_links,
+  };
+}
+
+function importText(report: Record<string, unknown>, p: Plan): string {
+  const r = report as {
+    mode: string;
+    target_server: string;
+    sessions: TargetSession[];
+    plan: { create: Record<string, number>; already_done: number; fix_links: number; skip: number };
+    dropped_fields: { tool: string; field: string }[];
+    unresolved_links: { source_page_id: string; link: string }[];
+    created?: Record<string, number>;
+    links_fixed?: number;
+    failed?: { kind: string; source_id: string; reason: string }[];
+    state_file: string;
+  };
+  const lines: string[] = [];
+  const confirm = r.mode === 'confirm';
+  lines.push(confirm ? `Imported into ${r.target_server}:` : `Dry run: nothing was written. Importing into ${r.target_server} would:`);
+  for (const s of r.sessions) lines.push(`  session ${s.source_session_id} -> ${s.target_session_id}`);
+  const c = confirm ? r.created ?? {} : r.plan.create;
+  lines.push(`  ${confirm ? 'created' : 'create'}: ${c.events ?? 0} events, ${c.topics ?? 0} topics, ${c.wiki_pages ?? 0} wiki pages`);
+  if (r.plan.already_done > 0) lines.push(`  already copied by an earlier run: ${r.plan.already_done}`);
+  if (confirm && (r.links_fixed ?? 0) > 0) lines.push(`  wiki pages whose links were fixed afterwards: ${r.links_fixed}`);
+  for (const i of p.items.filter((x) => x.action === 'skip')) lines.push(`  skip ${i.kind} ${i.source_id}: ${i.reason ?? ''}`);
+  for (const f of r.failed ?? []) lines.push(`  failed ${f.kind} ${f.source_id}: ${f.reason}`);
+  if (r.dropped_fields.length > 0) lines.push(`  fields the target does not accept (not sent): ${r.dropped_fields.map((d) => `${d.tool}.${d.field}`).join(', ')}`);
+  if (r.unresolved_links.length > 0) lines.push(`  links left unchanged (their page or session is not copied): ${r.unresolved_links.map((u) => u.link).join(', ')}`);
+  lines.push(confirm ? `Progress: ${r.state_file}` : 'Run the same command as import --confirm ... to write.');
+  return `${lines.join('\n')}\n`;
 }
 
 async function toolArguments(inline: string | undefined, file: string | undefined, io: Io): Promise<Record<string, unknown>> {

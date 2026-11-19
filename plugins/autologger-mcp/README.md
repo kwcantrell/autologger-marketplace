@@ -26,6 +26,11 @@ Skills:
 | `sign-in` | Checks the sign-in (`status`), hands you the `login` command (or, on a local dev stack, the `make dev-mcp-token \| import-tokens` line) to run, signs out. |
 | `query-session-data` | Lists the tools and calls the read tools, with paging. |
 | `write-session-data` | Calls the write tools after you confirm each change; runs `check-links` on wiki bodies first. |
+| `seed-dev-stack` | Copies sessions from another server (such as stage) onto a local dev stack: `export`, the `import` plan, and `import --confirm` after you say yes. |
+
+autologger's AI features go through this plugin now: the in-app aichat agents are being retired, so
+reading, summarising and editing session data with Claude happens through these skills and the MCP
+tools the server offers.
 
 ## Running the CLI yourself
 
@@ -150,6 +155,82 @@ Reports, as `file:line:column: message`, every `[[...]]` outside code spans and 
 every `wiki:` / `cite:` link whose target is off autologger's grammar
 (`wiki:<[A-Za-z0-9_-]{1,64}>`, `cite:<id>@<\d+(\.\d{1,3})?>`, lower-case scheme). Exits 1 when it
 finds any, 0 when the body is clean.
+
+### export, import (seed a local dev stack from another server)
+
+To build against realistic data, copy sessions from another server (stage is
+`https://stage.nrvo.ai`) onto a local dev stack, in two steps:
+
+```sh
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp export --server https://stage.nrvo.ai --session <id> [--session <id> ...] --out snap.json
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp import --snapshot snap.json --server https://localhost:8787 --map <stage_session>=<local_session>            # dry run: the plan
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp import --confirm --snapshot snap.json --server https://localhost:8787 --map <stage_session>=<local_session>  # writes
+```
+
+Sign in to each server first: the source read-only (`login --server <source>`), the target with
+`login --write --server <local>` (Google; on a stack without a Google client, the
+`make dev-mcp-token ... | import-tokens` line above with `SCOPE="dashboards session-data:write"`).
+Credentials are per server, so the two sign-ins coexist.
+
+**export** calls only the read tools `get_session`, `list_events`, `list_topics`, `list_wiki_pages`
+and `get_wiki_page`, follows every `next_cursor` and every `next_offset`, and writes one JSON
+snapshot (mode 0600, through a temporary file): per session its `get_session` result, all events,
+all topics and the wiki pages associated with it, each with its whole `body_md`. It refuses an
+existing `--out`; `export --force ...` replaces it (`--force` must come right after `export`, so a
+pre-approved `export --server ...` command line can never replace a file). `--out` must end in
+`.json`. `--json` prints the counts per session and in total.
+
+**What is and is not copied.** The MCP write tools create events, topics and wiki pages only. They
+cannot create studios, shows, sessions or transcripts, so `import` copies **into sessions that
+already exist on the target**: each `--map <source_session>=<target_session>` names one, and the
+target session's show receives the wiki pages. Transcripts, session aggregates and dashboards are
+not copied. Per kind:
+
+- Events: `create_event` with the category's **name** (`category_label`; the target show's
+  categories have other ids, and the tool resolves a name), `message`, `metadata`, and the source
+  `wall_time_utc` as `marked_at_utc`. An event whose category the target show lacks is reported in
+  `failed` with the target's list of categories.
+- Topics: `create_topic` with `session_time`, `duration_sec`, `topic_level` and `summary`.
+- Wiki pages: `create_wiki_page` in the target session's show with `kind`, `title`, `aliases` and
+  the rewritten `body_md`; a session page (`kind: session`) is the mapped target session's own.
+  `[label](wiki:<page_id>)` links point at the page copied from that source page, and
+  `[quote](cite:<session_id>@<seconds>)` at the mapped target session. Links to pages or sessions
+  not copied are left as they are and listed in `unresolved_links`. A page that links to a page
+  created after it gets its links fixed with `update_wiki_page` afterwards (`links_fixed`), also
+  when that page is created only by a later run (it failed, or its session is mapped later; rerun
+  with every `--map` so the earlier pages are in scope). Every body is checked with `check-links`
+  before it is written.
+
+**Fields.** import reads each write tool's `inputSchema` from the target's `tools/list` (inputs are
+strict) and sends only the fields it accepts; every source field it does not send (such as an
+event's `timecode` or `version`) is listed once in `dropped_fields`, and an item missing a field the
+tool requires is skipped. A write tool the import needs that the target lacks is an error naming it.
+
+**Dry run first.** Without `--confirm` import reads the target (`tools/list`, `get_session` of each
+target session) and prints the plan: `plan` (counts to create, already done, skipped), `items` (each
+with its `action` and `reason`), `dropped_fields` and `unresolved_links`. It calls no write tool.
+`--confirm` must come right after `import`, so a pre-approved `import --snapshot ...` command line
+can never write. It refuses, with exit 1 and nothing written: a target that is the snapshot's
+source server, a target session that does not exist or you cannot see, a `--map` source session
+not in the snapshot, and a target sign-in without `session-data:write`.
+
+**Rate limits.** The target allows 30 writes a minute and 300 an hour per user. On
+`Rate limit exceeded; retry in N s.` import waits N + 1 seconds and retries the same write, at
+most 5 times in a row and never for more than an hour per wait; `--no-wait` stops instead. Expect
+a large import to take a while.
+
+**Resuming.** After every write the source id → target id of the created item is saved in
+`<snapshot>.import-state.json` (mode 0600; per target server). When import stops (a rate limit with
+`--no-wait`, a network or server error), it says so and exit 1; run the same `import --confirm`
+command again and it continues where it stopped, creating nothing twice. A wiki title the target
+show already has (`Title already used. page_id: <id>`), or a session that already has its page,
+is recorded as skipped and never overwritten. A write the target refused for another reason is in
+`failed` and is tried again on the next run. A write whose answer was lost in transit (the
+connection dropped after the server wrote) cannot be told apart from one that never happened, so
+check the target before rerunning after such an error.
+
+Neither file holds a token, and content from the source is only ever sent as tool arguments: it
+never selects a tool, a server or a file.
 
 ### Output and exit codes
 

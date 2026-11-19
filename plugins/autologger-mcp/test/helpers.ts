@@ -33,6 +33,7 @@ export interface CallOptions {
   fetch?: Io['fetch'];
   stdin?: string;
   env?: Record<string, string>;
+  sleep?: Io['sleep'];
 }
 
 export async function cli(opts: CallOptions, ...argv: string[]): Promise<Outcome> {
@@ -51,6 +52,7 @@ export async function cli(opts: CallOptions, ...argv: string[]): Promise<Outcome
     openUrl: opts.openUrl ?? ((url) => void browse(url)),
     ...(opts.now !== undefined ? { now: opts.now } : {}),
     ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
+    ...(opts.sleep !== undefined ? { sleep: opts.sleep } : {}),
     ...(opts.stdin !== undefined ? { readStdin: async () => opts.stdin ?? '' } : {}),
   });
   transcript.push(stdout, stderr);
