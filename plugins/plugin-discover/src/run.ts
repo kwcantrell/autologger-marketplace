@@ -99,7 +99,7 @@ function matchText(m: MatchResult): string {
   }
   for (const e of m.available) lines.push(`available ${e.name}  score ${e.score}  matched ${e.reason.join(', ')}\n  install: ${e.installCommand}`);
   for (const e of m.elsewhere) lines.push(`installed elsewhere ${e.id} (${e.scope} scope, ${e.projectPath})  score ${e.score}  matched ${e.reason.join(', ')}`);
-  if (!m.none_applicable && lines.length === 0) lines.push('Nothing installed here fits (mode off: plugins that are not installed are not suggested).');
+  if (m.mode === 'off' && !m.none_applicable && lines.length === 0) lines.push('Nothing installed here fits (mode off: plugins that are not installed are not suggested).');
   if (m.none_applicable) {
     lines.push(`Nothing scores ${m.threshold} or more: no installed or marketplace plugin fits.`);
     if (m.advisor !== undefined) lines.push(`Record the gap with plugin-advisor:\n  ${m.advisor.record}`);
