@@ -18,6 +18,7 @@ does the work and is tested like ordinary code.
 | `plugins/<name>/` | One plugin per folder, listed below. Created by `npm run new-plugin`. |
 | `templates/plugin/` | The plugin template, itself a valid plugin (`plugin-template`), not listed in the marketplace. |
 | `scripts/new-plugin.ts` | The scaffold behind `npm run new-plugin`; its tests are in `scripts/test/`. |
+| `scripts/harden-repo.ts`, `.github/` | GitHub settings script, CI, Dependabot, CODEOWNERS; see Repository protection below. |
 | `package.json`, `tsconfig.json` | Dev tooling only (typecheck, tests, scaffold). Plugins never depend on the root. |
 | `factory/` | Software-factory runtime state; ignored by its own `.gitignore`. Never commit it. |
 
@@ -55,6 +56,21 @@ folder and name, CLI bin name, `CLI_NAME`) in every file and path, sets the desc
 entry already exists and 2 for a bad name or arguments, writing nothing in either case.
 
 There is no build step and nothing compiled is committed: Node runs the `.ts` files directly.
+
+## Repository protection
+
+`main` is guarded by a `main protection` ruleset: no deletion, no force-push, changes land through a
+pull request (0 approvals; stale reviews dismissed on push) with the CI check `ci` passing (the job
+id in `.github/workflows/ci.yml`; renaming it breaks the required check). The repository admin role
+may bypass it, so the maintainer's local `/factory:ship` plus `git push` still works. Every `uses:` in
+a workflow is pinned to a full 40-hex commit SHA with the tag in a comment (`scripts/test/` checks
+this; Dependabot keeps them current). Report vulnerabilities as `SECURITY.md` says.
+
+The settings live in `scripts/harden-repo.ts`, not in the GitHub UI. It defaults to a dry run
+(`node scripts/harden-repo.ts [--json] [--repo <owner/name>]`, current → desired per setting);
+`--apply` makes only the needed changes and is idempotent. It refuses to require the `ci` check
+while the CI workflow is not on the default branch (`--skip-required-checks` applies the rest), and
+reports settings GitHub answers 403/404 for as unavailable.
 
 ## Plugin layout
 

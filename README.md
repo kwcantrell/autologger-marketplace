@@ -58,3 +58,8 @@ node plugins/plugin-builder/src/cli.ts verify my-plugin   # or all of the above,
 skill and CLI to `my-plugin`, and adds the plugin to `.claude-plugin/marketplace.json`. Then replace
 the example `hello` command and skill with the real ones. [CLAUDE.md](CLAUDE.md) describes the
 layout and the CLI convention every plugin follows.
+
+## Security
+
+Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes, never in a public issue;
+and never put a token or other secret in any issue.
