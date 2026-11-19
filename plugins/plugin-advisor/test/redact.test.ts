@@ -713,7 +713,7 @@ test('redact stays fast on escaped keys, backslash runs and continued authorizat
 const ESCAPED_BARE: Array<[string, string, string, string]> = [
   ['escaped token, number', String.raw`{\"token\": 123456}`, String.raw`{\"token\": ${R}}`, '123456'],
   ['escaped password, bare word', String.raw`{\"password\": hunter2}`, String.raw`{\"password\": ${R}}`, 'hunter2'],
-  ['plain key, escaped value', String.raw`password: \"hunter2\"`, String.raw`password: \"${R}\"`, 'hunter2'],
+  ['plain key, escaped value', String.raw`password: \"hunter2\"`, String.raw`password: ${R}"${R}\"`, 'hunter2'],
   ['escaped api_key, number, then status', String.raw`{\"api_key\": 98765, \"status\": \"ok\"}`, String.raw`{\"api_key\": ${R}, \"status\": \"ok\"}`, '98765'],
 ];
 
@@ -840,6 +840,8 @@ test('the 300k-input differential fuzz finds keep their secrets redacted once jo
     ['cookie:\n\\"Cookie\\":=}zqhxvkk=', 'zqhxvkk'],
     // A plain-key escaped value holding only a backslash.
     ['session:\'zq2a\n\\"Authorization\\":\\"\'Cookie=\\"\\\\"', 'zq2a'],
+    // A plain-key escaped value inside an escaped value, whose opening escape could close it.
+    ['mysql\n' + String.raw`-p'zq25cbv\\\\\\\"Cookie\\\\\\\":\"'jwt=\\\\\\\"w\\\\\\\"`, 'zq25cbv'],
   ]) {
     assert.ok(!cleanSummary(input!).includes(secret!), `${JSON.stringify(input)}: ${JSON.stringify(cleanSummary(input!))}`);
   }

@@ -114,7 +114,8 @@ function quiet(part: string, quote: string): boolean {
  * With `plainKey` (a key whose own quotes are not escaped: `password: \"x\"`), the value ends at the
  * first quote, and counts only when it is not empty, holds no backslash, is `quiet` and ends as JSON
  * would; otherwise the caller reads the value as before (`KEY_VALUE`), since the other rules read
- * text there.
+ * text there. Its opening escape becomes the marker, as before (`password: [redacted]"[redacted]\"`),
+ * so that no escaped quote is left there for the escaped-key pass to close an outer value with.
  */
 function escapedValue(text: string, at: number, plainKey: boolean, commandBefore: boolean): [string, number] | undefined {
   ESCAPED_OPEN.lastIndex = at;
@@ -154,8 +155,9 @@ function escapedValue(text: string, at: number, plainKey: boolean, commandBefore
     return [redacted, close + 1 - at];
   }
   const content = text.slice(from, first - n);
-  if (plainKey && (content === '' || content.includes('\\') || !quiet(content, quote) || !VALUE_END.test(text.slice(first + 1, first + 2)))) return undefined;
-  return [keep(content) ? text.slice(at, first + 1) : redacted, first + 1 - at];
+  if (!plainKey) return [keep(content) ? text.slice(at, first + 1) : redacted, first + 1 - at];
+  if (content === '' || content.includes('\\') || !quiet(content, quote) || !VALUE_END.test(text.slice(first + 1, first + 2))) return undefined;
+  return [keep(content) ? text.slice(at, first + 1) : `${REDACTED}${quote}${REDACTED}${escape}${quote}`, first + 1 - at];
 }
 
 /**
