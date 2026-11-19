@@ -58,15 +58,19 @@ function redactCookies(value: string, setCookie: boolean): string {
 
 /**
  * A `key=value` / `key: value` key and its separator. Matching stops here, so a value is scanned too.
- * A match starts only where a run of key characters starts (the lookbehind), so a long word is scanned
- * once rather than from each of its characters; digits, `.` and `-` that lead the run are skipped
- * (`--password=x` has the key `password`). The separator stays on one line: a key at the end of a
- * line does not take the next line's first word as its value.
+ * An unquoted key starts only where a run of key characters starts (the lookbehind), so a long word is
+ * scanned once rather than from each of its characters; digits, `.` and `-` that lead the run are
+ * skipped (`--password=x` has the key `password`). A quoted key starts at its quote whatever comes
+ * before it (`{b'token': ...}`, `x"password"=...`). The separator stays on one line (`H` below: any
+ * space but a line break, Unicode spaces such as NBSP included): a key at the end of a line does not
+ * take the next line's first word as its value.
  */
-const KEY_SEP = /(?<![A-Za-z0-9_.-])(["']?)[0-9.-]*([A-Za-z_][A-Za-z0-9_.-]*)\1([ \t]*[=:][ \t]*)/g;
-/** The value after a key: quoted, or a bare run of value characters, where a `]` ends it unless it
- * closes a marker or more value follows. Sticky: it is tried only right after a key's separator. */
-const KEY_VALUE = /"([^"\n]*)"|'([^'\n]*)'|((?:\[redacted\]|\](?=[^\s"'&;,)}\]])|[^\s"'&;,)}\]])+)/y;
+const H = '[^\\S\\r\\n\\u2028\\u2029]';
+const KEY_SEP = new RegExp(`(?:(["'])|(?<![A-Za-z0-9_.-]))[0-9.-]*([A-Za-z_][A-Za-z0-9_.-]*)\\1(${H}*[=:]${H}*)`, 'g');
+/** The value after a key: quoted (with an optional string prefix such as Python's `b'...'` or
+ * `u'...'`), or a bare run of value characters, where a `]` ends it unless it closes a marker or more
+ * value follows. Sticky: it is tried only right after a key's separator. */
+const KEY_VALUE = /([bBuUrR]{0,2})(?:"([^"\n]*)"|'([^'\n]*)')|((?:\[redacted\]|\](?=[^\s"'&;,)}\]])|[^\s"'&;,)}\]])+)/y;
 
 /**
  * `key=value`, `key: value` and `"key": "value"` with a secret-looking key: the value is redacted;
@@ -85,14 +89,14 @@ function redactKeyValues(text: string): string {
     KEY_VALUE.lastIndex = at;
     const v = KEY_VALUE.exec(text);
     if (v === null) continue;
-    const [value, dq, sq, bare] = v;
+    const [value, prefix = '', dq, sq, bare] = v;
     const end = at + value.length;
     KEY_SEP.lastIndex = end;
     // A `Cookie:` header on its line is the cookie rule's (above): its value is `name=[redacted]`.
     if (q === '' && /^(set-)?cookie$/i.test(key) && /^[ \t]*:[ \t]*$/.test(sep)) continue;
     let replaced: string;
-    if (dq !== undefined) replaced = keep(dq) ? value : `"${REDACTED}"`;
-    else if (sq !== undefined) replaced = keep(sq) ? value : `'${REDACTED}'`;
+    if (dq !== undefined) replaced = keep(dq) ? value : `${prefix}"${REDACTED}"`;
+    else if (sq !== undefined) replaced = keep(sq) ? value : `${prefix}'${REDACTED}'`;
     else replaced = keep(bare ?? '') ? value : REDACTED;
     out += text.slice(done, at) + replaced;
     done = end;
@@ -156,8 +160,9 @@ const RULES: Rule[] = [
   // value goes to the end of the line, any scheme, or to the closing quote when the value, or the
   // whole pair, is quoted (`-H "Authorization: Token abc"`).
   [
-    /(?<![A-Za-z0-9_.-])(["']?)([A-Za-z0-9_.-]*authorization)([ \t]*[=:][ \t]*)(?:"([^"\n]*)"|'([^'\n]*)'|([^\n]*))/gi,
-    (m, open, name, sep, dq, sq, rest) => {
+    new RegExp(`(?:(["'])|(?<![A-Za-z0-9_.-]))([A-Za-z0-9_.-]*authorization)(${H}*[=:]${H}*)(?:"([^"\\n]*)"|'([^'\\n]*)'|([^\\n]*))`, 'gi'),
+    (m, quote, name, sep, dq, sq, rest) => {
+      const open = quote ?? '';
       const head = `${open}${name}${sep}`;
       if (dq !== undefined) return keep(dq) ? m : `${head}"${REDACTED}"`;
       if (sq !== undefined) return keep(sq) ? m : `${head}'${REDACTED}'`;

@@ -391,6 +391,11 @@ test('redact stays fast on other long runs that used to rescan (job 030)', () =>
     `--${'a'.repeat(40000)}`,
     'Authorization'.repeat(3000),
     `${'a'.repeat(40000)}://`,
+    // Round 1: a quoted key may start at any quote, so runs of quotes and key characters stay linear too.
+    `x"${'a'.repeat(40000)}`,
+    '"a'.repeat(20000),
+    "b'a".repeat(13000),
+    `"${'a'.repeat(40000)}"\u00a0`,
   ]) {
     const ms = timed(() => redact(input));
     assert.ok(ms < 200, `${JSON.stringify(input.slice(0, 6))}x${input.length}: ${ms} ms`);
@@ -519,4 +524,45 @@ test('job 024 unchanged cases, versioned look-alikes and redis-cli stay unchange
     assert.equal(redact(text), text, text);
     assert.equal(containsSecret(text), false, text);
   }
+});
+
+// Job 030 round 1 (behavior review, blocking; follow-up 030 #2): a quoted key starts at its quote,
+// whatever comes before it, and a quoted value may carry a string prefix (Python b'...', u'...').
+// Round 1 (security review, blocking): the same-line separator takes Unicode spaces, as `\s` did.
+const ROUND_1: Array<[string, string, string, string]> = [
+  ["Python bytes key", "{b'token': 'hunter2'}", `{b'token': '${R}'}`, 'hunter2'],
+  ["Python unicode key", "{u'api_key': 'hunter2abc'}", `{u'api_key': '${R}'}`, 'hunter2abc'],
+  ["Python bytes authorization key", "{b'authorization': 'Token abc'}", `{b'authorization': '${R}'}`, 'abc'],
+  ['quoted key after a letter', 'x"token": "abc123"', `x"token": "${R}"`, 'abc123'],
+  ['quoted key after a letter, = form', 'x"password"=secret', `x"password"=${R}`, 'secret'],
+  ['quoted key after a digit', '0"token":"abc"', `0"token":"${R}"`, 'abc'],
+  ['raw-string key', 'r"token": "x1"', `r"token": "${R}"`, 'x1'],
+  ['Python bytes key and value', "{b'token': b'abc123'}", `{b'token': b'${R}'}`, 'abc123'],
+  ['Python unicode key and value', "{u'password': u'hunter2'}", `{u'password': u'${R}'}`, 'hunter2'],
+  ['Python bytes value, double quotes', '{"token": b"abc123"}', `{"token": b"${R}"}`, 'abc123'],
+  ['NBSP around =', 'error: token = abc123 rejected', `error: token = ${R} rejected`, 'abc123'],
+  ['narrow NBSP before :', 'password : hunter2', `password : ${R}`, 'hunter2'],
+  ['en quad after =', 'api_key= k3y', `api_key= ${R}`, 'k3y'],
+  ['hair space after :', 'secret: s3', `secret: ${R}`, 's3'],
+  ['ideographic space around =', 'token　=　abc', `token　=　${R}`, 'abc'],
+  ['NBSP after Authorization:', 'Authorization: Token abc', `Authorization: ${R}`, 'abc'],
+  ['NBSP after HTTP_AUTHORIZATION=', 'HTTP_AUTHORIZATION= Token abc', `HTTP_AUTHORIZATION= ${R}`, 'abc'],
+];
+
+for (const [name, input, expected, secret] of ROUND_1) {
+  test(`redact round 1: ${name} (job 030)`, () => {
+    assert.equal(redact(input), expected);
+    assert.equal(containsSecret(input), true);
+    assert.equal(containsSecret(expected), false);
+    assert.equal(redact(expected), expected);
+    const detail = cleanDetail(input);
+    assert.equal(detail, expected);
+    assert.equal(containsSecret(detail), false, detail);
+    assert.ok(!cleanSummary(input).includes(secret), cleanSummary(input));
+  });
+}
+
+test('round 1: a Unicode line separator still ends the line for a key=value separator (job 030)', () => {
+  assert.equal(redact('token= next'), 'token= next');
+  assert.equal(redact('password: next'), 'password: next');
 });

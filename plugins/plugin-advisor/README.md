@@ -60,8 +60,10 @@ their values; in a request `Cookie:` header a `path=...` is a cookie and is reda
 basic credentials, autologger `alm_`/`alr_` tokens, `autologger_sid` cookie values, `KEY=value`,
 `key: value`, `"key": "value"` and `--key value` where the key looks secret (token, secret,
 password, api key, cookie, credential, session, session id and similar) whatever the value's length,
-also when the pair sits inside an ordinary value (`failed: password=x`) (the separator and value stay
-on the key's line: `password=` at the end of a line leaves the next line alone), the value after
+also when the pair sits inside an ordinary value (`failed: password=x`), when the key is quoted after
+other text (`{b'token': b'x'}`, a Python repr), and with any spaces around the separator, Unicode ones
+such as NBSP included (the separator and value stay on the key's line: `password=` at the end of a
+line leaves the next line alone), the value after
 `--password` in any command, the value after `-p` (`-p x`, `-p=x`, `-px`) only in commands where
 `-p` takes a password: the MySQL and MariaDB clients and tools (`mysql`, `mysqldump`, `mysqladmin`,
 `mysqlsh`, `mariadb`, `mariadb-dump` and the rest), the MongoDB shell and tools (`mongo`, `mongosh`,
