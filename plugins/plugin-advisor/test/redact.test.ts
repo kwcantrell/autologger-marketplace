@@ -366,3 +366,157 @@ test('cleanSummary output never looks secret, for every length from 150 to 260 c
 test('cap leaves text that already looks secret to the caller (it never redacts)', () => {
   assert.equal(cap('token=abc and more words', 10), 'token=abc…');
 });
+
+// Job 030 (follow-up 024 #1): no rule starts a scan at every character of a long run.
+function timed(f: () => unknown): number {
+  const start = performance.now();
+  f();
+  return performance.now() - start;
+}
+
+test('redact is linear on long runs: 40000 characters return in under 200 ms (job 030)', () => {
+  for (const input of ['a'.repeat(40000), '-'.repeat(40000), 'A1_'.repeat(15000)]) {
+    const ms = timed(() => redact(input));
+    assert.ok(ms < 200, `${JSON.stringify(input.slice(0, 6))}x${input.length}: ${ms} ms`);
+  }
+});
+
+test('redact stays fast on other long runs that used to rescan (job 030)', () => {
+  for (const input of [
+    'a.'.repeat(20000),
+    'a-'.repeat(20000),
+    '1-'.repeat(20000),
+    'eyJ-'.repeat(10000),
+    `${'x'.repeat(40000)}=`,
+    `--${'a'.repeat(40000)}`,
+    'Authorization'.repeat(3000),
+    `${'a'.repeat(40000)}://`,
+  ]) {
+    const ms = timed(() => redact(input));
+    assert.ok(ms < 200, `${JSON.stringify(input.slice(0, 6))}x${input.length}: ${ms} ms`);
+  }
+});
+
+/** Deterministic pseudo-random text, so the timing test is the same on every run. */
+function mixed(bytes: number): string {
+  let seed = 30;
+  const rand = (n: number): number => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed % n;
+  };
+  const pick = (chars: string, n: number): string => Array.from({ length: n }, () => chars[rand(chars.length)]).join('');
+  const b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const b64url = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  const ident = (): string => pick('abcdefghijklmnopqrstuvwxyz_', 1 + rand(6));
+  const parts: string[] = [];
+  let size = 0;
+  while (size < bytes) {
+    const part = [
+      () => `${pick('abcdefghij klmnop qrstuvwxyz,.:=-_"\'', 400)}\n`,
+      () => `${pick(b64, 2000)}==\n`,
+      () => `${pick(b64url, 2000)}\n`,
+      // A minified line: long member chains with no space, then a call.
+      () => `${Array.from({ length: 600 }, ident).join('.')}(a,b);var c=a.token||b;`,
+      () => `error: key=value a.b.c-d_e:f --flag-x y -p 1 mysql -u u \\ \n`,
+    ][rand(5)]!();
+    parts.push(part);
+    size += part.length;
+  }
+  return parts.join('').slice(0, bytes);
+}
+
+test('cleanSummary and cleanDetail take under 500 ms on 64 KB of mixed text (job 030)', () => {
+  const input = mixed(64 * 1024);
+  assert.equal(input.length, 64 * 1024);
+  const summary = timed(() => cleanSummary(input));
+  const detail = timed(() => cleanDetail(input));
+  assert.ok(summary < 500, `cleanSummary: ${summary} ms`);
+  assert.ok(detail < 500, `cleanDetail: ${detail} ms`);
+});
+
+// Job 030 (follow-up 024 #2): the key=value separator stays on one line.
+test('a key at the end of a line leaves the next line alone (job 030)', () => {
+  assert.equal(redact('authorization=\nnext line'), 'authorization=\nnext line');
+  assert.equal(redact('status:\ntoken'), 'status:\ntoken');
+  assert.equal(redact('password=\nhunter2 was typed later'), 'password=\nhunter2 was typed later');
+  assert.equal(redact('token:\r\nnext'), 'token:\r\nnext');
+  // On one line, any spaces or tabs around the separator still count.
+  assert.equal(redact('token = abc'), `token = ${R}`);
+  assert.equal(redact('password:\tabc'), `password:\t${R}`);
+  assert.equal(redact('api_key \t=\t abc'), `api_key \t=\t ${R}`);
+});
+
+// Job 030 (follow-up 024 #4): every key that ends in authorization, with `:` as with `=`.
+const COLON_AUTHORIZATION: Array<[string, string, string]> = [
+  ['HTTP_AUTHORIZATION: Token', 'HTTP_AUTHORIZATION: Token abc', `HTTP_AUTHORIZATION: ${R}`],
+  ['x_authorization:Token', 'x_authorization:Token abc', `x_authorization:${R}`],
+  ['Proxy-Authorization: Basic', 'Proxy-Authorization: Basic xyz', `Proxy-Authorization: ${R}`],
+  ['X-Authorization: Token', 'sent X-Authorization: Token abc', `sent X-Authorization: ${R}`],
+  ['authorization: lower case', 'authorization: Token abc', `authorization: ${R}`],
+  ['HTTP_PROXY_AUTHORIZATION:', 'HTTP_PROXY_AUTHORIZATION:Basic xyz', `HTTP_PROXY_AUTHORIZATION:${R}`],
+  ['aUtHoRiZaTiOn: any casing', 'my.aUtHoRiZaTiOn :  Token abc', `my.aUtHoRiZaTiOn :  ${R}`],
+  ['to the end of the line', 'HTTP_AUTHORIZATION: Token abc def\nnext line', `HTTP_AUTHORIZATION: ${R}\nnext line`],
+  ['double-quoted pair, to the closing quote', 'curl -H "Authorization: Token abc" https://x.example', `curl -H "Authorization: ${R}" https://x.example`],
+  ['single-quoted pair, to the closing quote', "curl -H 'x_authorization: Token abc' x", `curl -H 'x_authorization: ${R}' x`],
+  ['double-quoted value', 'HTTP_AUTHORIZATION: "Token abc" then 401', `HTTP_AUTHORIZATION: "${R}" then 401`],
+];
+
+for (const [name, input, expected] of COLON_AUTHORIZATION) {
+  test(`redact colon-form authorization: ${name} (job 030)`, () => {
+    assert.equal(redact(input), expected);
+    assert.equal(containsSecret(input), true);
+    assert.equal(containsSecret(expected), false);
+    assert.equal(redact(expected), expected);
+    for (const word of ['Token', 'Basic', 'abc', 'xyz']) {
+      if (!expected.includes(word)) assert.ok(!redact(input).includes(word), `${input} keeps ${word}`);
+    }
+  });
+}
+
+// Job 030 (follow-up 024 #5): continuation with trailing blanks, and versioned tool names.
+const CONTINUED_AND_VERSIONED: Array<[string, string, string]> = [
+  ['\\ with trailing spaces continues', 'mysql -u root \\  \n  -p s3cret db', `mysql -u root \\  \n  -p ${R} db`],
+  ['\\ with a trailing tab continues', 'mysql -u root \\\t\n-ps3cret db', `mysql -u root \\\t\n-p${R} db`],
+  ['\\ with trailing blanks and CRLF continues', 'sshpass \\ \t \r\n -p s3cret ssh host', `sshpass \\ \t \r\n -p ${R} ssh host`],
+  ['mysql5.7', 'mysql5.7 -u root -p s3cret db', `mysql5.7 -u root -p ${R} db`],
+  ['mysql8', 'mysql8 -ps3cret', `mysql8 -p${R}`],
+  ['mariadb10.11', 'mariadb10.11 -u root -p=s3cret', `mariadb10.11 -u root -p=${R}`],
+  ['mongosh2', 'mongosh2 -u a -p s3cret', `mongosh2 -u a -p ${R}`],
+  ['versioned name by path', '/opt/bin/mysql8.0.33 -ps3cret', `/opt/bin/mysql8.0.33 -p${R}`],
+];
+
+for (const [name, input, expected] of CONTINUED_AND_VERSIONED) {
+  test(`redact password command: ${name} (job 030)`, () => {
+    assert.equal(redact(input), expected);
+    assert.equal(containsSecret(input), true);
+    assert.equal(containsSecret(expected), false);
+    assert.ok(!cleanDetail(input).includes('s3cret'), cleanDetail(input));
+    assert.ok(!cleanSummary(input).includes('s3cret'), cleanSummary(input));
+  });
+}
+
+test('cleanDetail keeps no password after a \\ with trailing spaces (job 030)', () => {
+  const out = cleanDetail('mysql -u root \\  \n  -p s3cret db');
+  assert.ok(!out.includes('s3cret'), out);
+  assert.ok(out.includes('\n'), out);
+});
+
+test('job 024 unchanged cases, versioned look-alikes and redis-cli stay unchanged (job 030)', () => {
+  for (const text of [
+    'mkdir -p /x/y',
+    'ssh -p 2222 host',
+    'docker run -p 8080:80 img',
+    'psql -p 5433',
+    'gcc -pthread',
+    'find . -print',
+    'redis-cli -p 6380',
+    'mysql_config -p x',
+    'mysql-workbench -p x',
+    'mysql -u root\n-p 5433 is a port',
+    // A backslash not at the end of the line does not continue the command.
+    'mysql -u root \\ x\n-p 5433 is a port',
+  ]) {
+    assert.equal(redact(text), text, text);
+    assert.equal(containsSecret(text), false, text);
+  }
+});
