@@ -90,6 +90,38 @@ test('a secret that make dev-bao generates during up is scrubbed from the output
   assert.match(outcome.stderr, /boot refused JWT_SECRET=\[redacted\]/);
 });
 
+for (const [file, write] of [
+  ['secrets.json', (f: { stateDir: string }, v: string) => writeFileSync(join(f.stateDir, 'secrets.json'), JSON.stringify({ JWT_SECRET: v }))],
+  ['secret_id', (f: { stateDir: string }, v: string) => writeFileSync(join(f.stateDir, 'secret_id'), `${v}\n`)],
+  ['.env.openbao.dev', (f: { repo: string }, v: string) => writeFileSync(join(f.repo, '.env.openbao.dev'), `BAO_SECRET_ID=${v}\n`)],
+  ['overrides.env', (f: { stateDir: string }, v: string) => writeFileSync(join(f.stateDir, 'overrides.env'), `DEEPGRAM_API_KEY=${v}\n`)],
+] as const) {
+  test(`a secret make dev-bao writes to ${file} and prints in the same step is scrubbed`, async () => {
+    const f = fixture({ credentials: false, secrets: false });
+    const fresh = `generated-in-step-${file}-0123456789abcdef`;
+    for (const json of [[], ['--json']]) {
+      const runner = fakeRunner({
+        'docker container': { code: 1, stderr: 'No such container' },
+        'make dev-bao': (_call, options) => {
+          write(f, fresh);
+          // Printed whole, then split across chunks, then at the end with no newline.
+          options.onOutput?.(`wrote ${fresh}\n`);
+          options.onOutput?.(`again ${fresh.slice(0, 12)}`);
+          options.onOutput?.(`${fresh.slice(12)}\nlast ${fresh}`);
+          return { code: 0 };
+        },
+        'make dev-up': { code: 1, stderr: `boot refused ${fresh}\n` },
+      });
+      const outcome = await cli({ env: f.env, runner }, 'up', '--repo', f.repo, ...json);
+      assert.equal(outcome.code, EXIT.failure);
+      assert.ok(!(outcome.stdout + outcome.stderr).includes(fresh), outcome.stderr);
+      for (const part of [fresh.slice(0, 20), fresh.slice(-20)]) assert.ok(!(outcome.stdout + outcome.stderr).includes(part));
+      assert.match(outcome.stderr, /wrote \[redacted\]\nagain \[redacted\]\nlast \[redacted\]/);
+      assert.match(outcome.stderr, /boot refused \[redacted\]\n/);
+    }
+  });
+}
+
 test('a secret passed as an argument value never comes back in an error', async () => {
   const f = fixture({ overrides: GOOD_OVERRIDES });
   for (const argv of [

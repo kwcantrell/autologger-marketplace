@@ -64,8 +64,6 @@ export interface UpContext {
   checkout: Checkout;
   /** Receives the make output (and the step headers) as it arrives. */
   progress: (text: string) => void;
-  /** Called before each step: make dev-bao generates new secret values, which must be scrubbed too. */
-  refreshSecrets?: () => void;
 }
 
 export async function planUp(ctx: UpContext): Promise<UpReport> {
@@ -116,7 +114,6 @@ export async function runUp(ctx: UpContext, report: UpReport): Promise<UpReport>
   for (const step of report.steps) {
     if (!step.run) continue;
     const spec = STEPS[step.id];
-    ctx.refreshSecrets?.();
     ctx.progress(`==> ${step.command}  (${step.reason})\n`);
     const result = await ctx.runner('make', spec.args, {
       cwd: report.repo,

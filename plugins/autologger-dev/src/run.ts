@@ -47,7 +47,9 @@ Commands:
   ca --repo <path> [--out <file>]
                  Run ${CA_COMMAND}, check the output is one PEM certificate, write it
                  (default ~/.autologger-dev/autologger-dev-ca.crt, mode 644) and print the
-                 export NODE_EXTRA_CA_CERTS=<file> line.
+                 export NODE_EXTRA_CA_CERTS=<file> line. An existing file there is replaced only
+                 if it is a regular file holding one PEM certificate; anything else (another
+                 file, a directory, a symlink) is refused with exit 1 and left as it was.
   status [--server <url>]
                  Whether the server answers, serves /.well-known/oauth-protected-resource naming
                  its resource, and has /mcp. A TLS trust failure is reported with its fix.
@@ -160,11 +162,10 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
   const fetchFn = rawIo.fetch ?? fetch;
 
   // No value from the OpenBao state directory or .env.openbao.dev may leave this process, whoever
-  // printed it (make and docker included): scrub every write on the way out.
-  let scrub = redactor(secretValues(env, checkout.path));
-  const refreshSecrets = (): void => {
-    scrub = redactor(secretValues(env, checkout.path));
-  };
+  // printed it (make and docker included): scrub every write on the way out. The files are read
+  // again for each write, because a make step (make dev-bao) can write a new secret and print it
+  // in the same step; by the time its output reaches us the file is already on disk.
+  const scrub = (text: string): string => redactor(secretValues(env, checkout.path))(text);
   const io = { stdout: (t: string) => rawIo.stdout(scrub(t)), stderr: (t: string) => rawIo.stderr(scrub(t)) };
   const json = values.json;
   const out = (value: unknown, text: string): void => io.stdout(json ? `${JSON.stringify(value)}\n` : text);
@@ -179,7 +180,7 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
       }
       case 'up': {
         const progress = lineWriter(io.stderr);
-        const ctx = { env, runner, checkout, progress: progress.push, refreshSecrets };
+        const ctx = { env, runner, checkout, progress: progress.push };
         const plan = await planUp(ctx);
         for (const w of plan.warnings) io.stderr(`${CLI_NAME}: warning: ${w}\n`);
         if (values['dry-run']) {
@@ -189,7 +190,6 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
         try {
           await runUp(ctx, plan);
         } finally {
-          refreshSecrets();
           progress.flush();
         }
         out(plan, formatUp(plan));
