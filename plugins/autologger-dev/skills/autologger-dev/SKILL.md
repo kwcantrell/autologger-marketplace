@@ -37,7 +37,8 @@ their `fix`. Tell the user which checks are not ok, in one line each.
 - `checkout` missing: ask the user where their autologger-2 checkout is and re-run with `--repo`.
 - `docker`, `make`, `node`: installing software is the user's call; tell them what is missing.
 - `openbao`, `openbao_credentials`, `custom_dashboards`, `dev_server` missing: step 2 (`up`) fixes these.
-- `google_client` missing: step 5; the stack still comes up without it, but nobody can sign in.
+- `google_client` missing: step 5; the stack still comes up without it, and nobody can sign in
+  with Google, but MCP can still be connected without it through `dev-mcp-token` (step 5).
 - `google_client` `fail` with a key `quoted` or `padded`, or `custom_dashboards` `fail` with
   `quoted`: its value in `overrides.env` is wrapped in quotes or has spaces around it (or both: the
   fix then names both), which autologger keeps; tell the user to remove them themselves (relay the
@@ -106,8 +107,15 @@ It prints commands and never runs them. Give the user, from its fields:
 - `claude_mcp_add`: they run it to register the MCP server, then sign in from `/mcp`.
 - or `autologger_mcp_login`, with the autologger-mcp plugin's sign-in skill: they run it in a
   terminal because it opens a browser.
-- The Google OAuth client (when doctor's `google_client` is not ok): the user creates their own
-  client with the authorized redirect `https://localhost:8787/auth/google/callback`, puts
+- or, with no Google client needed, `dev_mcp_token`: autologger's dev-only `make dev-mcp-token
+  EMAIL=<address>` (with `DEV_SLOT=N` in front for slot N) piped into `autologger-mcp import-tokens
+  --server <server>`. The user runs it themselves in their autologger-2 checkout, with their own
+  email in place of `<address>`: it creates that account and an MCP grant on their dev stack, and
+  the tokens go straight into autologger-mcp. Never run it, and never ask for, print or store its
+  output.
+- The Google OAuth client (when doctor's `google_client` is not ok, and only if the user wants
+  Google sign-in): the user creates their own client with the authorized redirect `doctor` or `up`
+  prints (`google_client`'s fix, or `up`'s warning), puts
   `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `~/.autologger-local-openbao/overrides.env`
   themselves, then runs `make dev-bao` and step 2 again. Never ask them to paste the values to you.
 
@@ -159,7 +167,8 @@ it is the user's job. `--slot` takes one digit 0-9 only (anything else is exit 2
 - Never run `make dev-reset`, `stage-reset`, any `*-down` target, a stage or prod target, or
   `make dev-bao-set` with any other key. If the stack seems broken beyond what `up` fixes, tell the
   user what doctor and up reported and let them decide.
-- Do not write the Google client, edit `overrides.env`, or run `claude mcp add` or the login yourself.
+- Do not write the Google client, edit `overrides.env`, or run `claude mcp add`, the login or
+  `make dev-mcp-token` yourself.
 
 Exit codes: 0 success, 1 the command failed, 2 usage error. On a non-zero exit the reason is on stderr;
 show it to the user instead of guessing. To see every command and option:

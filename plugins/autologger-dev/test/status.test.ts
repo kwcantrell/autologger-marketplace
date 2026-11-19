@@ -151,7 +151,7 @@ test('status: an untrusted TLS certificate is reported as such, with the ca fix'
   }
 });
 
-test('connect prints the CA export, claude mcp add and the autologger-mcp login, and runs nothing', async () => {
+test('connect prints the CA export, claude mcp add, the autologger-mcp login and the dev-token line, and runs nothing', async () => {
   const f = fixture();
   const { code, stdout, stderr } = await cli({ env: f.env }, 'connect', '--json');
   assert.equal(code, EXIT.ok, stderr);
@@ -165,14 +165,19 @@ test('connect prints the CA export, claude mcp add and the autologger-mcp login,
   assert.equal(r.node_extra_ca_certs_export, `export NODE_EXTRA_CA_CERTS=${caFile}`);
   assert.equal(r.claude_mcp_add, 'claude mcp add --transport http autologger-dev https://localhost:8787/mcp');
   assert.equal(r.autologger_mcp_login, 'autologger-mcp login --server https://localhost:8787');
+  // Slot 0: no DEV_SLOT in front of make.
+  assert.equal(r.dev_mcp_token, 'make dev-mcp-token EMAIL=<address> | autologger-mcp import-tokens --server https://localhost:8787');
   const steps = r.steps as string[];
   assert.match(steps[0] ?? '', /autologger-dev ca/);
   assert.match(steps[1] ?? '', /restart Claude Code/);
+  assert.equal(steps.length, 5);
+  assert.match(steps[4] ?? '', /^Or, with no Google sign-in .*in the autologger-2 checkout run `make dev-mcp-token EMAIL=<address> \| autologger-mcp import-tokens --server https:\/\/localhost:8787` with your email \(run it yourself;/);
 
   const text = await cli({ env: f.env }, 'connect');
   assert.match(text.stdout, /^To connect Claude to https:\/\/localhost:8787\/mcp \(run these yourself\):\n {2}1\. /);
   assert.match(text.stdout, /claude mcp add --transport http autologger-dev https:\/\/localhost:8787\/mcp/);
   assert.match(text.stdout, /autologger-mcp login --server https:\/\/localhost:8787/);
+  assert.match(text.stdout, / {2}5\. Or, with no Google sign-in .*`make dev-mcp-token EMAIL=<address> \| autologger-mcp import-tokens --server https:\/\/localhost:8787`/);
 });
 
 test('connect leaves out the export when NODE_EXTRA_CA_CERTS is set to a readable file, and for http://', async () => {
@@ -182,7 +187,7 @@ test('connect leaves out the export when NODE_EXTRA_CA_CERTS is set to a readabl
   let r = JSON.parse((await cli({ env: { ...f.env, NODE_EXTRA_CA_CERTS: ca } }, 'connect', '--json')).stdout) as Record<string, unknown>;
   assert.equal(r.node_extra_ca_certs_set, true);
   assert.equal(r.node_extra_ca_certs_export, null);
-  assert.equal((r.steps as string[]).length, 2);
+  assert.equal((r.steps as string[]).length, 3);
   r = JSON.parse((await cli({ env: f.env }, 'connect', '--server', 'http://localhost:8787', '--json')).stdout) as Record<string, unknown>;
   assert.equal(r.node_extra_ca_certs_export, null);
   assert.equal(r.claude_mcp_add, 'claude mcp add --transport http autologger-dev http://localhost:8787/mcp');

@@ -196,6 +196,7 @@ test('doctor --slot 9 checks https://localhost:29787, names the slot in its fixe
   assert.equal(report.slot, 9);
   const check = (name: string) => report.checks.find((c) => c.name === name);
   assert.match(check('google_client')?.fix ?? '', /redirect https:\/\/localhost:29787\/auth\/google\/callback.*autologger-dev up --slot 9/);
+  assert.match(check('google_client')?.fix ?? '', /; MCP can still be connected without a Google client: the user runs `DEV_SLOT=9 make dev-mcp-token EMAIL=<address> \| autologger-mcp import-tokens --server https:\/\/localhost:29787` with their email in the checkout/);
   assert.match(check('custom_dashboards')?.fix ?? '', /^autologger-dev up --slot 9 /);
   assert.match(check('node_extra_ca_certs')?.fix ?? '', /^run autologger-dev ca --slot 9 /);
   assert.match(check('openbao')?.detail ?? '', /container autologger-local-openbao is running/);
@@ -222,7 +223,8 @@ test('connect --slot 3 prints the slot\'s /mcp URL, an MCP server name for the s
   assert.equal(report.mcp_url, 'https://localhost:23787/mcp');
   assert.equal(report.claude_mcp_add, 'claude mcp add --transport http autologger-dev-3 https://localhost:23787/mcp');
   assert.equal(report.autologger_mcp_login, 'autologger-mcp login --server https://localhost:23787');
-  assert.match(report.steps[0] ?? '', /^Write the dev CA first: autologger-dev ca --slot 3 /);
+  assert.equal(report.dev_mcp_token, 'DEV_SLOT=3 make dev-mcp-token EMAIL=<address> | autologger-mcp import-tokens --server https://localhost:23787');
+  assert.ok(report.steps.some((s) => s.includes('`DEV_SLOT=3 make dev-mcp-token EMAIL=<address> | autologger-mcp import-tokens --server https://localhost:23787`')));
   const text = await cli({ env: f.env }, 'connect', '--slot', '3');
   assert.match(text.stdout, /^To connect Claude to https:\/\/localhost:23787\/mcp /);
 });

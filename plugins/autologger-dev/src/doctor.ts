@@ -4,6 +4,7 @@
 // dev server.
 import { accessSync, constants, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { devMcpTokenCommand } from './connect.ts';
 import { DEFAULT_SERVER, type Env, type Fetch, probe } from './http.ts';
 import type { Runner } from './runner.ts';
 import { cliCommand, DEV_PORT_KEY, type DevPort, googleRedirect } from './slot.ts';
@@ -151,6 +152,12 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
     }
     if (unset.length > 0) {
       fixes.push(`the user adds their own Google OAuth client (redirect ${googleRedirect(slot, ctx.devPort)}) to ${overridesPath}, then runs make dev-bao and ${up}`);
+    }
+    // Google sign-in is only one way in: MCP can still be connected with a dev token.
+    if (!google.ok) {
+      fixes.push(
+        `MCP can still be connected without a Google client: the user runs \`${devMcpTokenCommand(ctx.server, slot)}\` with their email in the checkout (autologger's dev-only dev-mcp-token; see autologger-dev connect)`,
+      );
     }
     checks.push({
       ...(google.ok
