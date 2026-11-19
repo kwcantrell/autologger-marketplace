@@ -566,3 +566,143 @@ test('round 1: a Unicode line separator still ends the line for a key=value sepa
   assert.equal(redact('token= next'), 'token= next');
   assert.equal(redact('password: next'), 'password: next');
 });
+
+// Job 034 (follow-up 030 #1): JSON logged inside a JSON string, its quotes escaped once or more.
+const ESCAPED_JSON: Array<[string, string, string, string]> = [
+  ['escaped password', String.raw`{\"password\": \"hunter2\"}`, String.raw`{\"password\": \"${R}\"}`, 'hunter2'],
+  ['escaped token, no space', String.raw`{\"token\":\"abc123\"}`, String.raw`{\"token\":\"${R}\"}`, 'abc123'],
+  ['double-escaped api_key', String.raw`"{\\\"api_key\\\": \\\"xyz\\\"}"`, String.raw`"{\\\"api_key\\\": \\\"${R}\\\"}"`, 'xyz'],
+  ['escaped api_key in a JSON string', String.raw`"{\"api_key\": \"xyz\"}"`, String.raw`"{\"api_key\": \"${R}\"}"`, 'xyz'],
+  ['escaped authorization', String.raw`{\"authorization\": \"Bearer abc.def\"}`, String.raw`{\"authorization\": \"${R}\"}`, 'abc.def'],
+  ['escaped body in a logged JSON field', String.raw`"body": "{\"password\": \"hunter2\"}"`, String.raw`"body": "{\"password\": \"${R}\"}"`, 'hunter2'],
+];
+
+for (const [name, input, expected, secret] of ESCAPED_JSON) {
+  test(`redact escaped JSON: ${name} (job 034)`, () => {
+    assert.equal(redact(input), expected);
+    assert.equal(containsSecret(input), true);
+    assert.equal(containsSecret(expected), false);
+    assert.equal(redact(expected), expected);
+    const detail = cleanDetail(input);
+    assert.equal(detail, expected);
+    assert.equal(containsSecret(detail), false, detail);
+    assert.ok(!cleanSummary(input).includes(secret), cleanSummary(input));
+  });
+}
+
+test('escaped JSON with an ordinary key is left unchanged (job 034)', () => {
+  for (const text of [String.raw`{\"status\": \"ok\"}`, String.raw`"{\\\"status\\\": \\\"ok\\\"}"`, String.raw`{\"user\":\"ada\", \"n\": 3}`]) {
+    assert.equal(redact(text), text, text);
+    assert.equal(cleanDetail(text), text, text);
+    assert.equal(containsSecret(text), false, text);
+  }
+});
+
+// Job 034 (follow-up 030 #3): the --flag rule takes a flag run once, however often it holds the word.
+const FLAG_RUNS = [(n: number) => '--token-'.repeat(n / 8), (n: number) => '--password-'.repeat(n / 11), (n: number) => '--secret-x'.repeat(n / 10)];
+
+test('the --flag rule is linear: 64 KB runs of secret flag words return in under 200 ms (job 034)', () => {
+  for (const input of ['--token-'.repeat(8192), '--password-'.repeat(6000), '--secret-x'.repeat(6500)]) {
+    const ms = timed(() => redact(input));
+    assert.ok(ms < 200, `${JSON.stringify(input.slice(0, 12))}x${input.length}: ${ms} ms`);
+    const summary = timed(() => cleanSummary(input));
+    const detail = timed(() => cleanDetail(input));
+    assert.ok(summary < 600, `cleanSummary ${JSON.stringify(input.slice(0, 12))}: ${summary} ms`);
+    assert.ok(detail < 600, `cleanDetail ${JSON.stringify(input.slice(0, 12))}: ${detail} ms`);
+  }
+});
+
+test('the --flag rule time grows about linearly from 64 KB to 200 KB (job 034)', () => {
+  for (const make of FLAG_RUNS) {
+    const small = make(66000);
+    const large = make(206250);
+    const best = (input: string): number => Math.min(...[0, 1, 2].map(() => timed(() => redact(input))));
+    best(small);
+    const ratio = best(large) / Math.max(best(small), 1);
+    // 3.1x the input: linear is about 3x, quadratic about 10x. The floor of 1 ms absorbs timer noise.
+    assert.ok(ratio < 6, `${JSON.stringify(small.slice(0, 12))}: ${ratio.toFixed(1)}x for 3.1x the input`);
+  }
+});
+
+test('flags redacted before are still redacted (job 034)', () => {
+  const cases: Array<[string, string]> = [
+    ['--token=x', `--token=${R}`],
+    ['--token x', `--token ${R}`],
+    ['--api-token=x', `--api-token=${R}`],
+    ['--password x', `--password ${R}`],
+    ['--client-secret=x', `--client-secret=${R}`],
+    ['run --api-token "abc" now', `run --api-token "${R}" now`],
+    ['x--token-token-token abc', `x--token-token-token ${R}`],
+    // A flag with no secret word does not hide a secret flag in the word after it.
+    ['--foo bar--token x', `--foo bar--token ${R}`],
+  ];
+  for (const [input, expected] of cases) {
+    assert.equal(redact(input), expected, input);
+    assert.equal(containsSecret(expected), false, expected);
+  }
+  for (const text of ['--foo bar', '--token -x', 'token-x y']) assert.equal(redact(text), text, text);
+});
+
+// Job 034 (follow-up 030 #4): a password command after an authorization value on the same line,
+// continued onto the next, is redacted before the authorization rule takes the rest of the line.
+const AUTHORIZATION_THEN_PASSWORD: Array<[string, string, string]> = [
+  ['Authorization: Token; mysql \\', 'Authorization: Token abc; mysql -u root \\\n-p s3cret db', `Authorization: ${R}\n-p ${R} db`],
+  ['HTTP_AUTHORIZATION: Token; mysql \\', 'HTTP_AUTHORIZATION: Token abc; mysql \\\n -p s3cret', `HTTP_AUTHORIZATION: ${R}\n -p ${R}`],
+  ['authorization=Bearer && mysqldump \\', 'authorization=Bearer x && mysqldump \\\n-ps3cret', `authorization=${R}\n-p${R}`],
+];
+
+for (const [name, input, expected] of AUTHORIZATION_THEN_PASSWORD) {
+  test(`redact authorization then a password command: ${name} (job 034)`, () => {
+    assert.equal(redact(input), expected);
+    assert.equal(containsSecret(input), true);
+    assert.equal(containsSecret(expected), false);
+    for (const out of [redact(input), cleanDetail(input), cleanSummary(input)]) {
+      for (const word of ['s3cret', 'abc', 'Token', 'Bearer']) assert.ok(!out.includes(word), `${JSON.stringify(out)} keeps ${word}`);
+    }
+  });
+}
+
+// Job 034: what the differential fuzz against the job 030 code turned up while this was built. Each
+// of these lost its secret in a draft of this change and is redacted by the code before it.
+test('a -p value read as a key or flag keeps its value redacted (job 034)', () => {
+  const cases: Array<[string, string, Array<(text: string) => string>]> = [
+    ['mysql -ptoken zq8m8w', 'zq8m8w', [redact, cleanDetail, cleanSummary]],
+    ['Authorization: x; mysql \\\n-ptoken zq8m8w', 'zq8m8w', [redact, cleanDetail, cleanSummary]],
+    ['Authorization: x; mysql \\\n-pAuthorization: zq3ank', 'zq3ank', [redact, cleanDetail, cleanSummary]],
+    ['authorization=sshpass\\\n-p"mysql"-pzqhhvk', 'zqhhvk', [redact, cleanDetail, cleanSummary]],
+    // A U+2028 ends the key's line: only the summary, which joins the lines, makes this a pair.
+    ['"Authorization=\n"Authorization:mariadb\\\n-p[session:\u2028zq4otgk', 'zq4otgk', [cleanSummary]],
+    ['secret=\'zq20ctw"Authorization:mysqldump\\\n-p\'"\'', 'zq20ctw', [cleanSummary]],
+  ];
+  for (const [input, secret, clean] of cases) {
+    for (const f of clean) assert.ok(!f(input).includes(secret), `${f.name} ${JSON.stringify(input)}: ${JSON.stringify(f(input))}`);
+  }
+});
+
+test('an escaped key or value does not take text that the other rules read (job 034)', () => {
+  for (const [input, secret] of [
+    ['\\"cookie\\":Authorization=\nzqg7k', 'zqg7k'],
+    ['\\"session\\":mysqldump\n-pzq3jagw', 'zq3jagw'],
+    ['\\"token\\":token="zq3sviw\n"', 'zq3sviw'],
+    // An escaped opening quote with a plain closing one is not an escaped value: `"session"` is a key.
+    ['secret:\\"session"=zq1kor', 'zq1kor'],
+  ]) {
+    assert.ok(!cleanSummary(input!).includes(secret!), `${JSON.stringify(input)}: ${JSON.stringify(cleanSummary(input!))}`);
+  }
+});
+
+test('redact stays fast on escaped keys, backslash runs and continued authorization lines (job 034)', () => {
+  for (const input of [
+    'Authorization: x; mysql \\\n'.repeat(2600),
+    'authorization=x \\\ntoken=y \\\n'.repeat(2600),
+    'authorization=mysql;'.repeat(3300) + ' \\\n-p x',
+    '\\'.repeat(65536),
+    `${'\\'.repeat(65535)}"`,
+    '{\\"token\\":\\"'.repeat(5000),
+    '\\"token\\"'.repeat(6500),
+    `token: \\"${'\\'.repeat(65000)}`,
+  ]) {
+    const ms = timed(() => redact(input));
+    assert.ok(ms < 200, `${JSON.stringify(input.slice(0, 12))}x${input.length}: ${ms} ms`);
+  }
+});
