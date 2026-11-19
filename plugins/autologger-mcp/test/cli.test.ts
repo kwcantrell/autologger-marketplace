@@ -60,10 +60,31 @@ after(async () => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-function skillCommands(skill: string): string[] {
-  const text = readFileSync(join(pluginRoot, 'skills', skill, 'SKILL.md'), 'utf8');
+// Commands in the ```sh blocks of a skill: each starts at a line beginning with "npx " and, like the
+// shell, continues over lines ending in an odd number of backslashes (only the "\" and the newline
+// are removed), stopping at the closing fence (the last element of the split), so a dangling "\" there
+// is kept. Mirrors npxLines in plugin-builder's check.ts; copied so this test stays standalone. Unlike
+// npxLines, a block opens only at "```sh" + newline and ends at the next "```" anywhere in a line.
+function shCommands(text: string): string[] {
   const blocks = [...text.matchAll(/```sh\n([\s\S]*?)```/g)].map((m) => m[1] ?? '');
-  return blocks.flatMap((b) => b.split('\n')).filter((line) => line.startsWith('npx '));
+  const continues = (s: string): boolean => (/\\+$/.exec(s)?.[0].length ?? 0) % 2 === 1;
+  const out: string[] = [];
+  for (const block of blocks) {
+    const lines = block.split('\n');
+    lines.forEach((line, index) => {
+      let command = line.trim();
+      if (!command.startsWith('npx ')) return;
+      for (let next = index + 1; continues(command) && next < lines.length - 1; next++) {
+        command = `${command.slice(0, -1)}${(lines[next] ?? '').trimEnd()}`;
+      }
+      out.push(command.trim());
+    });
+  }
+  return out;
+}
+
+function skillCommands(skill: string): string[] {
+  return shCommands(readFileSync(join(pluginRoot, 'skills', skill, 'SKILL.md'), 'utf8'));
 }
 
 /** The Bash(<prefix>:*) rules in a skill's allowed-tools, as prefixes. */

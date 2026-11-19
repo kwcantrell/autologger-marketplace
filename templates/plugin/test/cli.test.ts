@@ -31,16 +31,59 @@ env.CLAUDE_PLUGIN_ROOT = pluginRoot;
 env.npm_config_cache = join(scratch, 'npm-cache');
 env.npm_config_offline = 'true';
 
-function skillCommands(): string[] {
-  const text = readFileSync(join(pluginRoot, SKILL), 'utf8');
+// Commands in the ```sh blocks of a skill: each starts at a line beginning with "npx " and, like the
+// shell, continues over lines ending in an odd number of backslashes (only the "\" and the newline
+// are removed), stopping at the closing fence (the last element of the split), so a dangling "\" there
+// is kept. Mirrors npxLines in plugin-builder's check.ts; copied so this test stays standalone. Unlike
+// npxLines, a block opens only at "```sh" + newline and ends at the next "```" anywhere in a line.
+function shCommands(text: string): string[] {
   const blocks = [...text.matchAll(/```sh\n([\s\S]*?)```/g)].map((m) => m[1] ?? '');
-  return blocks.flatMap((b) => b.split('\n')).filter((line) => line.startsWith('npx '));
+  const continues = (s: string): boolean => (/\\+$/.exec(s)?.[0].length ?? 0) % 2 === 1;
+  const out: string[] = [];
+  for (const block of blocks) {
+    const lines = block.split('\n');
+    lines.forEach((line, index) => {
+      let command = line.trim();
+      if (!command.startsWith('npx ')) return;
+      for (let next = index + 1; continues(command) && next < lines.length - 1; next++) {
+        command = `${command.slice(0, -1)}${(lines[next] ?? '').trimEnd()}`;
+      }
+      out.push(command.trim());
+    });
+  }
+  return out;
+}
+
+function skillCommands(): string[] {
+  return shCommands(readFileSync(join(pluginRoot, SKILL), 'utf8'));
 }
 
 function sh(command: string): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync('sh', ['-c', command], { cwd, env, encoding: 'utf8', timeout: 60_000 });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
+
+test('skill command extraction runs a backslash-continued command whole and leaves a plain line alone', () => {
+  const fence = '`'.repeat(3);
+  const text = [
+    `${fence}sh`,
+    'npx --yes -- tool one --json',
+    'npx --yes -- tool two \\  ',
+    '  --flag value \\',
+    '  --json',
+    'npx --yes -- tool three \\\\',
+    'npx --yes -- tool four \\',
+    fence,
+    'npx --yes -- outside the fence \\',
+    '',
+  ].join('\n');
+  assert.deepEqual(shCommands(text), [
+    'npx --yes -- tool one --json',
+    'npx --yes -- tool two   --flag value   --json',
+    'npx --yes -- tool three \\\\',
+    'npx --yes -- tool four \\',
+  ]);
+});
 
 test('the skill calls the CLI only through the shared npx invocation', () => {
   const commands = skillCommands();

@@ -49,9 +49,47 @@ function skillText(skill: string): string {
   return readFileSync(join(pluginRoot, 'skills', skill, 'SKILL.md'), 'utf8');
 }
 
+// Commands in the ```sh blocks of a skill: each starts at a line beginning with "npx " and, like the
+// shell, continues over lines ending in an odd number of backslashes (only the "\" and the newline
+// are removed), stopping at the closing fence (the last element of the split), so a dangling "\" there
+// is kept. Mirrors npxLines in plugin-builder's check.ts; copied so this test stays standalone. Unlike
+// npxLines, a block opens only at "```sh" + newline and ends at the next "```" anywhere in a line.
+function shCommands(text: string): string[] {
+  const blocks = [...text.matchAll(/```sh\n([\s\S]*?)```/g)].map((m) => m[1] ?? '');
+  const continues = (s: string): boolean => (/\\+$/.exec(s)?.[0].length ?? 0) % 2 === 1;
+  const out: string[] = [];
+  for (const block of blocks) {
+    const lines = block.split('\n');
+    lines.forEach((line, index) => {
+      let command = line.trim();
+      if (!command.startsWith('npx ')) return;
+      for (let next = index + 1; continues(command) && next < lines.length - 1; next++) {
+        command = `${command.slice(0, -1)}${(lines[next] ?? '').trimEnd()}`;
+      }
+      out.push(command.trim());
+    });
+  }
+  return out;
+}
+
+// Every physical line starting with "npx " is the first line of one of the commands shCommands
+// extracted (that is, inside a sh block). A continued command is compared by its first line, with
+// the trailing "\" (and spaces after it) removed from that line.
+function assertNpxLinesInSh(text: string, commands: string[]): void {
+  const firstLines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith('npx '));
+  assert.equal(firstLines.length, commands.length, `npx lines outside a sh block:\n${firstLines.join('\n')}`);
+  firstLines.forEach((line, i) => {
+    const odd = (/\\+$/.exec(line)?.[0].length ?? 0) % 2 === 1;
+    const start = odd ? line.slice(0, -1) : line;
+    assert.ok((commands[i] ?? '').startsWith(start.trimEnd()), `${line}\nis not the start of\n${commands[i] ?? ''}`);
+  });
+}
+
 function skillCommands(skill: string): string[] {
-  const blocks = [...skillText(skill).matchAll(/```sh\n([\s\S]*?)```/g)].map((m) => m[1] ?? '');
-  return blocks.flatMap((b) => b.split('\n')).map((line) => line.trim()).filter((line) => line.startsWith('npx '));
+  return shCommands(skillText(skill));
 }
 
 function fill(command: string): string {
@@ -72,6 +110,24 @@ function checkout(): Fixture {
   return f;
 }
 
+test('the npx-lines-in-sh check accepts a backslash-continued command and rejects an npx line outside a sh block', () => {
+  const fence = '`'.repeat(3);
+  const skill = [
+    `${fence}sh`,
+    'npx --yes -- tool check \\  ',
+    '  --all \\',
+    '  --json',
+    'npx --yes -- tool --help',
+    fence,
+    '',
+  ].join('\n');
+  const commands = shCommands(skill);
+  assert.deepEqual(commands, ['npx --yes -- tool check   --all   --json', 'npx --yes -- tool --help']);
+  assertNpxLinesInSh(skill, commands);
+  const outside = `${skill}npx --yes -- tool stray --json\n`;
+  assert.throws(() => assertNpxLinesInSh(outside, shCommands(outside)), /npx lines outside a sh block/);
+});
+
 test('there are the two skills, and each calls the CLI only through the shared npx invocation', () => {
   assert.deepEqual(skills.sort(), ['autologger-new-spec', 'autologger-specs']);
   for (const skill of skills) {
@@ -82,8 +138,7 @@ test('there are the two skills, and each calls the CLI only through the shared n
     assert.ok(commands.length >= 2, `expected npx command lines in ${skill}`);
     for (const command of commands) assert.ok(command.startsWith(`${INVOCATION} `), command);
     // Every npx line in the skill is inside a sh block, so the tests below run all of them.
-    const allNpxLines = text.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('npx '));
-    assert.deepEqual(allNpxLines, commands);
+    assertNpxLinesInSh(text, commands);
   }
   assert.equal(existsSync(join(pluginRoot, 'node_modules')), false);
 });
