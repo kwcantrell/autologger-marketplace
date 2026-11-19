@@ -67,41 +67,91 @@ function redactCookies(value: string, setCookie: boolean): string {
  */
 const H = '[^\\S\\r\\n\\u2028\\u2029]';
 const KEY_SEP = new RegExp(`(?:(["'])|(?<![A-Za-z0-9_.-]))[0-9.-]*([A-Za-z_][A-Za-z0-9_.-]*)\\1(${H}*[=:]${H}*)`, 'g');
+/** A key whose quotes are escaped with backslashes, once or more (`{\"password\": ...}`, JSON logged
+ * inside a JSON string), closed with the same escape it opens with. A run of backslashes is tried
+ * from its start only (the lookbehind), so it is scanned once. */
+const ESCAPED_KEY_SEP = new RegExp(`(?<!\\\\)(\\\\+["'])[0-9.-]*([A-Za-z_][A-Za-z0-9_.-]*)\\1(${H}*[=:]${H}*)`, 'g');
 /** The value after a key: quoted (with an optional string prefix such as Python's `b'...'` or
  * `u'...'`), or a bare run of value characters, where a `]` ends it unless it closes a marker or more
  * value follows. Sticky: it is tried only right after a key's separator. */
 const KEY_VALUE = /([bBuUrR]{0,2})(?:"([^"\n]*)"|'([^'\n]*)')|((?:\[redacted\]|\](?=[^\s"'&;,)}\]])|[^\s"'&;,)}\]])+)/y;
+/** A quoted value whose quotes are escaped (`\"abc\"`), tried before `KEY_VALUE` after an escaped key
+ * only. It counts only when the closing quote has the same escape as the opening one. */
+const ESCAPED_VALUE = /([bBuUrR]{0,2})(\\+)(?:"([^"\n]*)"|'([^'\n]*)')/y;
+
+/** The escaped quoted value at `at`, redacted, with its length; or undefined when there is none. */
+function escapedValue(text: string, at: number): [string, number] | undefined {
+  ESCAPED_VALUE.lastIndex = at;
+  const v = ESCAPED_VALUE.exec(text);
+  if (v === null) return undefined;
+  const [value, prefix = '', escape = '', dq, sq] = v;
+  const quote = dq === undefined ? "'" : '"';
+  const inner = dq ?? sq ?? '';
+  if (!inner.endsWith(escape)) return undefined;
+  const content = inner.slice(0, inner.length - escape.length);
+  return [keep(content) ? value : `${prefix}${escape}${quote}${REDACTED}${escape}${quote}`, value.length];
+}
 
 /**
  * `key=value`, `key: value` and `"key": "value"` with a secret-looking key: the value is redacted;
  * only an exact marker is kept, so `[redacted]x` is redacted again. One scan, left to right: after an
  * ordinary key the scan goes on inside its value, so `failed: password=x` and `error=token=abc` are
  * redacted, with no recursion and in linear time however many `a=a=...` segments a line holds.
+ * `keySep` is `KEY_SEP` or `ESCAPED_KEY_SEP`; its groups are the key's opening quote, the key and the
+ * separator. With `escaped`, a value may have escaped quotes and a value that is not quoted is left
+ * alone.
  */
-function redactKeyValues(text: string): string {
+function scanKeyValues(text: string, keySep: RegExp, escaped: boolean): string {
   let out = '';
   let done = 0;
-  KEY_SEP.lastIndex = 0;
-  for (let m = KEY_SEP.exec(text); m !== null; m = KEY_SEP.exec(text)) {
-    const [head, q = '', key = '', sep = ''] = m;
+  keySep.lastIndex = 0;
+  for (let m = keySep.exec(text); m !== null; m = keySep.exec(text)) {
+    const [head, q, key = '', sep = ''] = m;
     if (!isSecretKey(key)) continue;
     const at = m.index + head.length;
-    KEY_VALUE.lastIndex = at;
-    const v = KEY_VALUE.exec(text);
-    if (v === null) continue;
-    const [value, prefix = '', dq, sq, bare] = v;
-    const end = at + value.length;
-    KEY_SEP.lastIndex = end;
     // A `Cookie:` header on its line is the cookie rule's (above): its value is `name=[redacted]`.
-    if (q === '' && /^(set-)?cookie$/i.test(key) && /^[ \t]*:[ \t]*$/.test(sep)) continue;
+    const cookieHeader = q === undefined && /^(set-)?cookie$/i.test(key) && /^[ \t]*:[ \t]*$/.test(sep);
     let replaced: string;
-    if (dq !== undefined) replaced = keep(dq) ? value : `${prefix}"${REDACTED}"`;
-    else if (sq !== undefined) replaced = keep(sq) ? value : `${prefix}'${REDACTED}'`;
-    else replaced = keep(bare ?? '') ? value : REDACTED;
+    let end: number;
+    const quoted = escaped ? escapedValue(text, at) : undefined;
+    if (quoted !== undefined) {
+      end = at + quoted[1];
+      keySep.lastIndex = end;
+      if (cookieHeader) continue;
+      replaced = quoted[0];
+    } else {
+      KEY_VALUE.lastIndex = at;
+      const v = KEY_VALUE.exec(text);
+      if (v === null) continue;
+      const [value, prefix = '', dq, sq, bare] = v;
+      end = at + value.length;
+      keySep.lastIndex = end;
+      if (cookieHeader) continue;
+      if (dq !== undefined) replaced = keep(dq) ? value : `${prefix}"${REDACTED}"`;
+      else if (sq !== undefined) replaced = keep(sq) ? value : `${prefix}'${REDACTED}'`;
+      else if (escaped) continue;
+      else replaced = keep(bare ?? '') ? value : REDACTED;
+    }
     out += text.slice(done, at) + replaced;
     done = end;
   }
   return out + text.slice(done);
+}
+
+function redactKeyValues(text: string): string {
+  return scanKeyValues(text, KEY_SEP, false);
+}
+
+/**
+ * The same for keys with escaped quotes, for quoted values only (escaped JSON quotes its strings),
+ * run after every other rule so that it only adds to what they redact. In `redactKeyValues`'s place,
+ * or with bare values, it would take text the rules after that read: in `{\"session\": mysql -p x}`
+ * the value `mysql` is the name the `-p` rule looks for, and in `\"cookie\":Authorization=` the value
+ * is a key whose value is on the next line until `cleanSummary` joins the lines. Escaped values are
+ * read here only, for the same reason: `secret:\"\"session"=x` is a key `"session"` to the other rules.
+ */
+function redactEscapedKeyValues(text: string): string {
+  return scanKeyValues(text, ESCAPED_KEY_SEP, true);
 }
 
 /**
@@ -143,6 +193,77 @@ function redactPasswordFlags(text: string): string {
   );
 }
 
+/**
+ * Authorization headers and the `=` form: any key that ends in `authorization` (`Authorization`,
+ * `Proxy-Authorization`, `HTTP_AUTHORIZATION`, `x_authorization`), any casing, with `:` or `=`. The
+ * value goes to the end of the line, any scheme, or to the closing quote when the value, or the whole
+ * pair, is quoted (`-H "Authorization: Token abc"`). Groups: the pair's opening quote, the name, the
+ * separator, then the value: double-quoted, single-quoted, or the rest of the line.
+ */
+const AUTHORIZATION = `(?:(["'])|(?<![A-Za-z0-9_.-]))([A-Za-z0-9_.-]*authorization)(${H}*[=:]${H}*)(?:"([^"\\n]*)"|'([^'\\n]*)'|([^\\n]*))`;
+
+function redactAuthorization(m: string, quote?: string, name?: string, sep?: string, dq?: string, sq?: string, rest?: string): string {
+  const open = quote ?? '';
+  const head = `${open}${name}${sep}`;
+  if (dq !== undefined) return keep(dq) ? m : `${head}"${REDACTED}"`;
+  if (sq !== undefined) return keep(sq) ? m : `${head}'${REDACTED}'`;
+  const close = open === '' ? -1 : (rest ?? '').indexOf(open);
+  const value = close === -1 ? (rest ?? '') : (rest ?? '').slice(0, close);
+  return keep(value.trim()) ? m : `${head}${REDACTED}${close === -1 ? '' : (rest ?? '').slice(close)}`;
+}
+
+/** Whether the line that ends at `eol` (the index of its `\n`, or the text's length) ends in a
+ * backslash continuation, as `PASSWORD_COMMAND` reads one: `\`, then spaces or tabs, then CR LF or LF. */
+function continues(text: string, eol: number): boolean {
+  if (eol >= text.length) return false;
+  let i = eol;
+  if (text[i - 1] === '\r') i--;
+  while (i > 0 && (text[i - 1] === ' ' || text[i - 1] === '\t')) i--;
+  return text[i - 1] === '\\';
+}
+
+function lineEnd(text: string, from: number): number {
+  const at = text.indexOf('\n', from);
+  return at === -1 ? text.length : at;
+}
+
+const AUTHORIZATION_SCAN = new RegExp(AUTHORIZATION, 'gi');
+
+/**
+ * `-p` values in a password command that an authorization value takes to the end of its line, run
+ * before the authorization rule. A command continued onto the next line with a backslash
+ * (`Authorization: Token abc; mysql \` then `-p s3cret`) would otherwise lose its first line, and with
+ * it its name, so its `-p` on the next line would be kept. Only the logical line from the value on is
+ * done here. The command is left for `redactPasswordFlags` in its usual place, as before, when the
+ * continuation lines and the line after them hold a quote (which `cleanSummary`, joining the lines,
+ * may pair with one on the line above), or when the rules after this one change anything in them,
+ * as they are or joined onto one line: a `-p` value that is itself a key or a flag (`-ptoken x`), or
+ * that holds another command's name, is then read the way it was before. Each logical line is looked
+ * at once, so the scan stays linear.
+ */
+function redactPasswordFlagsFirst(text: string): string {
+  let out = '';
+  let done = 0;
+  AUTHORIZATION_SCAN.lastIndex = 0;
+  for (let m = AUTHORIZATION_SCAN.exec(text); m !== null; m = AUTHORIZATION_SCAN.exec(text)) {
+    const [whole, quote, , , dq, sq, rest] = m;
+    const eol = m.index + whole.length;
+    // Only a value the authorization rule takes to the end of the line, and only a continued line.
+    if (rest === undefined || dq !== undefined || sq !== undefined || keep(rest.trim())) continue;
+    if ((quote !== undefined && rest.includes(quote)) || !continues(text, eol)) continue;
+    let end = lineEnd(text, eol + 1);
+    while (continues(text, end)) end = lineEnd(text, end + 1);
+    AUTHORIZATION_SCAN.lastIndex = end;
+    const after = text.slice(eol + 1, lineEnd(text, end + 1));
+    const untouched = (lines: string): boolean => applyRules(LATER_RULES, lines) === lines;
+    if (/["']/.test(after) || !untouched(after) || !untouched(oneLine(after))) continue;
+    const start = eol - rest.length;
+    out += text.slice(done, start) + redactPasswordFlags(text.slice(start, end));
+    done = end;
+  }
+  return out + text.slice(done);
+}
+
 /** A rule is a pattern and its replacement, or a function over the whole text. */
 type Rule = [RegExp, (match: string, ...groups: string[]) => string] | ((text: string) => string);
 
@@ -155,22 +276,10 @@ const RULES: Rule[] = [
     /(?<![a-z0-9+.-])([0-9+.-]*)([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi,
     (_m, lead, scheme) => `${lead}${scheme}${REDACTED}@`,
   ],
-  // Authorization headers and the `=` form: any key that ends in `authorization` (`Authorization`,
-  // `Proxy-Authorization`, `HTTP_AUTHORIZATION`, `x_authorization`), any casing, with `:` or `=`. The
-  // value goes to the end of the line, any scheme, or to the closing quote when the value, or the
-  // whole pair, is quoted (`-H "Authorization: Token abc"`).
-  [
-    new RegExp(`(?:(["'])|(?<![A-Za-z0-9_.-]))([A-Za-z0-9_.-]*authorization)(${H}*[=:]${H}*)(?:"([^"\\n]*)"|'([^'\\n]*)'|([^\\n]*))`, 'gi'),
-    (m, quote, name, sep, dq, sq, rest) => {
-      const open = quote ?? '';
-      const head = `${open}${name}${sep}`;
-      if (dq !== undefined) return keep(dq) ? m : `${head}"${REDACTED}"`;
-      if (sq !== undefined) return keep(sq) ? m : `${head}'${REDACTED}'`;
-      const close = open === '' ? -1 : (rest ?? '').indexOf(open);
-      const value = close === -1 ? (rest ?? '') : (rest ?? '').slice(0, close);
-      return keep(value.trim()) ? m : `${head}${REDACTED}${close === -1 ? '' : (rest ?? '').slice(close)}`;
-    },
-  ],
+  // -p values in a password command inside an authorization value continued onto the next line.
+  redactPasswordFlagsFirst,
+  // Authorization headers and the `=` form (see `AUTHORIZATION`).
+  [new RegExp(AUTHORIZATION, 'gi'), redactAuthorization],
   // Cookie and Set-Cookie headers: every cookie value, whatever its length.
   [/\b((?:Set-)?Cookie)([ \t]*:[ \t]*)([^\n]*)/gi, (_m, name, sep, value) => `${name}${sep}${redactCookies(value, /^set-/i.test(name))}`],
   // Authorization header schemes elsewhere in text.
@@ -188,9 +297,12 @@ const RULES: Rule[] = [
   redactKeyValues,
   // --token value / --api-key value (the = form is covered above), after any command. The flag is
   // the run of flag characters from its first `-` (letters and digits before that `-` are kept as
-  // they are); matching starts only where such a run starts, so a long word is scanned once.
+  // they are); matching starts only where such a run starts, so a long word is scanned once. The first
+  // lookahead finds the secret word in the run, scanning it once; the second takes the whole run as
+  // the flag with no way back (a backreference does not backtrack), so a run that holds the word many
+  // times (`--token-token-...`) is not retried at each of them.
   [
-    /(?<![A-Za-z0-9-])([A-Za-z0-9]*)(--?[A-Za-z0-9-]*(?:token|secret|password|passwd|api-key|apikey|cookie)[A-Za-z0-9-]*)(\s+)(["']?)([^\s"'-][^\s"']*)\4/gi,
+    /(?<![A-Za-z0-9-])([A-Za-z0-9]*)(?=-[A-Za-z0-9-]*?(?:token|secret|password|passwd|api-key|apikey|cookie))(?=(-[A-Za-z0-9-]*))\2(\s+)(["']?)([^\s"'-][^\s"']*)\4/gi,
     (m, lead, flag, space, q, value) => (keep(value) ? m : `${lead}${flag}${space}${q}${REDACTED}${q}`),
   ],
   // -p value / -p=value / -pvalue, only in mysql and similar commands.
@@ -198,12 +310,21 @@ const RULES: Rule[] = [
   // Long random-looking strings: base64 with slashes (40+), then token characters (32+).
   [/[A-Za-z0-9+/]{40,}={0,2}/g, (m) => (looksRandom(m, true) ? REDACTED : m)],
   [/[A-Za-z0-9_+=-]{32,}/g, (m) => (looksRandom(m, false) ? REDACTED : m)],
+  // key=value with escaped quotes (`{\"password\": \"x\"}`), last (see `redactEscapedKeyValues`).
+  redactEscapedKeyValues,
 ];
 
-function redactOnce(text: string): string {
+/** The rules after `redactPasswordFlagsFirst`. */
+const LATER_RULES = RULES.slice(RULES.indexOf(redactPasswordFlagsFirst) + 1);
+
+function applyRules(rules: Rule[], text: string): string {
   let out = text;
-  for (const rule of RULES) out = typeof rule === 'function' ? rule(out) : out.replace(rule[0], rule[1] as (m: string, ...g: string[]) => string);
+  for (const rule of rules) out = typeof rule === 'function' ? rule(out) : out.replace(rule[0], rule[1] as (m: string, ...g: string[]) => string);
   return out;
+}
+
+function redactOnce(text: string): string {
+  return applyRules(RULES, text);
 }
 
 /** Passes `redact` makes at most; real text settles in one or two. */
