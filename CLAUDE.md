@@ -120,7 +120,8 @@ npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>
   `"…"` string in a single-quoted JSON argument), with whitespace, a line edge or `{}[],:` outside the
   quotes; glued to other text (`<a>/tmp`, `<a><b>`, `'<a>'x`) it is checked like the rest. One trailing
   `< <placeholder>` that feeds a file the user named to the CLI's stdin is allowed. A line ending in
-  `\` is checked joined with the lines it continues (`plugin-builder check` rule `npx-chained`).
+  `\` is checked joined with the lines it continues, as the shell joins them (`plugin-builder check`
+  rule `npx-chained`).
 - `allowed-tools` in the skill frontmatter allows that prefix (`Bash(npx --yes --offline
   --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>:*)`). A CLI with commands that act on
   the machine (run a Makefile, start containers) pre-approves only its read-only commands instead,

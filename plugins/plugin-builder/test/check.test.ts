@@ -304,6 +304,29 @@ for (const [label, first] of [['\\', ' \\'], ['\\ followed by spaces', ' \\   ']
   });
 }
 
+for (const [first, next] of [[' <a>\\', '/tmp/pwn'], [' x <a>\\', '~/.bashrc'], [' <a>\\', '<b>'], [' <\\', '<a>']] as const) {
+  test(`npx-chained: a continuation joins with nothing in between, as the shell does: ${first.trim()} + ${next}`, () => {
+    const f = good();
+    const line = withContinuedLine(f, first, [next]);
+    const x = only(checkPlugin(f.root, NAME), 'npx-chained');
+    assert.deepEqual([x.line, x.message.split(' ')[1]], [line, '"<"']);
+  });
+}
+
+for (const [before, rest] of [['echo hi \\', ' --json && touch /tmp/x'], ['FOO=1 \\', ' ; id'], ['# run this \\', '; id']] as const) {
+  test(`npx-chained: an npx line continued from a non-npx line is still checked: ${before}`, () => {
+    const f = good();
+    edit(f, SKILL, (t) => `${t}\n\`\`\`sh\n${before}\n${PREFIX} ${NAME} hello${rest}\n\`\`\`\n`);
+    const x = only(checkPlugin(f.root, NAME), 'npx-chained');
+    assert.deepEqual([x.file, x.line], [SKILL, lineOf(f, SKILL, `-- ${NAME} hello${rest}`)]);
+  });
+}
+
+test('npxLines does not continue past a # comment line', () => {
+  const text = ['```sh', 'npx a \\', '# note \\', '&& rm -rf ~', '```'].join('\n');
+  assert.deepEqual(npxLines(text), [{ line: 2, text: 'npx a # note \\', inSh: true }]);
+});
+
 test('allowed-tools: missing from the frontmatter', () => {
   const f = good();
   edit(f, SKILL, (t) => t.replace(/^allowed-tools:.*\n/m, ''));
@@ -568,7 +591,7 @@ test('npxLines tracks sh fences (also indented ones) and placeholders are accept
 test('npxLines joins \\-continued lines in sh fences only, and not after an escaped \\', () => {
   const text = ['```sh', 'npx a \\', '  b \\  ', '  c', 'npx d \\\\', 'e', '```', '```text', 'npx f \\', 'g', '```'].join('\n');
   assert.deepEqual(npxLines(text), [
-    { line: 2, text: 'npx a b c', inSh: true },
+    { line: 2, text: 'npx a   b   c', inSh: true },
     { line: 5, text: 'npx d \\\\', inSh: true },
     { line: 9, text: 'npx f \\', inSh: false },
   ]);

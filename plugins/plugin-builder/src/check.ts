@@ -244,30 +244,37 @@ function continues(trimmed: string): boolean {
 }
 
 /**
- * Trimmed lines starting with `npx `, and whether each is inside a ```sh fence. Inside a ```sh fence a
- * line ending in `\\` (trailing spaces ignored) is joined with the lines that continue it, as the shell
- * would run them; the joined command keeps the first physical line's number.
+ * Trimmed lines starting with `npx `, and whether each is inside a ```sh fence. Every such physical
+ * line is reported at its own line number, whether or not an earlier line continues into it, so a
+ * continuation can never hide an npx line. Inside a ```sh fence, an npx line ending in `\` (trailing
+ * spaces ignored) is joined with the lines that continue it the way the shell does: the `\` and the
+ * newline are removed with nothing in their place, and the next line keeps its leading whitespace.
+ * A line starting with `#` is a comment and continues nothing.
  */
 export function npxLines(text: string): SkillLine[] {
   const out: SkillLine[] = [];
   const raw = text.split('\n');
   let fence: string | null = null;
-  for (let index = 0; index < raw.length; index++) {
-    const start = index;
-    let trimmed = (raw[index] ?? '').trim();
+  raw.forEach((line, index) => {
+    const trimmed = line.trim();
     const open = /^```\s*(\S*)/.exec(trimmed);
     if (open) {
       fence = fence === null ? (open[1] ?? '') : null;
-      continue;
+      return;
     }
+    if (!trimmed.startsWith('npx ')) return;
+    let command = trimmed;
     if (fence === 'sh') {
-      while (continues(trimmed) && index + 1 < raw.length && !/^```/.test((raw[index + 1] ?? '').trim())) {
-        index++;
-        trimmed = `${trimmed.slice(0, -1).trimEnd()} ${(raw[index] ?? '').trim()}`.trim();
+      let physical = trimmed;
+      for (let next = index + 1; !physical.startsWith('#') && continues(command) && next < raw.length; next++) {
+        const following = raw[next] ?? '';
+        if (/^```/.test(following.trim())) break;
+        command = `${command.slice(0, -1)}${following.trimEnd()}`;
+        physical = following.trim();
       }
     }
-    if (trimmed.startsWith('npx ')) out.push({ line: start + 1, text: trimmed, inSh: fence === 'sh' });
-  }
+    out.push({ line: index + 1, text: command.trim(), inSh: fence === 'sh' });
+  });
   return out;
 }
 
