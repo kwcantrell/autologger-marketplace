@@ -1,10 +1,11 @@
 // connect: what is left for the user to connect Claude to the dev server's MCP endpoint. It prints
-// commands and never runs them: trusting the CA needs a Claude Code restart, and both ways of
-// connecting (claude mcp add, autologger-mcp login) are the user's to run.
+// commands and never runs them: trusting the CA needs a Claude Code restart, and every way of
+// connecting (claude mcp add, autologger-mcp login, make dev-mcp-token piped into autologger-mcp
+// import-tokens) is the user's to run.
 import { accessSync, constants, statSync } from 'node:fs';
 import { exportLine } from './ca.ts';
 import { type Env, shellQuote } from './http.ts';
-import { cliCommand, mcpServerName } from './slot.ts';
+import { cliCommand, mcpServerName, slotPrefix } from './slot.ts';
 import { defaultCaFile } from './stack.ts';
 
 export interface ConnectReport {
@@ -22,7 +23,21 @@ export interface ConnectReport {
   /** Registers the MCP server as autologger-dev, or autologger-dev-N for slot N. */
   claude_mcp_add: string;
   autologger_mcp_login: string;
+  /**
+   * Connects without Google sign-in: autologger's dev-only make dev-mcp-token (run in the checkout,
+   * DEV_SLOT=N for slot N) piped into autologger-mcp import-tokens for this server.
+   */
+  dev_mcp_token: string;
   steps: string[];
+}
+
+/**
+ * The line that mints MCP tokens for a dev-stack user and imports them into autologger-mcp, with no
+ * Google OAuth client: autologger's `make dev-mcp-token` (dev only; `DEV_SLOT=N` for slot N) piped
+ * into `autologger-mcp import-tokens`, so the tokens never reach the screen.
+ */
+export function devMcpTokenCommand(server: string, slot: number): string {
+  return `${slotPrefix(slot)}make dev-mcp-token EMAIL=<address> | autologger-mcp import-tokens --server ${shellQuote(server)}`;
 }
 
 function readableFile(path: string | undefined): boolean {
@@ -45,6 +60,7 @@ export function connect(env: Env, server: string, slot = 0): ConnectReport {
   const name = mcpServerName(slot);
   const claudeAdd = `claude mcp add --transport http ${name} ${shellQuote(mcpUrl)}`;
   const login = `autologger-mcp login --server ${shellQuote(server)}`;
+  const devToken = devMcpTokenCommand(server, slot);
 
   const steps: string[] = [];
   if (exportCmd !== null) {
@@ -54,6 +70,9 @@ export function connect(env: Env, server: string, slot = 0): ConnectReport {
   steps.push(`Register the MCP server in Claude Code: \`${claudeAdd}\`, then sign in from /mcp in Claude Code.`);
   steps.push(
     `Or use the autologger-mcp plugin instead: \`${login}\` (run it yourself in a terminal; it opens a browser to sign in with Google).`,
+  );
+  steps.push(
+    `Or, with no Google sign-in (the stack's Google client may stay a placeholder), use the autologger-mcp plugin with a dev token: in the autologger-2 checkout run \`${devToken}\` with your email (run it yourself; it creates that dev-stack account and an MCP grant, and pipes the tokens into autologger-mcp without showing them).`,
   );
   return {
     server,
@@ -65,6 +84,7 @@ export function connect(env: Env, server: string, slot = 0): ConnectReport {
     node_extra_ca_certs_export: exportCmd,
     claude_mcp_add: claudeAdd,
     autologger_mcp_login: login,
+    dev_mcp_token: devToken,
     steps,
   };
 }

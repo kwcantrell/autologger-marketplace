@@ -149,6 +149,11 @@ test('doctor google_client and custom_dashboards: placeholders, absent file, unr
   assert.equal(checks.get('google_client')?.status, 'missing');
   assert.match(checks.get('google_client')?.detail ?? '', /GOOGLE_CLIENT_ID is placeholder, GOOGLE_CLIENT_SECRET is placeholder/);
   assert.match(checks.get('google_client')?.fix ?? '', /https:\/\/localhost:8787\/auth\/google\/callback/);
+  // A missing Google client does not block MCP: the fix names the dev-token path (slot 0, no DEV_SLOT).
+  assert.match(
+    checks.get('google_client')?.fix ?? '',
+    /; MCP can still be connected without a Google client: the user runs `make dev-mcp-token EMAIL=<address> \| autologger-mcp import-tokens --server https:\/\/localhost:8787` with their email in the checkout \(autologger's dev-only dev-mcp-token; see autologger-dev connect\)$/,
+  );
   assert.equal(checks.get('custom_dashboards')?.status, 'missing');
   assert.match(checks.get('custom_dashboards')?.fix ?? '', /CUSTOM_DASHBOARDS_ENABLED=1/);
 
@@ -306,6 +311,7 @@ test('doctor: both Google keys quoted, or one quoted and one not set, gets every
   assert.equal(c?.status, 'fail');
   assert.deepEqual(c?.keys, { GOOGLE_CLIENT_ID: 'quoted', GOOGLE_CLIENT_SECRET: 'quoted' });
   assert.match(c?.fix ?? '', /remove the quotes around the value of GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in /);
+  assert.match(c?.fix ?? '', /MCP can still be connected without a Google client: .*make dev-mcp-token EMAIL=<address>/);
   const half = fixture({ overrides: `GOOGLE_CLIENT_ID="${GOOGLE_ID}"\nGOOGLE_CLIENT_SECRET=""\n` });
   c = (await doctorChecks({ env: half.env }, '--repo', half.repo)).checks.get('google_client');
   assert.equal(c?.status, 'fail');
@@ -319,6 +325,7 @@ test('doctor: mismatched quotes are an ordinary set value; unquoted real values 
   let c = (await doctorChecks({ env: mismatched.env }, '--repo', mismatched.repo)).checks.get('google_client');
   assert.equal(c?.status, 'ok');
   assert.deepEqual(c?.keys, { GOOGLE_CLIENT_ID: 'set', GOOGLE_CLIENT_SECRET: 'set' });
+  assert.equal(c?.fix, null);
   const h = healthy();
   const { checks } = await doctorChecks(h, '--repo', h.repo);
   c = checks.get('google_client');

@@ -66,6 +66,13 @@ function skillCommands(skill: string): string[] {
   return blocks.flatMap((b) => b.split('\n')).filter((line) => line.startsWith('npx '));
 }
 
+/** The Bash(<prefix>:*) rules in a skill's allowed-tools, as prefixes. */
+function allowedPrefixes(skill: string): string[] {
+  const text = readFileSync(join(pluginRoot, 'skills', skill, 'SKILL.md'), 'utf8');
+  const line = /^allowed-tools: (.*)$/m.exec(text)?.[1] ?? '';
+  return [...line.matchAll(/Bash\((.*?):\*\)/g)].map((m) => m[1] ?? '');
+}
+
 /** Fills a skill's `<placeholder>` values with ids the fake server accepts. */
 function fill(command: string): string {
   return command.replace(/<([a-z_]+)>/g, (_, name: string) => `${name.toUpperCase()}-1`);
@@ -90,9 +97,17 @@ test('every skill calls the CLI only through the shared npx invocation', () => {
     const commands = skillCommands(skill);
     assert.ok(commands.length >= 2, `expected npx command lines in ${skill}`);
     for (const command of commands) assert.ok(command.startsWith(`${INVOCATION} `), command);
-    const frontmatter = readFileSync(join(pluginRoot, 'skills', skill, 'SKILL.md'), 'utf8');
-    assert.ok(frontmatter.includes(`allowed-tools: Bash(${INVOCATION}:*)`), skill);
+    // Every command line is pre-approved except import-tokens, which writes credentials: no rule
+    // (in any skill) may cover it, so Claude has to ask first.
+    const prefixes = allowedPrefixes(skill);
+    assert.ok(prefixes.length > 0 && prefixes.every((p) => p.startsWith(`${INVOCATION} `)), skill);
+    for (const command of commands) {
+      const allowed = prefixes.some((p) => command.startsWith(p));
+      assert.equal(allowed, !command.startsWith(`${INVOCATION} import-tokens`), `${skill}: ${command}`);
+    }
+    assert.ok(!prefixes.some((p) => `${INVOCATION} import-tokens --json`.startsWith(p)), `${skill} pre-approves import-tokens`);
   }
+  assert.ok(skillCommands('sign-in').some((c) => c.startsWith(`${INVOCATION} import-tokens `)), 'the sign-in skill shows import-tokens');
   assert.equal(existsSync(join(pluginRoot, 'node_modules')), false);
 });
 
@@ -117,17 +132,24 @@ test('every skill command line runs from a fresh copy and exits 0', async () => 
   // Files the write skill's commands name, as Claude would have written them.
   writeFileSync(join(cwd, 'wiki-page.md'), 'See [Jane](wiki:p_1) and [the joke](cite:S1@125.5).\n');
   writeFileSync(join(cwd, 'wiki-page.json'), JSON.stringify({ show_id: 'SHOW-1', kind: 'topic', title: 'Jokes', body_md: 'x' }));
+  // The output of `make dev-mcp-token` the user saved, fed to import-tokens on stdin (fake tokens).
+  writeFileSync(join(cwd, 'TOKEN_FILE-1'), server.mintDevTokens('dashboards session-data:write'), { mode: 0o600 });
+  let imported: Record<string, unknown> | undefined;
   for (const skill of SKILL_ORDER) {
     for (const command of skillCommands(skill).map(fill)) {
       const { status, stdout, stderr } = await sh(command);
       assert.equal(status, 0, `${command}\nstderr: ${stderr}`);
       assert.notEqual(stdout, '', command);
       if (command.includes(' --json')) JSON.parse(stdout);
+      if (command.includes(' import-tokens ')) imported = JSON.parse(stdout);
     }
   }
   const called = server.calls.filter((c) => c.tool !== undefined).map((c) => c.tool);
   assert.ok(called.includes('create_wiki_page') && called.includes('list_studios'), called.join(','));
-  assert.equal(server.counts.revocations, 1, 'the sign-in skill ends with logout');
+  // import-tokens replaced the browser sign-in (revoking its grant), then logout revoked the import.
+  assert.equal(imported?.replaced, true);
+  assert.equal(imported?.revoked_previous, true);
+  assert.equal(server.counts.revocations, 2, 'import-tokens revokes the login grant; the sign-in skill ends with logout');
 });
 
 test('check-links through npx exits 1 on a [[...]] link', async () => {

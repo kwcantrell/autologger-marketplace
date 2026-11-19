@@ -23,7 +23,7 @@ Skills:
 
 | Skill | Use |
 | --- | --- |
-| `sign-in` | Checks the sign-in (`status`), hands you the `login` command to run, signs out. |
+| `sign-in` | Checks the sign-in (`status`), hands you the `login` command (or, on a local dev stack, the `make dev-mcp-token \| import-tokens` line) to run, signs out. |
 | `query-session-data` | Lists the tools and calls the read tools, with paging. |
 | `write-session-data` | Calls the write tools after you confirm each change; runs `check-links` on wiki bodies first. |
 
@@ -75,10 +75,37 @@ approve; the browser is sent back to the CLI, which exchanges the code (PKCE S25
 
 Run `login` yourself: it needs your browser. In Claude Code you can type `!` and the command.
 
+### import-tokens (local dev stack, no browser)
+
+autologger's dev stack has a dev-only `make dev-mcp-token EMAIL=<address> [SCOPE=...]
+[CLIENT_ID=...]` (in the autologger-2 checkout, `DEV_SLOT=N` for slot N) that mints an MCP grant
+and its tokens for a dev-stack user without a Google OAuth client, and prints them as one JSON line.
+Pipe it into `import-tokens` to sign in with it:
+
+```sh
+make dev-mcp-token EMAIL=me@example.com | autologger-mcp import-tokens --server https://localhost:8787
+DEV_SLOT=2 make dev-mcp-token EMAIL=me@example.com SCOPE="dashboards session-data:write" \
+  | autologger-mcp import-tokens --server https://localhost:22787
+```
+
+(`status --json` prints the full `npx ...` form as `import_tokens_command`.) It reads the JSON from
+standard input only, never from an argument, so the tokens stay out of shell history and process
+lists. It checks that every field is there, `token_type` is `Bearer` and the scope is `dashboards`
+or `dashboards session-data:write`, then runs the same discovery as `login`: the JSON's `issuer`
+and `resource` must be the target server's (`--server`, else `$AUTOLOGGER_URL`, else the default),
+or it exits 1 having written nothing. It stores the discovered endpoints, the given `client_id` and
+the tokens in the server's credentials file, under the refresh lock, replacing any previous
+sign-in; one that held another grant is revoked first (a failed revoke only warns). It prints the
+server, scope and expiry, never a token. From then on `status`, `tools`, `call`, refreshes (with
+the imported `client_id` and refresh token) and `logout` work as after `login`.
+
+The make target creates an account and a grant on your dev stack, so run it yourself; Claude's
+`sign-in` skill hands you the line and never runs it or reads its output.
+
 ### status, logout
 
 ```sh
-autologger-mcp status           # local file only: server, signed in, scope, token expiry
+autologger-mcp status           # local file only: server, signed in, scope, token expiry, login commands
 autologger-mcp status --check   # also discovery, and a test of the token against /mcp
 autologger-mcp logout           # revoke at the server (if it can), then delete the local tokens
 ```

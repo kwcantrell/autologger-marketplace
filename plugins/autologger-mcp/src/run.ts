@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { isExpired, login, logout, requireSignedIn, TokenSource } from './auth.ts';
+import { importTokens, isExpired, login, logout, parseDevTokenGrant, requireSignedIn, TokenSource } from './auth.ts';
 import { CliError, messageOf, UsageError } from './errors.ts';
 import { DEFAULT_SERVER, type Fetch, isObject, resolveServer } from './http.ts';
 import { checkLinks } from './links.ts';
@@ -42,6 +42,10 @@ Commands:
                                wiki pages). Options: --no-browser, --timeout <seconds> (default ${DEFAULT_LOGIN_TIMEOUT_S}).
   status [--check]             Server, signed in or not, granted scope and token expiry, from the
                                local file only; --check also runs discovery and tests the token.
+  import-tokens                Store the JSON line autologger's dev-only 'make dev-mcp-token' prints,
+                               read from stdin only (pipe it in), as the sign-in for the server.
+                               Its issuer and resource must be the server's own (from discovery);
+                               a previous sign-in with another grant is revoked first.
   logout                       Revoke the sign-in at the server (when it can) and delete the
                                local tokens.
   tools                        List the MCP tools (name and description; --json: full schemas).
@@ -85,6 +89,7 @@ const COMMON: OptionName[] = ['json', 'help', 'version'];
 const COMMAND_OPTIONS: Record<string, OptionName[]> = {
   login: ['server', 'write', 'no-browser', 'timeout'],
   status: ['server', 'check'],
+  'import-tokens': ['server'],
   logout: ['server'],
   tools: ['server'],
   call: ['server', 'args', 'args-file'],
@@ -105,11 +110,18 @@ function shellQuote(text: string): string {
   return /^[A-Za-z0-9_./:=@%+-]+$/.test(text) ? text : `'${text.replaceAll("'", `'\\''`)}'`;
 }
 
+function terminalCommand(args: string): string {
+  return `npx --yes --offline --loglevel=error --package=${shellQuote(packageRoot())} -- ${CLI_NAME} ${args}`;
+}
+
 /** The exact command a user runs in a terminal to sign in. */
 export function loginCommand(server: string, write: boolean): string {
-  return `npx --yes --offline --loglevel=error --package=${shellQuote(packageRoot())} -- ${CLI_NAME} login${
-    write ? ' --write' : ''
-  } --server ${shellQuote(server)}`;
+  return terminalCommand(`login${write ? ' --write' : ''} --server ${shellQuote(server)}`);
+}
+
+/** The exact command a user pipes `make dev-mcp-token` into, in a terminal. */
+export function importTokensCommand(server: string): string {
+  return terminalCommand(`import-tokens --server ${shellQuote(server)}`);
 }
 
 function defaultOpenUrl(env: Env): (url: string) => void {
@@ -253,6 +265,7 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
           can_refresh: tokens?.refresh_token !== undefined,
           login_command: loginCommand(server, false),
           login_write_command: loginCommand(server, true),
+          import_tokens_command: importTokensCommand(server),
         };
         if (values.check) {
           const d = await discover(ctx.fetch, server);
@@ -285,6 +298,31 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
           `Credentials: ${store.path}`,
         ];
         out(report, `${lines.join('\n')}\n`);
+        return EXIT.ok;
+      }
+      case 'import-tokens': {
+        // Tokens never come from an argument: those end up in shell history and process lists.
+        if (rest.length > 0) throw new UsageError('import-tokens takes no arguments; pipe the output of make dev-mcp-token into it');
+        let reader = rawIo.readStdin;
+        if (reader === undefined) {
+          if (process.stdin.isTTY) throw new UsageError('import-tokens reads the token JSON from standard input; pipe the output of make dev-mcp-token into it');
+          reader = readStdin;
+        }
+        let text: string;
+        try {
+          text = await reader();
+        } catch (error) {
+          throw new CliError(`cannot read standard input: ${messageOf(error)}`);
+        }
+        const grant = parseDevTokenGrant(text);
+        const result = await importTokens(ctx, grant, warn);
+        const report = { ...result, expires_at: iso(result.expires_at), can_write: result.scope.split(' ').includes(WRITE_SCOPE) };
+        out(
+          report,
+          `Signed in to ${server} with imported tokens, scope '${result.scope}'; the access token expires ${report.expires_at}.\n${
+            result.replaced ? `The previous sign-in was replaced${result.revoked_previous ? ' (revoked at the server)' : ''}.\n` : ''
+          }`,
+        );
         return EXIT.ok;
       }
       case 'logout': {
