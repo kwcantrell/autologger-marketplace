@@ -20,7 +20,9 @@ test('--help prints usage on stdout', () => {
 });
 
 test('--version prints the package version', () => {
-  assert.deepEqual(call('--version'), { code: EXIT.ok, stdout: '0.1.0\n', stderr: '' });
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.match(version, /^\d+\.\d+\.\d+$/);
+  assert.deepEqual(call('--version'), { code: EXIT.ok, stdout: `${version}\n`, stderr: '' });
 });
 
 test('usage errors exit 2 with the message on stderr and nothing on stdout', () => {
