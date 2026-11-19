@@ -13,7 +13,7 @@
 //   - An entry is a match when its score is at least THRESHOLD: one autologger-specific term plus any
 //     other term, or a phrase, or three plain terms. Below that, `none_applicable` is true.
 import { DEFAULT_MODE, type Mode } from './config.ts';
-import { type AvailablePlugin, type Catalog, type ElsewherePlugin, type InstalledPlugin, SELF, type Skill, type UserSkill } from './catalog.ts';
+import { type Catalog, SELF, type Skill } from './catalog.ts';
 
 export const THRESHOLD = 3;
 export const AUTOLOGGER_WEIGHT = 2;
@@ -209,38 +209,38 @@ const byScore = <T extends { score: number; name: string }>(a: T, b: T): number 
 
 export function match(catalog: Catalog, task: string, mode: Mode = DEFAULT_MODE, threshold: number = THRESHOLD): MatchResult {
   const words = terms(task);
-  const installed: InstalledMatch[] = [];
-  const plugin = (p: InstalledPlugin): void => {
-    if (p.name === SELF) return;
+  // plugin-discover (SELF) and plugin-advisor (ADVISOR, the "nothing fits" fallback) are never task matches.
+  const excluded = (name: string): boolean => name === SELF || name === ADVISOR;
+  /** Scores a plugin; undefined when it is excluded or below the threshold. */
+  const rank = (p: { name: string; description: string; skills: readonly Skill[] }): { s: Score; skill?: string } | undefined => {
+    if (excluded(p.name)) return undefined;
     const s = score(words, p.name, pluginText(p));
-    if (s.score < threshold) return;
+    if (s.score < threshold) return undefined;
     const skill = bestSkill(words, p.skills);
-    installed.push({ kind: 'plugin', name: p.name, id: p.id, ...(skill === undefined ? {} : { skill }), description: p.description, enabled: p.enabled, score: s.score, reason: s.matched });
+    return { s, ...(skill === undefined ? {} : { skill }) };
   };
-  const userSkill = (u: UserSkill): void => {
+  const installed: InstalledMatch[] = [];
+  for (const p of catalog.installed) {
+    const r = rank(p);
+    if (r === undefined) continue;
+    installed.push({ kind: 'plugin', name: p.name, id: p.id, ...(r.skill === undefined ? {} : { skill: r.skill }), description: p.description, enabled: p.enabled, score: r.s.score, reason: r.s.matched });
+  }
+  for (const u of catalog.userSkills) {
     const s = score(words, u.name, u.description);
     if (s.score >= threshold) installed.push({ kind: 'user-skill', name: u.name, skill: u.name, description: u.description, enabled: true, score: s.score, reason: s.matched });
-  };
-  catalog.installed.forEach(plugin);
-  catalog.userSkills.forEach(userSkill);
+  }
   const available: AvailableMatch[] = [];
-  const offer = (p: AvailablePlugin): void => {
-    if (p.name === SELF) return;
-    const s = score(words, p.name, pluginText(p));
-    if (s.score < threshold) return;
-    const skill = bestSkill(words, p.skills);
-    available.push({ name: p.name, ...(skill === undefined ? {} : { skill }), description: p.description, score: s.score, reason: s.matched, installCommand: p.installCommand });
-  };
+  for (const p of catalog.available) {
+    const r = rank(p);
+    if (r === undefined) continue;
+    available.push({ name: p.name, ...(r.skill === undefined ? {} : { skill: r.skill }), description: p.description, score: r.s.score, reason: r.s.matched, installCommand: p.installCommand });
+  }
   const elsewhere: ElsewhereMatch[] = [];
-  const other = (p: ElsewherePlugin): void => {
-    if (p.name === SELF) return;
-    const s = score(words, p.name, pluginText(p));
-    if (s.score < threshold) return;
-    const skill = bestSkill(words, p.skills);
-    elsewhere.push({ name: p.name, id: p.id, ...(skill === undefined ? {} : { skill }), description: p.description, scope: p.scope, projectPath: p.projectPath, score: s.score, reason: s.matched });
-  };
-  catalog.available.forEach(offer);
-  catalog.installedElsewhere.forEach(other);
+  for (const p of catalog.installedElsewhere) {
+    const r = rank(p);
+    if (r === undefined) continue;
+    elsewhere.push({ name: p.name, id: p.id, ...(r.skill === undefined ? {} : { skill: r.skill }), description: p.description, scope: p.scope, projectPath: p.projectPath, score: r.s.score, reason: r.s.matched });
+  }
   installed.sort(byScore);
   available.sort(byScore);
   elsewhere.sort(byScore);
