@@ -59,3 +59,12 @@ test('CODEOWNERS names the maintainer for everything, and SECURITY.md routes rep
   assert.match(security, /`autologger-dev`/);
   assert.match(read('README.md'), /SECURITY\.md/);
 });
+
+test('SECURITY.md names every plugin in the marketplace manifest', () => {
+  const manifest = JSON.parse(read('.claude-plugin/marketplace.json')) as { plugins: { name: string }[] };
+  assert.ok(manifest.plugins.length > 0);
+  const security = read('SECURITY.md');
+  for (const { name } of manifest.plugins) {
+    assert.ok(security.includes(`\`${name}\``), `SECURITY.md does not name plugin ${name}`);
+  }
+});

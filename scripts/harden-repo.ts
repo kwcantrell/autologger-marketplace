@@ -16,6 +16,8 @@ export const DEFAULT_REPO = 'kwcantrell/autologger-marketplace';
 export const RULESET_NAME = 'main protection';
 /** The job name in .github/workflows/ci.yml, which is the check run name the ruleset requires. */
 export const CI_CHECK = 'ci';
+/** GitHub Actions' app id (slug github-actions): pins the required check so no other app can report a `ci` status. */
+export const GITHUB_ACTIONS_INTEGRATION_ID = 15368;
 export const CI_WORKFLOW = '.github/workflows/ci.yml';
 /** GitHub's role id for the repository admin role, as a ruleset bypass actor of type RepositoryRole. */
 export const ADMIN_ROLE_ID = 5;
@@ -118,7 +120,7 @@ export function requiredChecksRule(): Rule {
     parameters: {
       strict_required_status_checks_policy: false,
       do_not_enforce_on_create: false,
-      required_status_checks: [{ context: CI_CHECK }],
+      required_status_checks: [{ context: CI_CHECK, integration_id: GITHUB_ACTIONS_INTEGRATION_ID }],
     },
   };
 }
@@ -177,8 +179,8 @@ export function describeRuleset(r: Ruleset): string {
       if (keys === undefined) return Object.keys(params).length === 0 ? rule.type : `${rule.type}${JSON.stringify(params)}`;
       const parts = keys.map((k) => `${k}=${JSON.stringify(params[k])}`);
       if (rule.type === 'required_status_checks') {
-        const checks = Array.isArray(params.required_status_checks) ? (params.required_status_checks as { context?: unknown }[]) : [];
-        parts.unshift(`checks=${checks.map((c) => String(c.context)).sort().join('|')}`);
+        const checks = Array.isArray(params.required_status_checks) ? (params.required_status_checks as { context?: unknown; integration_id?: unknown }[]) : [];
+        parts.unshift(`checks=${checks.map((c) => (c.integration_id == null ? String(c.context) : `${String(c.context)}@${String(c.integration_id)}`)).sort().join('|')}`);
       }
       return `${rule.type}(${parts.join(' ')})`;
     })
