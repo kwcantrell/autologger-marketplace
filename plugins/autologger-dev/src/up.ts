@@ -11,13 +11,15 @@ import {
   childEnv,
   containerName,
   CREDENTIALS_FILE,
-  dashboardsEnabled,
   DASHBOARDS_KEY,
+  dashboardsState,
   GOOGLE_REDIRECT,
   googleClient,
+  googleKeysIn,
   isFile,
   openbaoContainer,
   OVERRIDES_FILE,
+  QUOTES_WHY,
   readOverrides,
   stateDir,
   verifyCheckout,
@@ -54,6 +56,7 @@ export interface UpReport {
   repo: string;
   dry_run: boolean;
   steps: PlannedStep[];
+  /** 'placeholder' also covers not set and quoted values (the warnings say which). */
   google_client: 'set' | 'placeholder';
   warnings: string[];
 }
@@ -87,12 +90,17 @@ export async function planUp(ctx: UpContext): Promise<UpReport> {
     reason: baoReasons.length > 0 ? baoReasons.join('; ') : `${container} is running and ${CREDENTIALS_FILE} is present`,
     status: 'planned',
   });
-  const dashboards = dashboardsEnabled(values);
+  const dashboards = dashboardsState(values);
   steps.push({
     id: 'dev-bao-set',
     command: STEPS['dev-bao-set'].command,
-    run: !dashboards,
-    reason: dashboards ? `${DASHBOARDS_KEY}=1 is already in ${overridesPath}` : `${DASHBOARDS_KEY} is not 1 in ${overridesPath}; /mcp needs it`,
+    run: dashboards !== 'enabled',
+    reason:
+      dashboards === 'enabled'
+        ? `${DASHBOARDS_KEY}=1 is already in ${overridesPath}`
+        : dashboards === 'quoted'
+          ? `${DASHBOARDS_KEY} is quoted in ${overridesPath} (${QUOTES_WHY}, so it is not 1); this rewrites it unquoted, and /mcp needs it`
+          : `${DASHBOARDS_KEY} is not 1 in ${overridesPath}; /mcp needs it`,
     status: 'planned',
   });
   steps.push({ id: 'dev-up', command: STEPS['dev-up'].command, run: true, reason: 'migrate, build and start the stack in HTTPS mode', status: 'planned' });
@@ -100,7 +108,14 @@ export async function planUp(ctx: UpContext): Promise<UpReport> {
 
   const google = overrides.state === 'unreadable' ? null : googleClient(values);
   const warnings: string[] = [];
-  if (google === null || !google.ok) {
+  const quoted = google === null ? [] : googleKeysIn(google, 'quoted');
+  if (quoted.length > 0) {
+    warnings.push(
+      `${quoted.join(' and ')} in ${overridesPath} ${quoted.length > 1 ? 'are' : 'is'} wrapped in quotes, and ${QUOTES_WHY}, so Google will reject the client: the stack will come up, but Google sign-in (and so the MCP sign-in) will not work. Remove the quotes, then run make dev-bao and up again.`,
+    );
+  }
+  const unset = google === null ? [] : [...googleKeysIn(google, 'placeholder'), ...googleKeysIn(google, 'not set')];
+  if (google === null || unset.length > 0) {
     warnings.push(
       `the Google OAuth client in ${overridesPath} is ${google === null ? 'unreadable' : 'a placeholder or not set'}: the stack will come up, but Google sign-in (and so the MCP sign-in) will not work. The user must add their own GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (authorized redirect ${GOOGLE_REDIRECT}) to that file, then run make dev-bao and up again.`,
     );

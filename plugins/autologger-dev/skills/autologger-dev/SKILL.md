@@ -36,6 +36,9 @@ their `fix`. Tell the user which checks are not ok, in one line each.
 - `docker`, `make`, `node`: installing software is the user's call; tell them what is missing.
 - `openbao`, `openbao_credentials`, `custom_dashboards`, `dev_server` missing: step 2 (`up`) fixes these.
 - `google_client` missing: step 5; the stack still comes up without it, but nobody can sign in.
+- `google_client` or `custom_dashboards` `fail` with a key `quoted`: its value in `overrides.env` is
+  wrapped in quotes, which autologger keeps; tell the user to remove the quotes themselves (relay the
+  fix), then run `make dev-bao` and step 2 again. Do not edit the file for them.
 - `node_extra_ca_certs` missing or a `dev_server` TLS failure: steps 3 and 5.
 
 ## 2. Bring the stack up - ask the user first
@@ -108,7 +111,7 @@ It prints commands and never runs them. Give the user, from its fields:
 
 - Never print, read out, copy or summarise values from the OpenBao state directory
   (`~/.autologger-local-openbao`: `overrides.env`, `secrets.json`, `secret_id`, `ca.pem`) or from
-  `.env.openbao.dev`. The CLI reports only whether a key is set or a placeholder; do the same.
+  `.env.openbao.dev`. The CLI reports only a key's state (set, placeholder, quoted, not set); do the same.
 - Never run `make dev-reset`, `stage-reset`, any `*-down` target, a stage or prod target, or
   `make dev-bao-set` with any other key. If the stack seems broken beyond what `up` fixes, tell the
   user what doctor and up reported and let them decide.
