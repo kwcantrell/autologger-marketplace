@@ -57,7 +57,8 @@ Commands:
                  database, launcher), after checking it is inside ~/.autologger-dev/browser.
 
 Options:
-  --slot <N>     Dev slot 0-9 (default 0: https://localhost:8787; N: https://localhost:2N787)
+  --slot <N>     Dev slot 0-9 (default 0: https://localhost:8787, or DEV_PORT from
+                 ~/.autologger-local-openbao/overrides.env; N: https://localhost:2N787)
   --ca <file>    The dev CA file (doctor, setup)
   --json         Print machine-readable JSON on stdout
   -h, --help     Show this help

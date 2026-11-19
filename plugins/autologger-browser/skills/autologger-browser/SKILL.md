@@ -15,8 +15,9 @@ directory, with no install or build step first.
 **Never use `--ignore-https-errors`** (or any flag that turns certificate checks off) for a dev
 stack page. If a page shows a certificate error, run `doctor` and follow its fixes.
 
-The dev slot is 0 (`https://localhost:8787`, runtime `https://dashboards.localhost`) unless you
-append `--slot <N>` to every command (`https://localhost:2N787`, `https://dashboards-N.localhost`).
+The dev slot is 0 (`https://localhost:8787`, or the `DEV_PORT` set in the stack's overrides.env;
+runtime `https://dashboards.localhost`) unless you append `--slot <N>` to every command
+(`https://localhost:2N787`, `https://dashboards-N.localhost`). Use the `app_url` that `setup` prints.
 
 ## 1. Check what is missing
 

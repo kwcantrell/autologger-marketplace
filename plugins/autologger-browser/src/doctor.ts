@@ -3,12 +3,12 @@
 // own database, reads the CA file, and makes two HTTPS requests verified with the dev CA.
 import { lstatSync } from 'node:fs';
 import { readCaFile } from './cert.ts';
-import { messageOf } from './errors.ts';
+import { CliError, messageOf } from './errors.ts';
 import { fileHolds } from './files.ts';
 import { findChromium, launcherScript } from './launcher.ts';
 import { CERTUTIL_FIX, NICKNAME, readTrust, TRUST, trustsExactly } from './nss.ts';
 import type { Runner } from './runner.ts';
-import { appOrigin, cliCommand, type Env, runtimeOrigin, slotPaths } from './slot.ts';
+import { caCommand, cliCommand, type Env, runtimeOrigin, slotAppOrigin, slotPaths } from './slot.ts';
 import { isTlsError, type Probe } from './tls.ts';
 
 export type CheckStatus = 'ok' | 'missing' | 'fail';
@@ -53,10 +53,34 @@ function isDir(path: string): boolean {
   }
 }
 
+/**
+ * Test only: when set, doctor probes this https origin in place of both the app and runtime
+ * origins, so the end-to-end test never sends a request to a real dev stack on this machine.
+ */
+export const TEST_PROBE_ORIGIN_ENV = 'AUTOLOGGER_BROWSER_TEST_PROBE_ORIGIN';
+
+/** The [check name, origin] pairs doctor probes for the slot. */
+export function probeOrigins(env: Env, slot: number): Array<readonly [string, string]> {
+  const override = env[TEST_PROBE_ORIGIN_ENV];
+  if (override !== undefined && override !== '') {
+    let url: URL | null = null;
+    try {
+      url = new URL(override);
+    } catch {
+      // Reported below.
+    }
+    if (url === null || url.protocol !== 'https:') throw new CliError(`${TEST_PROBE_ORIGIN_ENV} must be an https origin, not '${override}'`);
+    return [['app_tls', url.origin], ['runtime_tls', url.origin]];
+  }
+  return [['app_tls', slotAppOrigin(env, slot)], ['runtime_tls', runtimeOrigin(slot)]];
+}
+
 export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
   const { env, runner, slot } = ctx;
   const paths = slotPaths(env, slot);
   const setupCmd = cliCommand('setup', slot);
+  const caCmd = caCommand(slot);
+  const origins = probeOrigins(env, slot);
   const checks: Check[] = [];
 
   const ab = await runner('agent-browser', ['--version'], { env, timeoutMs: 15_000 });
@@ -87,21 +111,21 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
     ca.ok
       ? ok('dev_ca', `${ca.path}: one certificate, ${ca.subject}`)
       : ca.state === 'missing'
-        ? missing('dev_ca', `${ca.path} does not exist`, `write it: autologger-dev ca${slot === 0 ? '' : ` --slot ${slot}`} (or pass --ca <file>)`)
-        : fail('dev_ca', `${ca.path} cannot be used: ${ca.reason}`, `write it again: autologger-dev ca${slot === 0 ? '' : ` --slot ${slot}`}`),
+        ? missing('dev_ca', `${ca.path} does not exist`, `write it: ${caCmd} (or pass --ca <file>)`)
+        : fail('dev_ca', `${ca.path} cannot be used: ${ca.reason}`, `write it again: ${caCmd}`),
   );
 
   checks.push(await profileCheck());
 
-  for (const [name, origin] of [['app_tls', appOrigin(slot)], ['runtime_tls', runtimeOrigin(slot)]] as const) {
+  for (const [name, origin] of origins) {
     if (!ca.ok) {
-      checks.push(missing(name, `${origin} not checked: no usable dev CA`, `write the dev CA first: autologger-dev ca${slot === 0 ? '' : ` --slot ${slot}`}`));
+      checks.push(missing(name, `${origin} not checked: no usable dev CA`, `write the dev CA first: ${caCmd}`));
       continue;
     }
     const result = await ctx.probe(origin, ca.pem);
     if (result.ok) checks.push(ok(name, `${origin} answers over TLS verified with the dev CA (HTTP ${result.status})`));
     else if (isTlsError(result.code)) {
-      checks.push(fail(name, `${origin} does not verify with the dev CA (${result.code})`, `the CA file is stale: autologger-dev ca${slot === 0 ? '' : ` --slot ${slot}`}, then ${setupCmd}`));
+      checks.push(fail(name, `${origin} does not verify with the dev CA (${result.code})`, `the CA file is stale: ${caCmd}, then ${setupCmd}`));
     } else {
       checks.push(fail(name, `${origin} cannot be reached (${result.code})`, `start the dev stack in HTTPS mode: autologger-dev up${slot === 0 ? '' : ` --slot ${slot}`}`));
     }

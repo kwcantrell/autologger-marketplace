@@ -3,8 +3,10 @@
 // session cookie name (autologger-2 docs/specs/local-container-environments.md, "Dev slots run side
 // by side"; the same rules as autologger-dev's src/slot.ts):
 //   slot 0  app https://localhost:8787   runtime https://dashboards.localhost     cookie autologger_sid
+//           (the app port is DEV_PORT from ~/.autologger-local-openbao/overrides.env when valid)
 //   slot N  app https://localhost:2N787  runtime https://dashboards-N.localhost   cookie autologger_sid_N
 // Every file this plugin writes lives under ~/.autologger-dev/browser/slot-<N>/ (see slotPaths).
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { UsageError } from './errors.ts';
@@ -20,9 +22,56 @@ export function parseSlot(option: string | undefined): number {
   return Number(option);
 }
 
-/** The slot's app origin (slot 0 assumes the default port 8787; DEV_PORT is not read). */
-export function appOrigin(slot: number): string {
-  return slot === 0 ? 'https://localhost:8787' : `https://localhost:2${slot}787`;
+/** The port slot 0's app listens on when overrides.env does not set a valid DEV_PORT. */
+export const DEFAULT_DEV_PORT = 8787;
+
+/** The slot's app origin; slot 0's port is `devPort` (default 8787), slot N's is always 2N787. */
+export function appOrigin(slot: number, devPort = DEFAULT_DEV_PORT): string {
+  return slot === 0 ? `https://localhost:${devPort}` : `https://localhost:2${slot}787`;
+}
+
+/** The local OpenBao state folder ($LOCAL_BAO_DIR, else ~/.autologger-local-openbao), as autologger-dev reads it. */
+export function localBaoDir(env: Env): string {
+  return env.LOCAL_BAO_DIR !== undefined && env.LOCAL_BAO_DIR !== '' ? env.LOCAL_BAO_DIR : join(homeDir(env), '.autologger-local-openbao');
+}
+
+/**
+ * The DEV_PORT value in overrides.env, verbatim (the last KEY=value line, no unquoting or trimming:
+ * local-bao.mjs stores values as written), or undefined when the file or key is absent or unreadable.
+ * The same parse as autologger-dev's parseEnvText.
+ */
+export function readDevPortValue(env: Env): string | undefined {
+  const path = join(localBaoDir(env), 'overrides.env');
+  if (!existsSync(path)) return undefined;
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
+  let value: string | undefined;
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    if (line.trim() === '' || line.trimStart().startsWith('#')) continue;
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (m !== null && m[1] === 'DEV_PORT') value = m[2] ?? '';
+  }
+  return value;
+}
+
+/**
+ * A DEV_PORT value as a port: digits only, 1-65535, no leading zero (compose-run.mjs's own check,
+ * and autologger-dev's devPort); anything else, or no value, is the default 8787.
+ */
+export function parseDevPort(value: string | undefined): number {
+  if (value === undefined || !/^[1-9][0-9]{0,4}$/.test(value)) return DEFAULT_DEV_PORT;
+  const port = Number(value);
+  return port <= 65535 ? port : DEFAULT_DEV_PORT;
+}
+
+/** The slot's app origin on this machine: slot 0 follows DEV_PORT in overrides.env; slots 1-9 ignore it. */
+export function slotAppOrigin(env: Env, slot: number): string {
+  return slot === 0 ? appOrigin(0, parseDevPort(readDevPortValue(env))) : appOrigin(slot);
 }
 
 /** The slot's dashboard runtime origin, served on 443 by the shared dev HTTPS front. */
@@ -43,6 +92,11 @@ export function sessionName(slot: number): string {
 /** An autologger-browser command line for the slot (no flag for slot 0). */
 export function cliCommand(command: string, slot: number): string {
   return slot === 0 ? `${CLI} ${command}` : `${CLI} ${command} --slot ${slot}`;
+}
+
+/** autologger-dev's command that writes the slot's dev CA file; it runs the checkout's Makefile, so it needs --repo. */
+export function caCommand(slot: number): string {
+  return `autologger-dev ca --repo <path to autologger-2>${slot === 0 ? '' : ` --slot ${slot}`}`;
 }
 
 export function homeDir(env: Env): string {

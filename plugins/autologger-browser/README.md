@@ -40,6 +40,16 @@ Linux only. On `PATH`: `agent-browser`, a Chromium (`chromium`, `chromium-browse
 Every command takes `--json` and exits 0 (success), 1 (failed) or 2 (usage error), with the
 message on stderr.
 
+**Ports.** Slot 0's app origin is `https://localhost:<DEV_PORT>` when
+`~/.autologger-local-openbao/overrides.env` (or `$LOCAL_BAO_DIR/overrides.env`) sets a valid
+`DEV_PORT` (digits only, 1-65535, no leading zero, read verbatim as autologger-dev reads it), else
+`https://localhost:8787`. It sets doctor's `app_tls` probe and setup's `app_url`. Slots 1-9 always
+use `2N787`. The session cookie `signin` sets is not tied to a port.
+
+**CA fixes.** When the dev CA is missing or stale, doctor's fix is
+`autologger-dev ca --repo <path to autologger-2>` (plus `--slot N`): autologger-dev's `ca` runs the
+checkout's Makefile, so it needs the checkout.
+
 ## How the trust is scoped
 
 Everything lives in `~/.autologger-dev/browser/slot-<N>/` (directories mode 700):
@@ -77,3 +87,10 @@ Certificate hostname, validity and chain checks all stay on.
 never in a command line or the process list, never in a temp file, and never in this CLI's output
 or error messages (agent-browser's error text is scrubbed of it). `make dev-login` creates or signs
 in a dev account, so running that pipeline is the user's step, or Claude's only after asking.
+
+## Testing
+
+`npm test` at the repo root runs `test/*.test.ts`. The end-to-end test sets
+`AUTOLOGGER_BROWSER_TEST_PROBE_ORIGIN` to a closed port on `127.0.0.1`: **test only**, it makes
+doctor probe that https origin in place of both the app and runtime origins, so the test never sends
+a request to a dev stack running on the machine. Do not set it otherwise.

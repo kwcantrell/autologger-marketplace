@@ -1,15 +1,14 @@
 // setup: the slot's profile folder, its private NSS database trusting the dev CA (C,,: TLS only),
 // and the launcher that points Chromium at that database. Everything lives under
 // ~/.autologger-dev/browser/slot-<N>/; nothing else on the machine is written.
-import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { readCaFile } from './cert.ts';
 import { CliError } from './errors.ts';
-import { ensurePrivateDir, ensureSymlink, fileHolds, writeFileAtomic } from './files.ts';
+import { ensureDirs, ensurePrivateDir, ensureSymlink, fileHolds, writeFileAtomic } from './files.ts';
 import { findChromium, launcherScript } from './launcher.ts';
 import { addCa, createDatabase, hasDatabase, NICKNAME, readTrust, removeCa, TRUST, trustsExactly } from './nss.ts';
 import type { Runner } from './runner.ts';
-import { appOrigin, browserCommand, browserFlags, type Env, runtimeOrigin, sessionName, slotPaths } from './slot.ts';
+import { browserCommand, browserFlags, caCommand, type Env, runtimeOrigin, sessionName, slotAppOrigin, slotPaths } from './slot.ts';
 
 export interface SetupContext {
   env: Env;
@@ -45,7 +44,7 @@ export async function setup(ctx: SetupContext): Promise<SetupReport> {
   const paths = slotPaths(ctx.env, ctx.slot);
   const ca = readCaFile(ctx.ca);
   if (!ca.ok) {
-    const fix = ca.state === 'missing' ? 'write it first with autologger-dev ca (or pass --ca <file>)' : 'write it again with autologger-dev ca (or pass --ca <file>)';
+    const fix = `${ca.state === 'missing' ? 'write it first' : 'write it again'} with ${caCommand(ctx.slot)} (or pass --ca <file>)`;
     throw new CliError(`the dev CA file ${ca.path} cannot be used: ${ca.reason}; ${fix}. Nothing was written`);
   }
   const chromium = findChromium(ctx.env, [paths.launcher]);
@@ -54,7 +53,7 @@ export async function setup(ctx: SetupContext): Promise<SetupReport> {
   const probe = await ctx.runner('certutil', ['-H'], { env: ctx.env, timeoutMs: 10_000 });
   if (probe.error === 'ENOENT') throw new CliError('certutil is not on PATH; install it: sudo apt-get install libnss3-tools (or agent-browser install --with-deps). Nothing was written');
 
-  mkdirSync(dirname(paths.base), { recursive: true });
+  ensureDirs(dirname(paths.base));
   for (const dir of [paths.base, paths.dir, paths.profile, paths.home, join(paths.home, '.local'), join(paths.home, '.local', 'share'), join(paths.home, '.local', 'share', 'pki'), paths.nssdb, join(paths.home, '.pki')]) {
     ensurePrivateDir(dir);
   }
@@ -89,7 +88,7 @@ export async function setup(ctx: SetupContext): Promise<SetupReport> {
     launcher_written: launcherWritten,
     flags: browserFlags(paths),
     command: browserCommand(paths),
-    app_url: appOrigin(ctx.slot),
+    app_url: slotAppOrigin(ctx.env, ctx.slot),
     runtime_url: runtimeOrigin(ctx.slot),
     restart_needed: trust !== 'unchanged' || launcherWritten,
   };
