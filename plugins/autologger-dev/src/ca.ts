@@ -1,8 +1,8 @@
 // ca: fetches the HTTPS-mode dev stack's root CA certificate (`DEV_HTTPS=1 make dev-ca`), checks it
 // is exactly one public PEM certificate, and writes it where NODE_EXTRA_CA_CERTS can point.
 import { randomBytes, X509Certificate } from 'node:crypto';
-import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeSync } from 'node:fs';
+import { basename, dirname, join, sep } from 'node:path';
 import { CliError } from './errors.ts';
 import { type Env, shellQuote } from './http.ts';
 import type { Runner } from './runner.ts';
@@ -114,14 +114,17 @@ const FS_OPS: WriteOps = {
  * same directory (created exclusively, never through a symlink), `path` is checked again with
  * outRefusal, and the temp file is renamed over it. Nothing at `path` is ever written in place, so a
  * file swapped in there is replaced as a whole or refused, never overwritten; on any failure the
- * temp file is removed and `path` is left as it was.
+ * temp file is removed, `path` is left as it was, and the parent folders this call created are
+ * removed again (see removeCreatedDirs), so nothing is left behind.
  */
 export function writeCertificate(path: string, pem: string, ops: WriteOps = FS_OPS): void {
   const dir = dirname(path);
   const temp = join(dir, `.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`);
   let created = false;
+  let firstCreated: string | undefined;
+  let done = false;
   try {
-    mkdirSync(dir, { recursive: true });
+    firstCreated = mkdirSync(dir, { recursive: true });
     const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
     created = true;
     try {
@@ -134,6 +137,7 @@ export function writeCertificate(path: string, pem: string, ops: WriteOps = FS_O
     if (refusal !== null) throw refuseOut(path, refusal);
     ops.rename(temp, path);
     created = false;
+    done = true;
   } catch (error) {
     if (error instanceof CliError) throw error;
     throw new CliError(`cannot write ${path}: ${(error as Error).message}; nothing was written`);
@@ -145,6 +149,25 @@ export function writeCertificate(path: string, pem: string, ops: WriteOps = FS_O
         // Already gone: nothing to clean up.
       }
     }
+    if (!done && firstCreated !== undefined) removeCreatedDirs(dir, firstCreated);
+  }
+}
+
+/**
+ * Removes `dir` and its parents up to and including `firstCreated` (the first folder
+ * `mkdirSync(dir, { recursive: true })` created), deepest first, each only if it is empty; it stops
+ * at the first that cannot be removed. Folders above `firstCreated` existed before and are never
+ * touched.
+ */
+export function removeCreatedDirs(dir: string, firstCreated: string): void {
+  if (dir !== firstCreated && !dir.startsWith(`${firstCreated}${sep}`)) return;
+  for (let current = dir; ; current = dirname(current)) {
+    try {
+      rmdirSync(current);
+    } catch {
+      return; // Not empty, or already gone: leave it and everything above it.
+    }
+    if (current === firstCreated || dirname(current) === current) return;
   }
 }
 
