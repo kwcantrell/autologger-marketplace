@@ -1,0 +1,16 @@
+{
+  "session_id": "abc123",
+  "transcript_path": "/home/user/.claude/projects/-home-user-autologger-2/00893aaf-19fa-41d2-8238-13269b9b3ca0.jsonl",
+  "cwd": "/home/user/autologger-2",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npx --yes --offline --loglevel=error --package=\"/home/user/.claude/plugins/cache/autologger-marketplace/autologger-mcp/0.3.0\" -- autologger-mcp call list_events --args '{\"session_id\":\"ses_8f3k2a\"}' --json",
+    "description": "List the session's events"
+  },
+  "tool_use_id": "toolu_01ABC123",
+  "error": "Exit code 1\nautologger-mcp: not signed in to https://autologger.example (token alm_Zx81kPq0rT5vW2yB expired); run login\nSTDOUT-SHOULD-NOT-BE-STORED",
+  "is_interrupt": false,
+  "duration_ms": 4187
+}

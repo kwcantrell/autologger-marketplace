@@ -1,0 +1,16 @@
+{
+  "session_id": "abc123",
+  "transcript_path": "/home/user/.claude/projects/-home-user-autologger-2/00893aaf-19fa-41d2-8238-13269b9b3ca0.jsonl",
+  "cwd": "/home/user/autologger-2",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npx --yes --offline --loglevel=error --package=\"/home/user/.claude/plugins/cache/autologger-marketplace/autologger-dev/0.2.0\" -- autologger-dev up --json",
+    "description": "Bring up the stack"
+  },
+  "tool_use_id": "toolu_01JKL345",
+  "error": "Exit code 130\nautologger-dev: interrupted",
+  "is_interrupt": true,
+  "duration_ms": 90000
+}
