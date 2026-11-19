@@ -1,0 +1,13 @@
+{
+  "name": "autologger-dev",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CLI for the autologger-dev Claude Code plugin; run by its skills via npx.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "bin": {
+    "autologger-dev": "src/cli.ts"
+  }
+}
