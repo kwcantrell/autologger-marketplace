@@ -4,6 +4,7 @@ import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Check } from '../src/doctor.ts';
+import type { RunResult } from '../src/runner.ts';
 import { dashboardsState, googleClient, isDashboardsOn, isPadded, isQuoted, isQuotedAndPadded, parseEnvText } from '../src/stack.ts';
 import { EXIT } from '../src/run.ts';
 import { answering, cli, type CliOptions, fakeRunner, fixture, GOOD_OVERRIDES, GOOGLE_ID, GOOGLE_SECRET, NOT_FOUND, untrusted } from './helpers.ts';
@@ -18,6 +19,7 @@ const NAMES = [
   'google_client',
   'custom_dashboards',
   'node_extra_ca_certs',
+  'dev_port',
   'dev_server',
 ];
 
@@ -61,7 +63,7 @@ test('doctor: human output lists each check with its status and fix', async () =
   assert.match(stdout, /^\[ok\] checkout: /m);
   assert.match(stdout, /^\[fail\] dev_server: the TLS certificate of https:\/\/localhost:8787 is not trusted/m);
   assert.match(stdout, /^ {4}fix: run autologger-dev ca/m);
-  assert.match(stdout, /1 of 10 checks need attention/);
+  assert.match(stdout, /1 of 11 checks need attention/);
 });
 
 test('doctor checkout: --repo, then AUTOLOGGER_REPO, then the current directory', async () => {
@@ -218,7 +220,7 @@ test('doctor runs only read-only commands', async () => {
   await doctorChecks({ ...h, runner }, '--repo', h.repo);
   assert.deepEqual(
     runner.calls.map((c) => `${c.command} ${c.args.join(' ')}`),
-    ['docker info --format {{.ServerVersion}}', 'make --version', 'node --version', 'docker container inspect --format {{.State.Running}} autologger-local-openbao'],
+    ['docker info --format {{.ServerVersion}}', 'make --version', 'node --version', 'docker container inspect --format {{.State.Running}} autologger-local-openbao', 'docker port autologger-dev-app 8443/tcp'],
   );
 });
 
@@ -530,3 +532,67 @@ for (const value of [' "1" ', '"true" ', "' yes'"]) {
     assert.match(c?.fix ?? '', UP_REWRITES);
   });
 }
+
+// dev_port: the published host port of the slot's app container against the port the CLI uses.
+function portRunner(handler: (container: string) => Partial<RunResult>) {
+  return fakeRunner({
+    'docker port': (call) => handler(call.args[1] ?? ''),
+  });
+}
+
+async function devPortCheck(h: ReturnType<typeof healthy>, runner: ReturnType<typeof fakeRunner>, ...extra: string[]): Promise<Check | undefined> {
+  return (await doctorChecks({ ...h, runner }, '--repo', h.repo, ...extra)).checks.get('dev_port');
+}
+
+test('doctor dev_port: the published port matches the one the CLI uses', async () => {
+  const h = healthy();
+  const runner = portRunner(() => ({ stdout: '127.0.0.1:8787\n' }));
+  const c = await devPortCheck(h, runner);
+  assert.equal(c?.status, 'ok');
+  assert.deepEqual(runner.calls.find((x) => x.args[0] === 'port')?.args, ['port', 'autologger-dev-app', '8443/tcp']);
+});
+
+test('doctor dev_port: a different published port is a fail naming both ports and the fix', async () => {
+  const f = fixture({ overrides: `${GOOD_OVERRIDES}DEV_PORT=9787\n` });
+  const ca = join(f.home, 'ca.crt');
+  writeFileSync(ca, 'cert');
+  const h = { env: { ...f.env, NODE_EXTRA_CA_CERTS: ca }, runner: fakeRunner(), fetch: answering(401), repo: f.repo, stateDir: f.stateDir };
+  const c = await devPortCheck(h, portRunner(() => ({ stdout: '127.0.0.1:8787\n' })));
+  assert.equal(c?.status, 'fail');
+  assert.match(c?.detail ?? '', /publishes its app on port 8787, but this command uses port 9787/);
+  assert.match(c?.fix ?? '', /re-run make dev-bao and autologger-dev up .*or correct DEV_PORT in .*overrides\.env to 8787/);
+  assert.doesNotMatch(`${c?.detail} ${c?.fix}`, new RegExp(`${GOOGLE_ID}|${GOOGLE_SECRET}`));
+});
+
+test('doctor dev_port: a stack that is not running is skipped, not a failure', async () => {
+  const h = healthy();
+  for (const stderr of ['Error response from daemon: No such container: autologger-dev-app', 'Error: No public port 8443/tcp published']) {
+    const c = await devPortCheck(h, portRunner(() => ({ code: 1, stderr })));
+    assert.equal(c?.status, 'ok');
+    assert.match(c?.detail ?? '', /^skipped: .*not running/);
+  }
+});
+
+test('doctor dev_port: docker unavailable is skipped without a crash', async () => {
+  const h = healthy();
+  let c = await devPortCheck(h, portRunner(() => NOT_FOUND));
+  assert.match(c?.detail ?? '', /^skipped: docker could not be run/);
+  c = await devPortCheck(h, portRunner(() => ({ code: 1, stderr: 'Cannot connect to the Docker daemon' })));
+  assert.equal(c?.status, 'ok');
+  assert.match(c?.detail ?? '', /^skipped: docker did not answer/);
+});
+
+test('doctor dev_port: --slot N reads autologger-dev-N-app and expects 2N787, never DEV_PORT', async () => {
+  const f = fixture({ overrides: `${GOOD_OVERRIDES}DEV_PORT=9787\n` });
+  const ca = join(f.home, 'ca.crt');
+  writeFileSync(ca, 'cert');
+  const h = { env: { ...f.env, NODE_EXTRA_CA_CERTS: ca }, runner: fakeRunner(), fetch: answering(401), repo: f.repo, stateDir: f.stateDir };
+  const seen: string[] = [];
+  const runner = portRunner((name) => (seen.push(name), { stdout: '127.0.0.1:23787\n' }));
+  assert.equal((await devPortCheck(h, runner, '--slot', '3'))?.status, 'ok');
+  assert.deepEqual(seen, ['autologger-dev-3-app']);
+  const bad = await devPortCheck(h, portRunner(() => ({ stdout: '127.0.0.1:8787\n' })), '--slot', '3');
+  assert.equal(bad?.status, 'fail');
+  assert.match(bad?.detail ?? '', /autologger-dev-3-app publishes its app on port 8787, but this command uses port 23787/);
+  assert.match(bad?.fix ?? '', /autologger-dev up --slot 3/);
+});

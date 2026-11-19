@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { devMcpTokenCommand } from './connect.ts';
 import { DEFAULT_SERVER, type Env, type Fetch, probe } from './http.ts';
 import type { Runner } from './runner.ts';
-import { cliCommand, DEV_PORT_KEY, type DevPort, googleRedirect } from './slot.ts';
+import { appContainer, cliCommand, DEV_PORT_KEY, type DevPort, expectedPort, googleRedirect } from './slot.ts';
 import { stepFor } from './up.ts';
 import {
   type Checkout,
@@ -187,6 +187,7 @@ export async function doctor(ctx: DoctorContext): Promise<DoctorReport> {
   }
 
   checks.push(caCheck(env, slot));
+  checks.push(await portCheck(ctx, slot, overridesPath));
   checks.push(await serverCheck(ctx, slot));
 
   const notes: string[] = [];
@@ -239,6 +240,35 @@ function caCheck(env: Env, slot: number): Check {
     return fail('node_extra_ca_certs', `NODE_EXTRA_CA_CERTS=${path} cannot be read`, howTo);
   }
   return ok('node_extra_ca_certs', `NODE_EXTRA_CA_CERTS=${path} is a readable file`);
+}
+
+/**
+ * dev_port: the host port the running stack publishes for its app (`docker port` on the slot's app
+ * container, read-only) against the port this CLI uses. autologger takes slot 0's DEV_PORT from the
+ * OpenBao dev secret, which overrides.env seeds through make dev-bao; the CLI never reads that
+ * secret, so the published port is the only source for what the stack really uses. Not running or
+ * docker unreachable is skipped (ok, saying so): the docker, openbao and dev_server checks report those.
+ */
+async function portCheck(ctx: DoctorContext, slot: number, overridesPath: string): Promise<Check> {
+  const container = appContainer(slot);
+  const r = await ctx.runner('docker', ['port', container, '8443/tcp'], { env: ctx.env, timeoutMs: 15_000 });
+  if (r.error !== undefined) return ok('dev_port', `skipped: docker could not be run (${r.error === 'ENOENT' ? 'not on PATH' : r.error})`);
+  if (r.code !== 0) {
+    return /no such (container|object)|no public port|not running/i.test(r.stderr)
+      ? ok('dev_port', `skipped: ${container} is not running, so there is no published port to compare`)
+      : ok('dev_port', 'skipped: docker did not answer for the published port');
+  }
+  const published = /:(\d{1,5})\s*$/m.exec(r.stdout)?.[1];
+  if (published === undefined) return ok('dev_port', `skipped: ${container} publishes no port for its app`);
+  const want = expectedPort(slot, ctx.devPort);
+  if (Number(published) === want) return ok('dev_port', `${container} publishes its app on port ${want}, the port this command uses`);
+  return fail(
+    'dev_port',
+    `${container} publishes its app on port ${published}, but this command uses port ${want}`,
+    slot === 0
+      ? `re-run make dev-bao and ${cliCommand('up', slot)} so the stack takes ${DEV_PORT_KEY} from ${overridesPath}, or correct ${DEV_PORT_KEY} in ${overridesPath} to ${published}`
+      : `re-run ${cliCommand('up', slot)} (a slot's port is fixed by its number, ${want})`,
+  );
 }
 
 async function serverCheck(ctx: DoctorContext, slot: number): Promise<Check> {

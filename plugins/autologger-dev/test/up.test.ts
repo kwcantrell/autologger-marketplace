@@ -164,7 +164,8 @@ test('up and up --dry-run warn about a quoted Google value, naming the quotes, l
     assert.match(report.warnings[0] ?? '', new RegExp(`^${key} in .* is wrapped in quotes, and autologger stores the value verbatim, quotes included, so Google will reject the client.*Remove the quotes, then run make dev-bao and up again\\.$`));
     const run = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo);
     assert.equal(run.code, EXIT.ok, run.stderr);
-    assert.match(run.stdout, new RegExp(`Warning: ${key} in .* is wrapped in quotes`));
+    assert.match(run.stderr, new RegExp(`autologger-dev: warning: ${key} in .* is wrapped in quotes`));
+    assert.doesNotMatch(run.stdout, /Warning:/);
   }
   const both = fixture({ overrides: `GOOGLE_CLIENT_ID="${GOOGLE_ID}"\nGOOGLE_CLIENT_SECRET=REPLACE_ME\n` });
   const report = JSON.parse((await cli({ env: both.env, runner: fakeRunner() }, 'up', '--repo', both.repo, '--dry-run', '--json')).stdout) as DryRun;
@@ -223,7 +224,7 @@ test('up and up --dry-run warn about a Google value with spaces around it, namin
     assert.match(report.warnings[0] ?? '', new RegExp(`^${key} in .* is surrounded by spaces, and autologger stores the value verbatim, surrounding spaces included, so Google will reject the client.*Remove the spaces, then run make dev-bao and up again\\.$`));
     const run = await cli({ env: f.env, runner: fakeRunner() }, 'up', '--repo', f.repo);
     assert.equal(run.code, EXIT.ok, run.stderr);
-    assert.match(run.stdout, new RegExp(`Warning: ${key} in .* is surrounded by spaces`));
+    assert.doesNotMatch(run.stdout, /Warning:/);
     assert.match(run.stderr, new RegExp(`autologger-dev: warning: ${key} in .* is surrounded by spaces`));
     for (const out of [dry, run]) {
       for (const v of [GOOGLE_ID, GOOGLE_SECRET]) assert.ok(!(out.stdout + out.stderr).includes(v), 'no value printed');
@@ -285,5 +286,17 @@ test('up warns about a Google value that is quoted and padded with one warning n
     for (const out of [dry, run]) {
       for (const v of [GOOGLE_ID, GOOGLE_SECRET]) assert.ok(!(out.stdout + out.stderr).includes(v), 'no value printed');
     }
+  }
+});
+
+test('text mode prints the Google-client warning exactly once, on stderr, for up and up --dry-run', async () => {
+  const f = fixture({ overrides: 'GOOGLE_CLIENT_ID=REPLACE_ME\nCUSTOM_DASHBOARDS_ENABLED=1\n' });
+  for (const args of [['up', '--repo', f.repo], ['up', '--repo', f.repo, '--dry-run']]) {
+    const r = await cli({ env: f.env, runner: fakeRunner() }, ...args);
+    assert.equal(r.code, EXIT.ok, r.stderr);
+    const all = r.stdout + r.stderr;
+    assert.equal(all.split('is a placeholder or not set').length - 1, 1, args.join(' '));
+    assert.match(r.stderr, /autologger-dev: warning: the Google OAuth client/);
+    assert.doesNotMatch(r.stdout, /Google OAuth client/);
   }
 });
