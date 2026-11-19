@@ -265,6 +265,78 @@ test('npx-chained: a clean line, <placeholder> arguments and a trailing < <place
   assert.deepEqual(checkPlugin(f.root, NAME), []);
 });
 
+for (const rest of [' <a>/tmp/pwn', ' x <a>~/.bashrc', ' <a><b>', ' <<a>', ' <a>>b', ' "<a>/tmp"', ` ${Q}<a>${Q}x`, ' a" "<b>" "c']) {
+  test(`npx-chained: a placeholder glued to other text is checked, not skipped: ${rest.trim()}`, () => {
+    const f = good();
+    const line = withSkillLine(f, rest);
+    const x = only(checkPlugin(f.root, NAME), 'npx-chained');
+    assert.deepEqual([x.line, x.message.split(' ')[1]], [line, '"<"']);
+  });
+}
+
+test('npx-chained: standalone and quote-filling placeholders and a trailing < <placeholder> pass', () => {
+  const f = good();
+  for (const rest of [' <a>', ' --x <a>', ' --x "<a>"', ` --args ${Q}{"k":"<v>"}${Q}`, ' < <a b>', ' < <a-1.x_y>', ' --json < <a>', ' <a> < <b>']) {
+    withSkillLine(f, rest);
+  }
+  assert.deepEqual(checkPlugin(f.root, NAME), []);
+});
+
+/** Appends a ```sh block whose first line is `${PREFIX} ${NAME} hello` + `first`, then `more` lines. */
+function withContinuedLine(f: Fixture, first: string, more: string[]): number {
+  edit(f, SKILL, (t) => `${t}\n\`\`\`sh\n${[`${PREFIX} ${NAME} hello${first}`, ...more].join('\n')}\n\`\`\`\n`);
+  return lineOf(f, SKILL, `-- ${NAME} hello${first}`);
+}
+
+for (const [label, first] of [['\\', ' \\'], ['\\ followed by spaces', ' \\   ']] as const) {
+  test(`npx-chained: a line ending in ${label} is checked joined with the next line`, () => {
+    const f = good();
+    const line = withContinuedLine(f, first, ['&& rm -rf ~']);
+    const x = only(checkPlugin(f.root, NAME), 'npx-chained');
+    assert.deepEqual([x.file, x.line], [SKILL, line], 'the finding names the first physical line');
+    assert.match(x.message, /^chains "&" after the CLI call/);
+  });
+
+  test(`npx-chained: a clean command continued with ${label} passes`, () => {
+    const f = good();
+    withContinuedLine(f, first, ['  --name x \\', '  --json']);
+    assert.deepEqual(checkPlugin(f.root, NAME), []);
+  });
+}
+
+for (const [first, next] of [[' <a>\\', '/tmp/pwn'], [' x <a>\\', '~/.bashrc'], [' <a>\\', '<b>'], [' <\\', '<a>']] as const) {
+  test(`npx-chained: a continuation joins with nothing in between, as the shell does: ${first.trim()} + ${next}`, () => {
+    const f = good();
+    const line = withContinuedLine(f, first, [next]);
+    const x = only(checkPlugin(f.root, NAME), 'npx-chained');
+    assert.deepEqual([x.line, x.message.split(' ')[1]], [line, '"<"']);
+  });
+}
+
+for (const [before, rest] of [['echo hi \\', ' --json && touch /tmp/x'], ['FOO=1 \\', ' ; id'], ['# run this \\', '; id']] as const) {
+  test(`npx-chained: an npx line continued from a non-npx line is still checked: ${before}`, () => {
+    const f = good();
+    edit(f, SKILL, (t) => `${t}\n\`\`\`sh\n${before}\n${PREFIX} ${NAME} hello${rest}\n\`\`\`\n`);
+    const x = only(checkPlugin(f.root, NAME), 'npx-chained');
+    assert.deepEqual([x.file, x.line], [SKILL, lineOf(f, SKILL, `-- ${NAME} hello${rest}`)]);
+  });
+}
+
+test('npxLines joins through # lines: a glued # is no comment, and a real one is joined too (stricter)', () => {
+  const text = ['```sh', 'npx a\\', '#x \\', '&& rm -rf ~', 'npx b \\', '  # note \\', '--json', '```'].join('\n');
+  assert.deepEqual(npxLines(text), [
+    { line: 2, text: 'npx a#x && rm -rf ~', inSh: true },
+    { line: 5, text: 'npx b   # note --json', inSh: true },
+  ]);
+});
+
+test('npx-chained: a # line after a continuation does not end the command: hello\\ + #x \\ + && rm -rf ~', () => {
+  const f = good();
+  const line = withContinuedLine(f, '\\', ['#x \\', '&& rm -rf ~']);
+  const x = only(checkPlugin(f.root, NAME), 'npx-chained');
+  assert.deepEqual([x.line, x.message.split(' ')[1]], [line, '"&"']);
+});
+
 test('allowed-tools: missing from the frontmatter', () => {
   const f = good();
   edit(f, SKILL, (t) => t.replace(/^allowed-tools:.*\n/m, ''));
@@ -523,6 +595,15 @@ test('npxLines tracks sh fences (also indented ones) and placeholders are accept
     { line: 3, text: `${PREFIX} x run <name> --json`, inSh: true },
     { line: 6, text: 'npx a', inSh: false },
     { line: 8, text: 'npx b', inSh: false },
+  ]);
+});
+
+test('npxLines joins \\-continued lines in sh fences only, and not after an escaped \\', () => {
+  const text = ['```sh', 'npx a \\', '  b \\  ', '  c', 'npx d \\\\', 'e', '```', '```text', 'npx f \\', 'g', '```'].join('\n');
+  assert.deepEqual(npxLines(text), [
+    { line: 2, text: 'npx a   b   c', inSh: true },
+    { line: 5, text: 'npx d \\\\', inSh: true },
+    { line: 9, text: 'npx f \\', inSh: false },
   ]);
 });
 
