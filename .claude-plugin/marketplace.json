@@ -26,6 +26,11 @@
       "name": "autologger-dev",
       "source": "./plugins/autologger-dev",
       "description": "Brings up a local autologger dev stack (local OpenBao, HTTPS mode, the dev CA) and connects Claude to its MCP server: a doctor that diagnoses what is missing, a guarded up, the CA export, status and connect steps, all in a TypeScript CLI."
+    },
+    {
+      "name": "autologger-browser",
+      "source": "./plugins/autologger-browser",
+      "description": "A Chromium profile for agent-browser that trusts a local autologger dev stack's private CA in its own NSS database only, optionally signed in with make dev-login: doctor, setup, signin and reset, in a TypeScript CLI."
     }
   ]
 }
