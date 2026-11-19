@@ -61,6 +61,11 @@ skill and CLI to `my-plugin`, and adds the plugin to `.claude-plugin/marketplace
 the example `hello` command and skill with the real ones. [CLAUDE.md](CLAUDE.md) describes the
 layout and the CLI convention every plugin follows.
 
+Changing an existing plugin? Raise its `version` in `.claude-plugin/plugin.json` and `package.json`:
+Claude Code caches plugins by version, so `/plugin marketplace update` skips a change shipped under
+the same one. CI's `scripts/check-versions.ts` fails a pull request that changes `plugins/<name>/`
+without a higher version ("Versions" in [CLAUDE.md](CLAUDE.md)).
+
 ## Security
 
 Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes, never in a public issue;

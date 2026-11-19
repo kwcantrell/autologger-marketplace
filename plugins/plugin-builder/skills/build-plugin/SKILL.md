@@ -38,6 +38,11 @@ build step first.
    instead, one rule each (`Bash(<prefix> <name> <command>:*)`, comma-separated), so the rest prompt;
    `plugins/autologger-dev` is the example. Name arguments as `<placeholder>`s.
 
+   If the plugin needs a hook, put it in `hooks/hooks.json` and make every `command` hook run the
+   plugin's own CLI, in exec form: `"command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts",
+   "<command>"]` ("Hooks" in `CLAUDE.md`; `plugins/plugin-advisor` is the example). `check` reports
+   anything else under the `hooks-cli` rule.
+
 4. Write the tests in `test/`: unit tests that call `run()` with a fake `Io`, and the end-to-end test
    (start from the template's `test/cli.test.ts`) that runs every skill's command lines through npx
    from a fresh copy, filling the placeholders.
@@ -62,7 +67,12 @@ build step first.
    `skipped` only when `claude` is not on the PATH; say so to the user, since that step did not
    run. On exit 1 fix the failing steps and run it again.
 
-7. Before finishing, list the plugin in the plugin tables of the repo `README.md` and `CLAUDE.md`,
+7. When changing a plugin that already exists, raise its `version` in `.claude-plugin/plugin.json`
+   and `package.json` together (minor by default, patch for a fix or docs), even for a docs-only
+   change: Claude Code caches plugins by version, and CI's `scripts/check-versions.ts` fails a pull
+   request that changes `plugins/<name>/` without a higher version ("Versions" in `CLAUDE.md`).
+
+8. Before finishing, list the plugin in the plugin tables of the repo `README.md` and `CLAUDE.md`,
    give the plugin a `README.md`, and check that every plugin still follows the convention:
 
    ```sh

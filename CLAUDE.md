@@ -45,6 +45,7 @@ claude plugin validate .                 # marketplace manifest
 claude plugin validate plugins/<name>    # one plugin (also templates/plugin)
 node plugins/plugin-builder/src/cli.ts check <name>|--all   # the convention below, checked statically
 node plugins/plugin-builder/src/cli.ts verify <name>        # check + validate + typecheck + the plugin's tests
+node scripts/check-versions.ts --base main                   # every changed plugin has a raised version (CI only)
 ```
 
 `plugin-builder check` reports each break of the convention below with its file, line, rule and fix;
@@ -114,6 +115,27 @@ npx --yes --offline --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>
   --loglevel=error --package="${CLAUDE_PLUGIN_ROOT}" -- <name>:*)`). A CLI with commands that act on
   the machine (run a Makefile, start containers) pre-approves only its read-only commands instead,
   one rule each (`Bash(<prefix> <name> <command>:*)`, comma-separated), so the rest prompt.
+
+**Hooks.** A plugin may ship `hooks/hooks.json` (Claude Code's hooks format: `{"description",
+"hooks": {<Event>: [{"matcher"?, "hooks": [...]}]}}`). Every `command` hook runs the plugin's own
+CLI, like a skill does, so the hook's logic is tested code: preferably exec form, `"command": "node",
+"args": ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts", "<command>"]` (no shell, so the plugin path may hold
+spaces or quotes, and no npx start-up), or a shell command starting with the npx prefix above. A hook
+must stay fast and quiet and never block unless that is its job; set a `timeout`, and `async` when
+nothing waits on it. `plugin-builder check` enforces this as the `hooks-cli` rule;
+`plugins/plugin-advisor` and `plugins/plugin-discover` are the examples.
+
+**Versions.** Claude Code caches an installed plugin by its version, so `/plugin marketplace update`
+ignores a change shipped under the same version. Every change to a file under `plugins/<name>/`
+raises that plugin's `version` in `.claude-plugin/plugin.json`, and the same version goes in its
+`package.json` (the CLI's `--version` reads it). Bump the minor version by default and the patch for
+a fix or docs-only change; once per pull request is enough. `scripts/check-versions.ts` enforces it
+in CI (pull requests against their base, pushes to `main` against the push's `before` SHA, admin
+bypass pushes included): it fails when a plugin's files changed from the merge base but its version
+is not a higher plain X.Y.Z, or when `package.json` disagrees. It is not part of `npm test`, so a
+working tree mid-change is not failed. There is no escape hatch, not even for docs: the README,
+skills and tests all ship in the cached copy, a skip marker would be one more thing to get wrong,
+and a patch bump costs nothing. Run it locally with `node scripts/check-versions.ts --base main`.
 
 **Output.** Every command accepts `--json` and then prints exactly one JSON value on stdout; skills use
 `--json`. Without it, output is short human-readable text. `--help` prints usage on stdout and exits 0.
