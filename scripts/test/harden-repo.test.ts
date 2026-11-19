@@ -14,7 +14,10 @@ const fakeGh = join(repo, 'scripts', 'test', 'fake-gh.ts');
 const scratch = mkdtempSync(join(tmpdir(), 'harden-repo-test-'));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
-const REPO = 'kwcantrell/autologger-marketplace';
+// A made-up repo: every --apply runs against it, as a second guard beside the fake gh.
+const REPO = 'example-owner/example-repo';
+// The default repo (used in dry-run only).
+const DEFAULT_REPO = 'kwcantrell/autologger-marketplace';
 const CI = '.github/workflows/ci.yml@main';
 
 /** The state read from the real repo on 2026-11-19, with the CI workflow merged. */
@@ -70,7 +73,9 @@ function fixture(state: FakeState): Fixture {
       .map((l) => JSON.parse(l) as FakeCall);
   return {
     run: (...args) => {
-      const r = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', env, cwd: dir });
+      // Every case targets the made-up repo unless it is a dry run of the default repo or names its own --repo.
+      const target = state.repo === DEFAULT_REPO || args.includes('--repo') ? [] : ['--repo', state.repo];
+      const r = spawnSync(process.execPath, [script, ...args, ...target], { encoding: 'utf8', env, cwd: dir });
       return { status: r.status, stdout: r.stdout, stderr: r.stderr };
     },
     state: () => JSON.parse(readFileSync(statePath, 'utf8')) as FakeState,
@@ -97,7 +102,7 @@ function setting(plan: PlanJson, id: string) {
 const RULESET = "ruleset 'main protection'";
 
 test('dry run (the default) prints current → desired per setting and changes nothing', () => {
-  const f = fixture(initialState());
+  const f = fixture(initialState({ repo: DEFAULT_REPO }));
   const before = f.state();
   const r = f.run();
   assert.equal(r.status, 0, r.stderr);
@@ -111,7 +116,7 @@ test('dry run (the default) prints current → desired per setting and changes n
   assert.match(r.stdout, /^ {2}\[change\] delete_branch_on_merge: disabled → enabled$/m);
   assert.match(r.stdout, /^ {2}\[change\] actions_sha_pinning_required: disabled → enabled$/m);
   assert.match(r.stdout, /^ {2}\[ok\] workflow_permissions: default_workflow_permissions=read/m);
-  assert.match(r.stdout, /^ {2}\[change\] ruleset 'main protection': absent → branch active; refs ~DEFAULT_BRANCH; bypass admin:always; rules deletion, non_fast_forward, pull_request\(required_approving_review_count=0 dismiss_stale_reviews_on_push=true .*\), required_status_checks\(checks=ci strict_required_status_checks_policy=false\) \(create\)$/m);
+  assert.match(r.stdout, /^ {2}\[change\] ruleset 'main protection': absent → branch active; refs ~DEFAULT_BRANCH; bypass admin:always; rules deletion, non_fast_forward, pull_request\(required_approving_review_count=0 dismiss_stale_reviews_on_push=true .*\), required_status_checks\(checks=ci@15368 strict_required_status_checks_policy=false\) \(create\)$/m);
   assert.match(r.stdout, /^Summary: 6 to change, 3 already set, 0 unavailable/m);
   assert.deepEqual(f.writes(), []);
   assert.deepEqual(f.state(), before);
@@ -176,7 +181,7 @@ test('--apply makes the changes, and a second --apply changes nothing', () => {
       },
       {
         type: 'required_status_checks',
-        parameters: { strict_required_status_checks_policy: false, do_not_enforce_on_create: false, required_status_checks: [{ context: 'ci' }] },
+        parameters: { strict_required_status_checks_policy: false, do_not_enforce_on_create: false, required_status_checks: [{ context: 'ci', integration_id: 15368 }] },
       },
     ],
   });
@@ -238,6 +243,60 @@ test('an existing ruleset with the same name is updated in place, not duplicated
       [42, 'main protection', 'active'],
     ],
   );
+  f.clearLog();
+  assert.equal(f.run('--apply').status, 0);
+  assert.deepEqual(f.writes(), []);
+});
+
+test('a live required check without integration_id is a change, shown in the dry run, and --apply pins it to GitHub Actions', () => {
+  const f = fixture(
+    initialState({
+      rulesets: [
+        {
+          id: 9,
+          name: 'main protection',
+          target: 'branch',
+          enforcement: 'active',
+          source_type: 'Repository',
+          source: REPO,
+          conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } },
+          bypass_actors: [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }],
+          rules: [
+            { type: 'deletion' },
+            { type: 'non_fast_forward' },
+            {
+              type: 'pull_request',
+              parameters: {
+                required_approving_review_count: 0,
+                dismiss_stale_reviews_on_push: true,
+                require_code_owner_review: false,
+                require_last_push_approval: false,
+                required_review_thread_resolution: false,
+              },
+            },
+            { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: false, do_not_enforce_on_create: false, required_status_checks: [{ context: 'ci' }] } },
+          ],
+        },
+      ],
+    }),
+  );
+  const dry = JSON.parse(f.run('--json').stdout) as PlanJson;
+  const item = setting(dry, RULESET);
+  assert.equal(item.status, 'change');
+  assert.equal(item.note, 'update ruleset 9');
+  assert.match(item.current, /required_status_checks\(checks=ci strict_/);
+  assert.match(item.desired, /required_status_checks\(checks=ci@15368 strict_/);
+  assert.deepEqual(f.writes(), []);
+  const text = f.run().stdout;
+  assert.match(text, /\[change\] ruleset 'main protection': .*checks=ci strict_.* → .*checks=ci@15368 strict_/);
+
+  assert.equal(f.run('--apply').status, 0);
+  assert.deepEqual(
+    f.writes().filter((c) => c.path.includes('/rulesets')).map((c) => `${c.method} ${c.path}`),
+    [`PUT repos/${REPO}/rulesets/9`],
+  );
+  const checks = f.state().rulesets[0]?.rules?.find((r) => r.type === 'required_status_checks')?.parameters?.required_status_checks;
+  assert.deepEqual(checks, [{ context: 'ci', integration_id: 15368 }]);
   f.clearLog();
   assert.equal(f.run('--apply').status, 0);
   assert.deepEqual(f.writes(), []);
@@ -322,7 +381,7 @@ test('any other failure exits 1 with the message on stderr and nothing on stdout
 
   const gone = fixture(initialState({ forced: { [`GET ${base}`]: 404 } })).run();
   assert.equal(gone.status, 1);
-  assert.match(gone.stderr, /^harden-repo: cannot read kwcantrell\/autologger-marketplace: HTTP 404: Not Found$/m);
+  assert.match(gone.stderr, /^harden-repo: cannot read example-owner\/example-repo: HTTP 404: Not Found$/m);
 
   const noGh = spawnSync(process.execPath, [script], { encoding: 'utf8', env: { ...process.env, PATH: join(scratch, 'empty') } });
   assert.equal(noGh.status, 1);
@@ -338,7 +397,7 @@ test('--repo picks the target repo', () => {
 });
 
 test('bad arguments exit 2 without calling gh', () => {
-  const f = fixture(initialState());
+  const f = fixture(initialState({ repo: DEFAULT_REPO }));
   for (const args of [['--apply', '--dry-run'], ['--nope'], ['--repo', 'not-a-repo'], ['--repo', 'a/b/c'], ['extra'], ['--repo']]) {
     const r = f.run(...args);
     assert.equal(r.status, 2, `${args.join(' ')}: ${r.stderr}`);
