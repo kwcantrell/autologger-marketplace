@@ -191,14 +191,14 @@ test('dismiss stops further suggestions for an issue', () => {
 
 test('a plugin outside the marketplace is targeted as a new plugin', () => {
   box = sandbox();
-  for (let i = 0; i < 3; i++) json(box.call(['record', '--plugin', 'autologger-browser', '--kind', 'manual-step', '--summary', 'took a screenshot by hand', '--json']));
+  for (let i = 0; i < 3; i++) json(box.call(['record', '--plugin', 'example-new-plugin', '--kind', 'manual-step', '--summary', 'took a screenshot by hand', '--json']));
   for (let i = 0; i < 3; i++) json(box.call(['record', '--plugin', 'none', '--kind', 'manual-step', '--summary', 'rotated logs by hand', '--json']));
   const { suggestions } = json(box.call(['suggest', '--json']));
   const byPlugin = Object.fromEntries(suggestions.map((s: any) => [s.plugin, s]));
-  assert.deepEqual(byPlugin['autologger-browser'].target, { kind: 'new', plugin: 'autologger-browser', text: 'new plugin: `autologger-browser`' });
+  assert.deepEqual(byPlugin['example-new-plugin'].target, { kind: 'new', plugin: 'example-new-plugin', text: 'new plugin: `example-new-plugin`' });
   assert.equal(byPlugin.none.target.kind, 'new');
-  assert.match(readFileSync(byPlugin['autologger-browser'].draft, 'utf8'), /New plugin: `autologger-browser`/);
-  assert.match(byPlugin['autologger-browser'].factoryRun, /^\/factory:run new plugin: Create a new marketplace plugin `autologger-browser`/);
+  assert.match(readFileSync(byPlugin['example-new-plugin'].draft, 'utf8'), /New plugin: `example-new-plugin`/);
+  assert.match(byPlugin['example-new-plugin'].factoryRun, /^\/factory:run new plugin: Create a new marketplace plugin `example-new-plugin`/);
 });
 
 test('the log is never kept inside a git checkout', () => {
