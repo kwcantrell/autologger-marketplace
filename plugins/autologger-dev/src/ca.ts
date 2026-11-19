@@ -1,8 +1,8 @@
 // ca: fetches the HTTPS-mode dev stack's root CA certificate (`DEV_HTTPS=1 make dev-ca`), checks it
 // is exactly one public PEM certificate, and writes it where NODE_EXTRA_CA_CERTS can point.
-import { X509Certificate } from 'node:crypto';
-import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { randomBytes, X509Certificate } from 'node:crypto';
+import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { CliError } from './errors.ts';
 import { type Env, shellQuote } from './http.ts';
 import type { Runner } from './runner.ts';
@@ -82,14 +82,55 @@ function refuseOut(path: string, why: string): CliError {
   return new CliError(`refusing to write ${path}: ${why}; only a missing file or an existing single-certificate file is replaced. Nothing was written; pass another --out`);
 }
 
-/** Writes `pem` to `path` (mode 644) without following a symlink planted there since the check. */
-function writeCertificate(path: string, pem: string): void {
-  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o644);
+/** The file operations writeCertificate uses; tests swap one for a failing fake. */
+export interface WriteOps {
+  write: (fd: number, text: string) => void;
+  rename: (from: string, to: string) => void;
+}
+
+const FS_OPS: WriteOps = {
+  write: (fd, text) => {
+    writeSync(fd, text);
+  },
+  rename: renameSync,
+};
+
+/**
+ * Replaces `path` with `pem` (mode 644) atomically: the certificate goes to a new temp file in the
+ * same directory (created exclusively, never through a symlink), `path` is checked again with
+ * outRefusal, and the temp file is renamed over it. Nothing at `path` is ever written in place, so a
+ * file swapped in there is replaced as a whole or refused, never overwritten; on any failure the
+ * temp file is removed and `path` is left as it was.
+ */
+export function writeCertificate(path: string, pem: string, ops: WriteOps = FS_OPS): void {
+  const dir = dirname(path);
+  const temp = join(dir, `.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`);
+  let created = false;
   try {
-    fchmodSync(fd, 0o644);
-    writeSync(fd, pem);
+    mkdirSync(dir, { recursive: true });
+    const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
+    created = true;
+    try {
+      fchmodSync(fd, 0o644);
+      ops.write(fd, pem);
+    } finally {
+      closeSync(fd);
+    }
+    const refusal = outRefusal(path);
+    if (refusal !== null) throw refuseOut(path, refusal);
+    ops.rename(temp, path);
+    created = false;
+  } catch (error) {
+    if (error instanceof CliError) throw error;
+    throw new CliError(`cannot write ${path}: ${(error as Error).message}; nothing was written`);
   } finally {
-    closeSync(fd);
+    if (created) {
+      try {
+        unlinkSync(temp);
+      } catch {
+        // Already gone: nothing to clean up.
+      }
+    }
   }
 }
 
@@ -109,15 +150,7 @@ export async function fetchCa(ctx: CaContext): Promise<CaReport> {
   const found = singleCertificate(result.stdout);
   if (!found.ok) throw new CliError(`refusing the output of ${CA_COMMAND}: ${found.reason}; nothing was written`);
 
-  const after = outRefusal(ctx.out);
-  if (after !== null) throw refuseOut(ctx.out, after);
-  try {
-    mkdirSync(dirname(ctx.out), { recursive: true });
-    writeCertificate(ctx.out, found.pem);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw refuseOut(ctx.out, 'it is a symlink');
-    throw new CliError(`cannot write ${ctx.out}: ${(error as Error).message}`);
-  }
+  writeCertificate(ctx.out, found.pem);
   return {
     path: ctx.out,
     subject: found.cert.subject.replaceAll('\n', ', '),

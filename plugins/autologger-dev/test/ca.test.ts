@@ -1,10 +1,11 @@
 // ca: runs DEV_HTTPS=1 make dev-ca (injected runner), accepts exactly one PEM certificate, writes it
 // mode 644 and prints the NODE_EXTRA_CA_CERTS export.
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync as renameReal, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { singleCertificate } from '../src/ca.ts';
+import { singleCertificate, writeCertificate } from '../src/ca.ts';
+import { CliError } from '../src/errors.ts';
 import { EXIT } from '../src/run.ts';
 import { type Call, cli, fakeRunner, fixture, INHERITED, NOT_FOUND, TEST_CA } from './helpers.ts';
 
@@ -210,4 +211,115 @@ test('ca --out refuses a symlink planted while make dev-ca ran (nothing written 
   assert.equal(code, EXIT.failure);
   assert.match(stderr, /it is a symlink/);
   assert.equal(readFileSync(victim, 'utf8'), 'keep me\n');
+});
+
+/** Temp files ca may have left in a directory (they are named .<target>.<random>.tmp). */
+const leftovers = (dir: string): string[] => readdirSync(dir).filter((n) => n.endsWith('.tmp'));
+
+test('ca --out replaces the target by renaming a new file over it: a hard link to another file is not written through', async () => {
+  const f = fixture();
+  const other = join(f.home, 'other.crt');
+  writeFileSync(other, `\n${TEST_CA}\n`, { mode: 0o600 });
+  const out = join(f.home, 'ca.crt');
+  linkSync(other, out);
+  const { code, stderr } = await cli({ env: f.env }, 'ca', '--repo', f.repo, '--out', out);
+  assert.equal(code, EXIT.ok, stderr);
+  assert.equal(readFileSync(out, 'utf8'), TEST_CA);
+  assert.equal(statSync(out).mode & 0o777, 0o644);
+  // Written in place, the other name would show the new bytes and mode.
+  assert.equal(readFileSync(other, 'utf8'), `\n${TEST_CA}\n`);
+  assert.equal(statSync(other).mode & 0o777, 0o600);
+  assert.notEqual(statSync(out).ino, statSync(other).ino);
+  assert.deepEqual(leftovers(f.home), []);
+});
+
+test('ca --out refuses a non-certificate file swapped in at the target while make dev-ca ran, leaves it and no temp file', async () => {
+  const f = fixture();
+  const out = join(f.home, 'ca.crt');
+  const runner = fakeRunner({
+    'make dev-ca': () => {
+      writeFileSync(out, 'export PATH=/usr/bin\n', { mode: 0o600 });
+      return { stdout: TEST_CA };
+    },
+  });
+  const { code, stdout, stderr } = await cli({ env: f.env, runner }, 'ca', '--repo', f.repo, '--out', out);
+  assert.equal(code, EXIT.failure);
+  assert.equal(stdout, '');
+  assert.match(stderr, /refusing to write .*: it exists and is not a single PEM certificate;.*Nothing was written/);
+  assert.equal(readFileSync(out, 'utf8'), 'export PATH=/usr/bin\n');
+  assert.deepEqual(leftovers(f.home), []);
+});
+
+test('writeCertificate writes a new file mode 644 and leaves no temp file', () => {
+  const dir = join(fixture().home, 'new', 'dir');
+  const out = join(dir, 'ca.crt');
+  writeCertificate(out, TEST_CA);
+  assert.equal(readFileSync(out, 'utf8'), TEST_CA);
+  assert.equal(statSync(out).mode & 0o777, 0o644);
+  assert.deepEqual(readdirSync(dir), ['ca.crt']);
+});
+
+for (const [name, ops] of [
+  [
+    'the write',
+    {
+      write: () => {
+        throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+      },
+    },
+  ],
+  [
+    'the rename',
+    {
+      rename: () => {
+        throw Object.assign(new Error('EXDEV: cross-device link not permitted, rename'), { code: 'EXDEV' });
+      },
+    },
+  ],
+] as const) {
+  test(`writeCertificate: a failing ${name} is exit-1 material, leaves the target as it was and no temp file`, () => {
+    const home = fixture().home;
+    const out = join(home, 'ca.crt');
+    writeFileSync(out, `\n${TEST_CA}`, { mode: 0o600 });
+    const real = { write: (fd: number, text: string) => void writeFileSync(fd, text), rename: (a: string, b: string) => void renameReal(a, b) };
+    assert.throws(() => writeCertificate(out, TEST_CA, { ...real, ...ops }), (error: unknown) => error instanceof CliError && /^cannot write .*ca\.crt: .*; nothing was written$/.test(error.message));
+    assert.equal(readFileSync(out, 'utf8'), `\n${TEST_CA}`);
+    assert.equal(statSync(out).mode & 0o777, 0o600);
+    assert.deepEqual(readdirSync(home).sort(), ['.autologger-local-openbao', 'ca.crt']);
+  });
+}
+
+test('writeCertificate refuses a target that changed into a non-certificate before the rename, removing its temp file', () => {
+  const home = fixture().home;
+  const out = join(home, 'ca.crt');
+  let checked = false;
+  const ops = {
+    write: (fd: number, text: string) => {
+      writeFileSync(fd, text);
+      // Swapped in after the temp file is written, before the rename.
+      writeFileSync(out, 'keep me\n');
+      checked = true;
+    },
+    rename: () => assert.fail('a refused target is never renamed over'),
+  };
+  assert.throws(() => writeCertificate(out, TEST_CA, ops), /refusing to write .*it exists and is not a single PEM certificate/);
+  assert.equal(checked, true);
+  assert.equal(readFileSync(out, 'utf8'), 'keep me\n');
+  assert.deepEqual(leftovers(home), []);
+});
+
+test('ca --out into a directory it cannot write fails with exit 1 and no temp file', { skip: process.getuid?.() === 0 ? 'root can write anywhere' : false }, async () => {
+  const f = fixture();
+  const dir = join(f.home, 'locked');
+  mkdirSync(dir);
+  chmodSync(dir, 0o555);
+  try {
+    const { code, stdout, stderr } = await cli({ env: f.env }, 'ca', '--repo', f.repo, '--out', join(dir, 'ca.crt'));
+    assert.equal(code, EXIT.failure);
+    assert.equal(stdout, '');
+    assert.match(stderr, /^autologger-dev: cannot write .*ca\.crt: .*nothing was written\n$/);
+    assert.deepEqual(readdirSync(dir), []);
+  } finally {
+    chmodSync(dir, 0o755);
+  }
 });
