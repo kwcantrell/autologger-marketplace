@@ -255,3 +255,56 @@ export function rewriteLinks(body: string, resolve: LinkResolver): RewriteResult
   });
   return { body: out, unresolved };
 }
+
+/** A `wiki:` or `cite:` inline link of a body, on the exact grammar. */
+export type LinkTarget =
+  | { kind: 'wiki'; page_id: string; label: string; index: number }
+  | { kind: 'cite'; session_id: string; seconds: number; label: string; index: number };
+
+// `[label](wiki:<id>)` / `[label](cite:<id>@<seconds>)`, with an optional `<...>` destination and title.
+const INLINE_TARGET_RE =
+  /\[((?:\\.|[^\[\]\\])*)\]\([ \t\n]*<?(wiki|cite):([A-Za-z0-9_-]{1,64})(?:@(\d+(?:\.\d{1,3})?))?>?(?:[ \t\n]+(?:"[^"]*"|'[^']*'))?[ \t\n]*\)/g;
+
+/** Replaces fenced code blocks (``` or ~~~) with blank lines, keeping offsets. */
+function maskFences(body: string): string {
+  const lines = body.split('\n');
+  let fence: { char: string; length: number } | undefined;
+  return lines
+    .map((line) => {
+      const m = FENCE_RE.exec(line);
+      if (fence !== undefined) {
+        if (m?.[1] !== undefined && m[1][0] === fence.char && m[1].length >= fence.length && (m[2] ?? '').trim() === '') fence = undefined;
+        return ' '.repeat(line.length);
+      }
+      if (m?.[1] !== undefined && !(m[1][0] === '`' && (m[2] ?? '').includes('`'))) {
+        fence = { char: m[1][0] ?? '`', length: m[1].length };
+        return ' '.repeat(line.length);
+      }
+      return line;
+    })
+    .join('\n');
+}
+
+/**
+ * The `wiki:` and `cite:` inline links of a Markdown body, in order, outside code blocks and code
+ * spans; `index` is the link's offset in the body. Like checkLinks, a close approximation of the
+ * CommonMark parse autologger uses: reference-style links are not followed.
+ */
+export function linkTargets(body: string): LinkTarget[] {
+  const text = maskCodeSpans(maskFences(body));
+  const out: LinkTarget[] = [];
+  for (const m of text.matchAll(INLINE_TARGET_RE)) {
+    const label = unescape(m[1] ?? '').replace(/\s+/g, ' ').trim();
+    const id = m[3] ?? '';
+    if (m[2] === 'wiki' && m[4] === undefined) out.push({ kind: 'wiki', page_id: id, label, index: m.index });
+    if (m[2] === 'cite' && m[4] !== undefined) out.push({ kind: 'cite', session_id: id, seconds: Number(m[4]), label, index: m.index });
+  }
+  return out;
+}
+
+/** `cite:<session_id>@<seconds>` on autologger's grammar, or null when the id or time cannot be written so. */
+export function citeUrl(sessionId: string, seconds: number | null | undefined): string | null {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return null;
+  const url = `cite:${sessionId}@${String(Math.round(seconds * 1000) / 1000)}`;
+  return CITE_RE.test(url) ? url : null;
+}

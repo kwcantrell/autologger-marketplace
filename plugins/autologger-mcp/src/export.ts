@@ -12,27 +12,35 @@ const MAX_PAGES = 10_000;
 
 const LIST_TOOL: Record<Kind, string> = { events: 'list_events', topics: 'list_topics', wiki_pages: 'list_wiki_pages' };
 
-/** Every item of a list tool, following `next_cursor` to the end. */
-async function listAll(caller: Caller, tool: string, sessionId: string, warn: (m: string) => void): Promise<Rec[]> {
+/**
+ * Every item of a paged list tool called with `args`, following `next_cursor` to the end. `what`
+ * names the scope in error messages (`session S1`, `show shw_1`).
+ */
+export async function listPaged(caller: Caller, tool: string, args: Rec, what: string, warn: (m: string) => void): Promise<Rec[]> {
   const items: Rec[] = [];
   const seen = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; page < MAX_PAGES; page++) {
-    const out = await readTool(caller, tool, cursor === undefined ? { session_id: sessionId } : { session_id: sessionId, cursor });
+    const out = await readTool(caller, tool, cursor === undefined ? args : { ...args, cursor });
     if (!Array.isArray(out.items)) throw new CliError(`${tool} answered no items`);
     for (const item of out.items) if (isObject(item)) items.push(item);
-    if (typeof out.note === 'string') warn(`${tool} for session ${sessionId}: ${out.note}`);
+    if (typeof out.note === 'string') warn(`${tool} for ${what}: ${out.note}`);
     const next = out.next_cursor;
     if (typeof next !== 'string' || next === '') return items;
-    if (seen.has(next)) throw new CliError(`${tool} for session ${sessionId} repeated a cursor`);
+    if (seen.has(next)) throw new CliError(`${tool} for ${what} repeated a cursor`);
     seen.add(next);
     cursor = next;
   }
-  throw new CliError(`${tool} for session ${sessionId} did not end after ${MAX_PAGES} pages`);
+  throw new CliError(`${tool} for ${what} did not end after ${MAX_PAGES} pages`);
+}
+
+/** Every item of a session's list tool. */
+export function listAll(caller: Caller, tool: string, sessionId: string, warn: (m: string) => void): Promise<Rec[]> {
+  return listPaged(caller, tool, { session_id: sessionId }, `session ${sessionId}`, warn);
 }
 
 /** A wiki page's metadata and whole body, from every slice of `get_wiki_page` through `next_offset`. */
-async function wholePage(caller: Caller, sessionId: string, listed: Rec): Promise<Rec> {
+export async function wholePage(caller: Caller, sessionId: string, listed: Rec): Promise<Rec> {
   const pageId = listed.page_id;
   if (typeof pageId !== 'string') throw new CliError(`list_wiki_pages for session ${sessionId} answered a page without page_id`);
   let body = '';

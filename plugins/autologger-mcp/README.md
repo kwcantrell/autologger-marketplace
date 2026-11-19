@@ -26,6 +26,7 @@ Skills:
 | `sign-in` | Checks the sign-in (`status`), hands you the `login` command (or, on a local dev stack, the `make dev-mcp-token \| import-tokens` line) to run, signs out. |
 | `query-session-data` | Lists the tools and calls the read tools, with paging. |
 | `write-session-data` | Calls the write tools after you confirm each change; runs `check-links` on wiki bodies first. |
+| `explore-wiki` | Cross-session questions from a local index: `index build` / `index status`, `moments` about a topic, and `person-graph` (JSON and a Mermaid diagram). |
 | `seed-dev-stack` | Copies sessions from another server (such as stage) onto a local dev stack: `export`, the `import` plan, and `import --confirm` after you say yes. |
 
 autologger's AI features go through this plugin now: the in-app aichat agents are being retired, so
@@ -231,6 +232,72 @@ check the target before rerunning after such an error.
 
 Neither file holds a token, and content from the source is only ever sent as tool arguments: it
 never selects a tool, a server or a file.
+
+### index, moments, person-graph (cross-session questions from a local index)
+
+autologger's MCP server reads one session at a time, has no search tool yet, and allows 120 tool
+calls a minute and 2,000 an hour per user. To answer "find all moments about X" or "map this
+person" across a show, the CLI keeps a **local index** of what it read and answers from it:
+
+```sh
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp index build --server <url> --show <id>      # or --studio <id>, --all
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp index status --server <url>
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp moments "crème brûlée" --server <url> --show <id> [--term <alt> ...]
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp person-graph "Jane Doe" --server <url> --show <id>
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp index clear --server <url>
+```
+
+**What is indexed.** `index build` lists the scope (`list_studios`, `list_shows` for shows you can
+open, `list_sessions` without hidden sessions) and reads, for every session, `get_session`, all
+events, topics and transcript paragraphs, and `list_wiki_pages` with each page's whole body
+(`get_wiki_page`, every `next_offset`). It calls read tools only. A wiki page is reachable only
+through a session it is associated with (the session's own page, a page citing it, or a page that
+page links to); other pages are not indexed. Transcript words, aggregates and dashboards are not.
+
+**Where.** `$XDG_CONFIG_HOME/autologger-mcp/index/<host>_<port>-<hash>/` (`AUTOLOGGER_MCP_CONFIG_DIR`
+replaces `.../autologger-mcp`), one directory per server: `meta.json` (listings and builds),
+`sessions/` and `pages/` with file names hashed from the ids. Directories are `0700`, files `0600`,
+written atomically. Only tool results are stored, never a token. `index status` shows what is
+indexed and how old each build is; `index clear` deletes that server's index.
+
+**Refreshing.** A later build calls the listings, `get_session` and `list_wiki_pages` for every
+session, and re-reads a session's events, topics and paragraphs only when `get_session`'s
+`revision` (autologger advances it on every write to the session's events, transcript and topics)
+or its counts changed, and a page body only when the page's `revision` changed. Wiki pages are the
+show's, not the session's, so the session revision does not cover them: their listing is read on
+every build.
+
+**Read budget.** One run makes at most `--max-reads` tool calls (default 400, a few minutes at the
+server's limit, well under a 10-minute tool timeout). `Rate limit exceeded; retry in N s.` is waited
+out when N is at most 90 s and the run's waits stay within 300 s; otherwise, or when the budget is
+spent, the build stops cleanly between calls, keeps what it read, and answers `complete: false`
+with `continue_command`, the exact command to continue. The rerun keeps the stopped run's listing
+and skips the sessions it finished (for a day; after that it starts over, still skipping unchanged
+content).
+
+**moments** answers from the index only (no server calls). It matches the query and each `--term`
+as whole words or phrases, ignoring case and accents, against topic titles and summaries, event
+messages, transcript paragraphs, and wiki page titles, aliases and bodies. A page whose title or
+alias matches adds its title and aliases as terms and its `cite:` links as moments; a body match is
+a moment at the citations of the paragraph it is in. Each moment has `session_id`,
+`session_title`, `session_date`, `show_id`, `seconds` (events: `timecode_total_frames /
+frame_rate`; topics: `session_time`; paragraphs: `start_sec`; wiki: the citation), `source`
+(`topic|event|transcript|wiki`), `snippet`, `term`, `ref` and `cite` (`cite:<session_id>@<seconds>`,
+valid for `check-links`; null without a time). They are ordered by session date and time, and
+moments of one session within 5 s are merged (`also`). When the scope is not fully indexed the
+answer says `complete: false` and gives `build_command`.
+
+**person-graph** finds a `person` page by `page_id`, title or alias (several matches is an error
+listing them; none is an error naming `index build`) and answers `{nodes, edges, mermaid}`: the
+person, the pages it links to and that link to it (one hop, with `kind`; `in_index: false` for a
+page not reachable through MCP), the sessions it cites, each cited moment, and for each moment the
+session topics whose span (`session_time` + `duration_sec`) holds it. `mermaid` is a `graph LR`
+with generated node ids; labels are cut to 60 characters and every character other than letters,
+digits, spaces and `.,:!?'()-/@` is written as a `#<code>;` entity, so quotes, brackets, newlines and
+Markdown in titles stay inside their node.
+
+**Server search.** autologger-2 plans server-side search and wiki-graph read tools; once they
+exist, these commands can use them instead of the local index (a later change).
 
 ### Output and exit codes
 

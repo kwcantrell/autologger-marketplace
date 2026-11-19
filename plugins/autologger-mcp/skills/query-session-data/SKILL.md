@@ -12,6 +12,10 @@ retired, so summarising or analysing session data is done here, with the tools l
 only those). Run the commands exactly as written, from any directory. If one fails with "not signed in",
 follow this plugin's `sign-in` skill (the user signs in; you don't).
 
+**Across sessions** ("find all moments about X", "where did Y come up", "a topic diagram of a
+person"), use this plugin's `explore-wiki` skill instead: it indexes a show or studio locally once
+and answers from the index, rather than reading every session through these tools.
+
 ## Find the tools and their arguments
 
 ```sh

@@ -14,8 +14,8 @@ import { FakeAutologger } from './fakeServer.ts';
 
 const CLI_NAME = 'autologger-mcp';
 const INVOCATION = `npx --yes --offline --loglevel=error --package="\${CLAUDE_PLUGIN_ROOT}" -- ${CLI_NAME}`;
-/** Skills in the order their commands run: reads, then writes, then seeding, then sign-in (which ends with logout). */
-const SKILL_ORDER = ['query-session-data', 'write-session-data', 'seed-dev-stack', 'sign-in'];
+/** Skills in the order their commands run: reads, then writes, then seeding, the index, then sign-in (which ends with logout). */
+const SKILL_ORDER = ['query-session-data', 'write-session-data', 'seed-dev-stack', 'explore-wiki', 'sign-in'];
 
 const source = fileURLToPath(new URL('..', import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), `${CLI_NAME}-e2e-`));
@@ -37,6 +37,22 @@ const seedSource = new FakeAutologger({
 });
 const seedTarget = new FakeAutologger({
   data: { sessions: [{ session_id: 'T1', show_id: 'shw_t', categories: [{ id: 'cat_t', label: 'joke' }], events: [], topics: [] }], pages: [] },
+});
+// explore-wiki indexes a show of a third fake, with a person page citing a session.
+const wikiServer = new FakeAutologger({
+  data: {
+    sessions: [
+      {
+        session_id: 'W1',
+        show_id: 'shw_w',
+        title: 'Pasta night',
+        events: [{ event_id: 'e1', message: 'Pasta talk', timecode_total_frames: 250, frame_rate: 25 }],
+        topics: [{ id: 't1', session_time: '00:00:00', duration_sec: 60, summary: 'Pasta', ordinal: 1 }],
+        paragraphs: [{ ordinal: 1, speaker: 'A', session_time: null, start_sec: 12, end_sec: 14, text: 'I love pasta' }],
+      },
+    ],
+    pages: [{ page_id: 'pg_jane', show_id: 'shw_w', kind: 'person', title: 'Jane Doe', aliases: [], body_md: 'Jane on [pasta](cite:W1@12).', revision: 1 }],
+  },
 });
 const printed: string[] = [];
 
@@ -72,12 +88,14 @@ delete env.AUTOLOGGER_URL;
 before(async () => {
   await seedSource.start();
   await seedTarget.start();
+  await wikiServer.start();
   await server.start();
   env.AUTOLOGGER_URL = server.base;
 });
 after(async () => {
   await seedSource.close();
   await seedTarget.close();
+  await wikiServer.close();
   await server.close();
   rmSync(scratch, { recursive: true, force: true });
 });
@@ -124,6 +142,10 @@ function fill(command: string): string {
     source_session_id: 'S1',
     snapshot_file: join(cwd, 'snapshot.json'),
     mapping: 'S1=T1',
+    server: wikiServer.base,
+    show_id: 'shw_w',
+    topic: 'pasta',
+    person: 'Jane Doe',
   };
   return command.replace(/<([a-z_]+)>/g, (_, name: string) => seed[name] ?? `${name.toUpperCase()}-1`);
 }
@@ -149,17 +171,20 @@ test('every skill calls the CLI only through the shared npx invocation', () => {
     for (const command of commands) assert.ok(command.startsWith(`${INVOCATION} `), command);
     // Every command line is pre-approved except import-tokens, which writes credentials, and
     // import --confirm, which writes session data: no rule (in any skill) may cover them, so Claude
-    // has to ask first. Neither may export --force, which replaces a file.
+    // has to ask first. Neither may export --force, which replaces a file, nor index clear, which
+    // deletes the local index.
     const prefixes = allowedPrefixes(skill);
     assert.ok(prefixes.length > 0 && prefixes.every((p) => p.startsWith(`${INVOCATION} `)), skill);
     for (const command of commands) {
       const allowed = prefixes.some((p) => command.startsWith(p));
-      const writes = command.startsWith(`${INVOCATION} import-tokens`) || command.startsWith(`${INVOCATION} import --confirm`);
+      const writes =
+        command.startsWith(`${INVOCATION} import-tokens`) || command.startsWith(`${INVOCATION} import --confirm`) || command.startsWith(`${INVOCATION} index clear`);
       assert.equal(allowed, !writes, `${skill}: ${command}`);
     }
     assert.ok(!prefixes.some((p) => `${INVOCATION} import-tokens --json`.startsWith(p)), `${skill} pre-approves import-tokens`);
     assert.ok(!prefixes.some((p) => `${INVOCATION} import --confirm --snapshot x --json`.startsWith(p)), `${skill} pre-approves import --confirm`);
     assert.ok(!prefixes.some((p) => `${INVOCATION} export --force --server x --json`.startsWith(p)), `${skill} pre-approves export --force`);
+    assert.ok(!prefixes.some((p) => `${INVOCATION} index clear --server x --json`.startsWith(p)), `${skill} pre-approves index clear`);
   }
   assert.ok(skillCommands('sign-in').some((c) => c.startsWith(`${INVOCATION} import-tokens `)), 'the sign-in skill shows import-tokens');
   assert.equal(existsSync(join(pluginRoot, 'node_modules')), false);
@@ -189,7 +214,7 @@ test('every skill command line runs from a fresh copy and exits 0', async () => 
   // The output of `make dev-mcp-token` the user saved, fed to import-tokens on stdin (fake tokens).
   writeFileSync(join(cwd, 'TOKEN_FILE-1'), server.mintDevTokens('dashboards session-data:write'), { mode: 0o600 });
   // The user's sign-ins for seed-dev-stack: the source read-only, the local target with --write.
-  for (const [base, write] of [[seedSource.base, ''], [seedTarget.base, ' --write']] as const) {
+  for (const [base, write] of [[seedSource.base, ''], [seedTarget.base, ' --write'], [wikiServer.base, '']] as const) {
     const login = await sh(`${INVOCATION} login${write} --server ${base} --json`);
     assert.equal(login.status, 0, login.stderr);
   }
@@ -209,6 +234,10 @@ test('every skill command line runs from a fresh copy and exits 0', async () => 
   assert.equal(seedTarget.options.data?.pages[0]?.body_md, 'A [quote](cite:T1@2).');
   const called = server.calls.filter((c) => c.tool !== undefined).map((c) => c.tool);
   assert.ok(called.includes('create_wiki_page') && called.includes('list_studios'), called.join(','));
+  // explore-wiki: the build read the show with read tools only; moments and person-graph found the
+  // pasta moments and Jane's graph (the outputs are checked in wikiIndex.test.ts).
+  assert.ok(wikiServer.calls.some((c) => c.tool === 'list_transcript_paragraphs'));
+  assert.ok(wikiServer.calls.every((c) => c.tool === undefined || !c.tool.startsWith('create_')));
   // import-tokens replaced the browser sign-in (revoking its grant), then logout revoked the import.
   assert.equal(imported?.replaced, true);
   assert.equal(imported?.revoked_previous, true);
@@ -233,7 +262,7 @@ test('an unknown command through npx exits 2 with the message on stderr', async 
 test('no token appeared in any output', () => {
   assert.ok(server.issued.length > 0);
   const all = [...printed, readFileSync(join(cwd, 'snapshot.json'), 'utf8'), readFileSync(join(cwd, 'snapshot.json.import-state.json'), 'utf8')].join('\n');
-  for (const t of [...server.issued, ...seedSource.issued, ...seedTarget.issued]) assert.ok(!all.includes(t), 'a token was printed or stored');
+  for (const t of [...server.issued, ...seedSource.issued, ...seedTarget.issued, ...wikiServer.issued]) assert.ok(!all.includes(t), 'a token was printed or stored');
 });
 
 // Guard against `--package=""`: npm reads an empty spec as the registry package `undefined` (owned by a
