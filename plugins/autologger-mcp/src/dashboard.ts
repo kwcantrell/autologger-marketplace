@@ -219,7 +219,60 @@ function blanked(source: string): { code: string; bare: string } {
   return { code, bare };
 }
 
-const lineOf = (text: string, index: number): number => text.slice(0, index).split('\n').length;
+/** A 1-based line lookup for `text`, by binary search over its line starts (linear to build). */
+function lineIndex(text: string): (index: number) => number {
+  const starts = [0];
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  return (index: number): number => {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if ((starts[mid] as number) <= index) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1;
+  };
+}
+
+const isSpace = (c: string | undefined): boolean => c !== undefined && /\s/.test(c);
+
+type ImportStatement = { index: number; clause: string; from: string };
+
+/**
+ * The static `import <clause> from '<module>'` statements, one per `import` keyword in `bare`, or
+ * the index of the first keyword that does not start one. Scanned by hand, not by one regex, so
+ * it stays linear on any input (a long run of spaces or a comment after `import` included).
+ */
+function importStatements(code: string, bare: string): { statements: ImportStatement[]; bad?: number } {
+  // For each position, the index of the next character that ends an import clause in `bare`.
+  const nextStop = new Array<number>(bare.length + 1).fill(bare.length);
+  for (let i = bare.length - 1; i >= 0; i--) nextStop[i] = ";'\"`".includes(bare[i] as string) ? i : (nextStop[i + 1] as number);
+  const statements: ImportStatement[] = [];
+  const keywords = [...bare.matchAll(/(?<![\w$.])import(?![\w$])/g)].map((k) => k.index);
+  for (const [n, at] of keywords.entries()) {
+    let before = at - 1;
+    while (before >= 0 && (code[before] === ' ' || code[before] === '\t')) before--;
+    const starts = before < 0 || code[before] === ';' || code[before] === '\n';
+    const stop = nextStop[at + 6] as number;
+    const quote = bare[stop];
+    // A clause that runs into the next keyword is not one; this also keeps every slice below to
+    // text between two keywords, so the whole scan is linear.
+    if (!starts || (keywords[n + 1] ?? Infinity) < stop || (quote !== "'" && quote !== '"')) return { statements, bad: at };
+    const head = code.slice(at + 6, stop);
+    const trimmed = head.trimEnd();
+    const clause = trimmed.slice(0, -4).trim();
+    // The module name: up to the closing quote, on the same line (string contents hold no keyword).
+    let end = stop + 1;
+    while (end < code.length && code[end] !== quote && code[end] !== '\n' && code[end] !== "'" && code[end] !== '"') end++;
+    const from = code.slice(stop + 1, end);
+    if (code[end] !== quote || !isSpace(head[0]) || !trimmed.endsWith('from') || !isSpace(trimmed[trimmed.length - 5]) || clause === '' || from === '') {
+      return { statements, bad: at };
+    }
+    statements.push({ index: at, clause, from });
+  }
+  return { statements };
+}
 
 /**
  * Problems with a dashboard source under autologger's save rules, checked statically (empty when
@@ -228,26 +281,25 @@ const lineOf = (text: string, index: number): number => text.slice(0, index).spl
  * reference to a denied global.
  */
 export function dashboardProblems(tsx: string): string[] {
+  // Nothing below runs on an oversized source, so the scans' cost stays bounded by autologger's limit.
+  if (tsx.length > MAX_TSX_CHARS) return [`the source is ${tsx.length} characters, over autologger's ${MAX_TSX_CHARS}`];
   const problems: string[] = [];
-  if (tsx.length > MAX_TSX_CHARS) problems.push(`the source is ${tsx.length} characters, over autologger's ${MAX_TSX_CHARS}`);
   if (tsx.includes('\0')) problems.push('the source contains a NUL character');
   const { code, bare } = blanked(tsx);
+  const lineOf = lineIndex(code);
 
-  const statements = [...code.matchAll(/(^|[;\n])[ \t]*import\s+([\s\S]*?)\s+from\s*(['"])([^'"\n]+)\3/g)];
-  const keywords = [...bare.matchAll(/(?<![\w$.])import(?![\w$])/g)];
-  if (keywords.length !== statements.length) problems.push(`line ${lineOf(bare, keywords.find((k) => !statements.some((s) => s.index !== undefined && k.index >= s.index && k.index <= s.index + s[0].length))?.index ?? 0)}: only static "import ... from '<module>'" statements are allowed (no import(), import.meta or side-effect imports)`);
+  const { statements, bad } = importStatements(code, bare);
+  if (bad !== undefined) problems.push(`line ${lineOf(bad)}: only static "import ... from '<module>'" statements are allowed (no import(), import.meta or side-effect imports)`);
   if (/(?<![\w$.])require\s*\(/.test(bare)) problems.push('require() is not allowed');
   let bindings = 0;
-  for (const s of statements) {
-    const clause = (s[2] ?? '').trim();
-    const from = s[4] ?? '';
-    const line = lineOf(code, (s.index ?? 0) + (s[1] ?? '').length);
+  for (const { index, clause, from } of statements) {
+    const line = lineOf(index);
     const allowed = IMPORT_ALLOWLIST[from];
     if (allowed === undefined) {
       problems.push(`line ${line}: '${from}' is not a module a dashboard may import`);
       continue;
     }
-    const m = /^(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([\s\S]*)\}|\*\s+as\s+([A-Za-z_$][\w$]*))?$/.exec(clause);
+    const m = /^(?:([A-Za-z_$][\w$]*)\s*(?:,\s*)?)?(?:\{([^}]*)\}|\*\s+as\s+([A-Za-z_$][\w$]*))?$/.exec(clause);
     if (m === null || (m[1] === undefined && m[2] === undefined && m[3] === undefined)) {
       problems.push(`line ${line}: cannot read the import clause '${clause}'`);
       continue;
@@ -269,14 +321,14 @@ export function dashboardProblems(tsx: string): string[] {
   }
   for (const m of bare.matchAll(/<\/?([A-Za-z][\w.:-]*)/g)) {
     const tag = (m[1] ?? '').toLowerCase().split(':').pop() ?? '';
-    if ((DENIED_ELEMENTS as readonly string[]).includes(tag)) problems.push(`line ${lineOf(bare, m.index)}: the element <${m[1]}> is not allowed`);
+    if ((DENIED_ELEMENTS as readonly string[]).includes(tag)) problems.push(`line ${lineOf(m.index)}: the element <${m[1]}> is not allowed`);
   }
   if (/dangerouslySetInnerHTML|srcDoc/i.test(bare)) problems.push('dangerouslySetInnerHTML and srcDoc are not allowed');
   if (/\son[A-Z]\w*=\s*['"]/.test(code)) problems.push('an event handler given as a string is not allowed');
   for (const name of DENIED_GLOBALS) {
     // A free reference: not a property (`.name`), not part of a longer name, not an object key.
     const m = new RegExp(`(?<![\\w$.])${name}(?![\\w$])(?!\\s*:(?!:))`).exec(bare);
-    if (m !== null) problems.push(`line ${lineOf(bare, m.index)}: ${name} is not allowed`);
+    if (m !== null) problems.push(`line ${lineOf(m.index)}: ${name} is not allowed`);
   }
   return problems;
 }

@@ -117,6 +117,33 @@ test('the pre-check finds what autologger refuses', () => {
   assert.deepEqual(dashboardProblems(ok.replace('return', '// window\n  const t = "fetch me";\n  const p = e.top;\n  return')), []);
 });
 
+// The pre-check reads plan TSX in the pre-approved dry run, so it must stay linear on hostile input:
+// a long whitespace run or comment after `import` once backtracked for minutes at 10,000 characters.
+test('the pre-check stays fast on 200 KB and just-under-the-limit hostile sources', () => {
+  const near = MAX_TSX_CHARS - 100;
+  const cases: [string, string, RegExp][] = [
+    ['import + 200 KB of spaces', `import${' '.repeat(200_000)}x`, /over autologger's 100000/],
+    ['import + a 200 KB comment', `import /*${'x'.repeat(200_000)}*/ x`, /over autologger's 100000/],
+    ['import + spaces', `import${' '.repeat(near)}x`, /only static "import/],
+    ['import + a comment', `import /*${'x'.repeat(near)}*/ x`, /only static "import/],
+    ['import + spaces + from, no module', `import a${' '.repeat(near / 2)}from${' '.repeat(near / 2 - 20)}x`, /only static "import/],
+    ['a clause of spaces', `import a${' '.repeat(near)}x from 'react';`, /cannot read the import clause/],
+    ['a clause of commas and spaces', `import a${' ,'.repeat(near / 2)} from 'react';`, /cannot read the import clause/],
+    ['many import keywords', 'import '.repeat(Math.floor(near / 7)), /only static "import/],
+    ['many import statements', "import { useState } from 'react';\n".repeat(Math.floor(near / 34)), /imported bindings, over/],
+    ['many denied elements', '<script>'.repeat(Math.floor(near / 8)), /the element <script> is not allowed/],
+    ['a denied global then spaces', `window${' '.repeat(near)}x`, /window is not allowed/],
+    ['an unterminated string after from', `import a from '${'x'.repeat(near)}`, /only static "import/],
+  ];
+  for (const [name, source, expected] of cases) {
+    const started = performance.now();
+    const problems = dashboardProblems(source).join('\n');
+    const ms = performance.now() - started;
+    assert.match(problems, expected, name);
+    assert.ok(ms < 1000, `${name} took ${Math.round(ms)} ms`);
+  }
+});
+
 // The copied rules match autologger's contract, when an autologger-2 checkout is on this machine.
 const contract = join(process.env.AUTOLOGGER_REPO ?? '/home/autologger/autologger-2', 'packages', 'contract', 'src', 'customDashboards.ts');
 test('the copied allowlist, denylists and limits match autologger-2 packages/contract/src/customDashboards.ts', { skip: existsSync(contract) ? false : `no ${contract}` }, () => {
