@@ -45,7 +45,7 @@
     {
       "name": "autologger-clips",
       "source": "./plugins/autologger-clips",
-      "description": "Clips autologger moments into OpenReel video timelines (FCPXML/OTIO) and playlist compilations: maps session time to video time, keeps a session-to-video map, fetches YouTube sources with yt-dlp, and runs the OpenReel web editor."
+      "description": "Clips autologger moments into OpenReel video timelines (FCPXML/OTIO) and playlist compilations: maps session time to video time, keeps a session-to-video map, fetches YouTube sources with yt-dlp, runs the OpenReel web editor, and publishes YouTube clips as an autologger custom dashboard."
     }
   ]
 }

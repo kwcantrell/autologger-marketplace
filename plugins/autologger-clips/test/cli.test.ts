@@ -20,7 +20,7 @@ const CLI_NAME = 'autologger-clips';
 const INVOCATION = `npx --yes --offline --loglevel=error --package="\${CLAUDE_PLUGIN_ROOT}" -- ${CLI_NAME}`;
 const SKILLS = ['clip-moments', 'compile-playlist'];
 /** The commands a skill may pre-approve: the read-only ones. */
-const READ_ONLY = ['timeline', 'compile', 'media list', 'editor status', 'desktop doctor', '--help'];
+const READ_ONLY = ['timeline', 'compile', 'dashboard', 'media list', 'editor status', 'desktop doctor', '--help'];
 /** Commands that act on the machine or the media map: never pre-approved. */
 const ACTING = ['media set', 'media remove', 'media fetch', 'editor start', 'editor stop'];
 
@@ -126,6 +126,9 @@ function fill(command: string): string {
     media_json_file: 'media.json',
     clips_file: 'clips.json',
     timeline_file: 'out/clips.fcpxml',
+    tsx_file: 'out/clips-dashboard.tsx',
+    save_args_file: 'out/save-dashboard.json',
+    session_media: 'S1=media.json',
   };
   return command.replace(/<([a-z_]+)>/g, (_, name: string) => {
     const value = values[name];
@@ -188,6 +191,14 @@ test('the skills ask the user before acting commands and downloads', () => {
   assert.match(clip, /never run `claude mcp add`\s+yourself/);
   assert.match(clip, /`explore-wiki` skill: `index build`, then `moments[\s\S]*`query-session-data` skill/);
   assert.match(skillText('compile-playlist'), /\*\*Ask the user once for the whole download\*\*/);
+  // Publishing a dashboard: asked first, through autologger-mcp's call (never this CLI), with the refusal explained.
+  for (const skill of SKILLS) {
+    const text = skillText(skill);
+    assert.match(text, /\*\*Ask the user first\*\*[\s\S]*after they agree, run its `call save_dashboard --args-file/, skill);
+    assert.match(text, /`Owner or admin role required\.`: saving a dashboard needs an owner or admin/, skill);
+    assert.match(text, /<server>\/sessions\/<session_id>/, skill);
+  }
+  assert.match(skillText('compile-playlist'), /\*\*ask the user which\*\*[\s\S]*--session/);
 });
 
 test('every skill command line runs from a fresh copy against the fakes and exits 0', async () => {
@@ -215,6 +226,20 @@ test('every skill command line runs from a fresh copy against the fakes and exit
         const offset = command.includes(' compile ') ? 0 : 12.5;
         assert.deepEqual([out.clips[0].video_in_s, out.clips[0].video_out_s], [30 - offset, 45 - offset]);
         if (command.includes(' --title-cards')) assert.equal(out.title_cards[0].text, 'Episode 1 (2026-01-15)');
+      }
+      if (command.includes(' dashboard ')) {
+        const tsx = readFileSync(out.out, 'utf8');
+        assert.equal(out.out, join(cwd, 'out', 'clips-dashboard.tsx'));
+        assert.match(tsx, /import \{ YouTubePlayer, formatDuration, formatTimecode \} from '@autologger\/dashboard';/);
+        assert.equal(out.players.length, 1);
+        assert.equal(out.players[0].video_id, 'dQw4w9WgXcQ');
+        // Merged 30-45 s of session time, take_start_s 12.5: video 17.5-32.5 s.
+        assert.deepEqual([out.players[0].clips[0].video_start_s, out.players[0].clips[0].video_end_s], [17.5, 32.5]);
+        const args = JSON.parse(readFileSync(out.save_args, 'utf8'));
+        const title = command.includes(' --compilation ') ? 'Clip compilation' : 'Clips: Episode 1';
+        assert.equal(out.title, title);
+        assert.deepEqual(args, { title, tsx, scope: { kind: 'session', session_id: 'S1' } });
+        assert.deepEqual(ran, [], 'dashboard ran an external command');
       }
       if (command.includes(' editor start ')) {
         assert.match(out.url, /^http:\/\/127\.0\.0\.1:\d+\/$/);
