@@ -1,20 +1,23 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { parseArgs } from 'node:util';
 import { importTokens, isExpired, login, logout, parseDevTokenGrant, requireSignedIn, TokenSource } from './auth.ts';
-import { CLI_NAME, devTokenHint, importTokensCommand, indexBuildCommand, loginCommand, reusableClientId } from './commands.ts';
+import { AppClient, type AppCookie, AppCookieStore, parseCookieLine } from './appApi.ts';
+import { appSigninCommand, CLI_NAME, devTokenHint, importTokensCommand, indexBuildCommand, loginCommand, reusableClientId } from './commands.ts';
 import { CliError, messageOf, UsageError } from './errors.ts';
-import { DEFAULT_SERVER, type Fetch, isObject, resolveServer } from './http.ts';
-import { type Caller, type Rec, RateLimitStop, readSnapshot, readState, statePath, writeJsonFile } from './copy.ts';
+import { DEFAULT_SERVER, type Fetch, isLoopback, isObject, resolveServer } from './http.ts';
+import { type Caller, type Rec, RateLimitStop, readSnapshot, readState, statePath, type TargetState, writeJsonFile } from './copy.ts';
 import { exportSessions, listAll, summarize } from './export.ts';
+import { exportAll, progressPath, readProgress } from './exportAll.ts';
 import { execute, plan, type Plan, type RunResult, targetSession, targetState, type TargetSession } from './importer.ts';
 import { checkLinks } from './links.ts';
 import { McpClient, resultText } from './mcp.ts';
 import { findMoments, type Moment } from './moments.ts';
 import { findPerson, personGraph, PersonNotFound } from './personGraph.ts';
 import { discover, WRITE_SCOPE } from './oauth.ts';
-import { CredentialStore, type Env, redact } from './store.ts';
+import { copyDashboards, copyWords, createPlan, type CreatePlan, type CreateResult, createStructure, DASHBOARD_TOOL, emptyCreateResult, placedSessions, plannedTargets, sameServer, structureOf } from './seed.ts';
+import { CredentialStore, type Env, knownSecrets, redact } from './store.ts';
 import { budgetCaller, buildIndex, DEFAULT_MAX_READS, MAX_TOTAL_WAIT_S, MAX_WAIT_S, type Scope, scopeArgs, scopeKey, scopeText, scopeView, WikiIndex } from './wikiIndex.ts';
 
 export { CLI_NAME, importTokensCommand, loginCommand } from './commands.ts';
@@ -69,6 +72,14 @@ Commands:
                                all events, topics and wiki pages with whole bodies. Refuses an
                                existing --out; 'export --force ...' replaces it (--force must come
                                right after export). A rate limit is waited out (--no-wait: stop).
+  export --all --out <file.json> [--no-wait]
+                               Read everything the account can see (read tools only): every studio,
+                               show (with list_categories) and session (hidden ones too), and per
+                               session get_session, events, topics, transcript words and paragraphs,
+                               wiki pages with whole bodies, its dashboards with their source, and
+                               list_session_media links (never audio or video bytes). Progress is
+                               kept in <file>.export-progress.json: when it stops (--no-wait, an
+                               error), the same command continues without reading anything again.
   import --snapshot <file> --map <source_session>=<target_session> [--map ...] [--no-wait]
                                Plan copying the snapshot's events, topics and wiki pages into
                                existing sessions of the server (the target): a dry run that writes
@@ -86,6 +97,22 @@ Commands:
                                duplicates. A rate limit is waited out (--no-wait: stop instead).
                                Needs a 'login --write' sign-in to the target; refuses a target that
                                is the snapshot's source server.
+  import --snapshot <file> --create [--no-wait]
+                               For a snapshot from export --all, into a local dev stack only (a
+                               loopback --server, never the source): plan the teams, shows (with
+                               their categories) and sessions to create, the transcript words and
+                               dashboards to copy, and the events, topics and wiki pages (as above).
+                               A dry run; writes nothing. Lists what is not copied and why.
+  import --confirm --snapshot <file> --create [--no-wait]
+                               Do it: teams, shows and sessions through the local app's HTTP API
+                               (signed in with app-signin), events, topics and wiki pages with the
+                               MCP write tools, transcript words through the HTTP API, dashboards
+                               with save_dashboard. Resumable through <file>.import-state.json.
+  app-signin                   Store the line 'make dev-login' prints (<cookie name>=<token>), read
+                               from stdin only (pipe it in), as the local app's session for
+                               import --create (mode 0600, under the config directory). Loopback
+                               servers only; the cookie is never printed.
+  app-signout                  Delete the stored app session cookie of the server.
   index build (--show <id> | --studio <id> | --all) [--max-reads N]
                                Read every visible session of the scope (read tools only: listings,
                                get_session, events, topics, transcript paragraphs, wiki pages with
@@ -147,6 +174,7 @@ const OPTIONS = {
   all: { type: 'boolean', default: false },
   'max-reads': { type: 'string' },
   term: { type: 'string', multiple: true },
+  create: { type: 'boolean', default: false },
 } as const;
 
 type OptionName = keyof typeof OPTIONS;
@@ -159,8 +187,10 @@ const COMMAND_OPTIONS: Record<string, OptionName[]> = {
   tools: ['server'],
   call: ['server', 'args', 'args-file'],
   'check-links': [],
-  export: ['server', 'session', 'out', 'force', 'no-wait'],
-  import: ['server', 'snapshot', 'map', 'confirm', 'no-wait'],
+  export: ['server', 'session', 'all', 'out', 'force', 'no-wait'],
+  import: ['server', 'snapshot', 'map', 'confirm', 'no-wait', 'create'],
+  'app-signin': ['server'],
+  'app-signout': ['server'],
   index: ['server', 'show', 'studio', 'all', 'max-reads'],
   moments: ['server', 'show', 'studio', 'all', 'term'],
   'person-graph': ['server', 'show', 'studio', 'all'],
@@ -492,7 +522,8 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
       case 'export': {
         if (rest.length > 0) throw new UsageError('export takes no positional arguments');
         const sessionIds = values.session ?? [];
-        if (sessionIds.length === 0) throw new UsageError('export needs --session <id> (one or more)');
+        if (values.all && sessionIds.length > 0) throw new UsageError('give --session <id> or --all, not both');
+        if (!values.all && sessionIds.length === 0) throw new UsageError('export needs --session <id> (one or more), or --all');
         for (const id of sessionIds) if (!ID_RE.test(id)) throw new UsageError(`--session '${id}' is not a session id`);
         // A pre-approved `export --server ...` command line must never be able to replace a file.
         if (values.force && argv[argv.indexOf('export') + 1] !== '--force') {
@@ -505,6 +536,28 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
         if (!values.force && existsSync(outPath)) throw new CliError(`${outPath} already exists; run 'export --force ...' to overwrite it`);
         const client = connect(ctx);
         await client.initialize();
+        if (values.all) {
+          const progressFile = progressPath(outPath);
+          const progress = readProgress(progressFile, server, ctx.now());
+          const tools = new Map((await client.listTools()).map((t) => [t.name, t]));
+          let whole;
+          try {
+            whole = await exportAll({ caller: caller(client, values['no-wait']), tools, progress, save: () => writeJsonFile(progressFile, progress, true), warn, now: ctx.now() });
+          } catch (error) {
+            const saved = existsSync(progressFile) ? ` Progress is saved in ${progressFile}; run the same export command again to continue (what was read is not read again).` : '';
+            if (error instanceof RateLimitStop) throw new CliError(`${error.message}; stopped.${saved}`);
+            throw new CliError(`${messageOf(error)}${saved}`);
+          }
+          writeJsonFile(outPath, whole, values.force);
+          if (existsSync(progressFile)) unlinkSync(progressFile);
+          const summary = summarize(whole, outPath);
+          const t = summary.totals;
+          out(
+            summary,
+            `Exported everything this account can read on ${server} to ${outPath}: ${summary.studios ?? 0} studios, ${summary.shows ?? 0} shows, ${t.sessions} sessions, ${t.events} events, ${t.topics} topics, ${t.transcript_words ?? 0} transcript words, ${t.transcript_paragraphs ?? 0} transcript paragraphs, ${t.wiki_pages} wiki pages (per session), ${t.dashboards ?? 0} dashboards, ${t.media ?? 0} media links (no audio or video).\n`,
+          );
+          return EXIT.ok;
+        }
         const snapshot = await exportSessions(caller(client, values['no-wait']), server, sessionIds, ctx.now(), warn);
         writeJsonFile(outPath, snapshot, values.force);
         const summary = summarize(snapshot, outPath);
@@ -523,6 +576,10 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
           throw new UsageError('--confirm must come right after import: import --confirm --snapshot <file> --map ...');
         }
         if (values.snapshot === undefined || values.snapshot === '') throw new UsageError('import needs --snapshot <file>');
+        if (values.create) {
+          if ((values.map ?? []).length > 0) throw new UsageError('import --create makes the target sessions itself; it takes no --map');
+          return await importCreate(server, ctx, resolvePath(values.snapshot), values.confirm, values['no-wait']);
+        }
         const maps = parseMaps(values.map ?? []);
         const snapshotPath = resolvePath(values.snapshot);
         const snapshot = readSnapshot(snapshotPath);
@@ -548,14 +605,7 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
         const stateFile = statePath(snapshotPath);
         const state = readState(stateFile, snapshot.source_server);
         const target = targetState(state, server);
-        // The target's events, where an earlier run created some: their timecodes and versions.
-        const targetEvents = new Map<string, Map<string, Rec>>();
-        const withEvents = new Set(Object.entries(target.created).filter(([k]) => k.startsWith('events:')).map(([, v]) => v.target_session_id));
-        for (const t of targets) {
-          if (!withEvents.has(t.target_session_id) || targetEvents.has(t.target_session_id)) continue;
-          const rows = await listAll(call, 'list_events', t.target_session_id, warn);
-          targetEvents.set(t.target_session_id, new Map(rows.flatMap((r) => (typeof r.event_id === 'string' ? [[r.event_id, r] as [string, Rec]] : []))));
-        }
+        const targetEvents = await readTargetEvents(call, targets, target, warn);
         const input = { snapshot, targets, state: target, tools, targetEvents };
         const thePlan = plan(input);
         const missing = thePlan.tools.filter((t) => !tools.has(t));
@@ -589,6 +639,48 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
           unresolved_links: result.unresolved_links,
         };
         out(report, importText(report, thePlan));
+        return EXIT.ok;
+      }
+      case 'app-signin': {
+        // The cookie never comes from an argument: those end up in shell history and process lists.
+        if (rest.length > 0) throw new UsageError('app-signin takes no arguments; pipe the output of make dev-login into it');
+        if (!isLoopback(server)) throw new CliError(`app-signin is for a local dev stack (localhost, 127.0.0.1 or [::1]); ${server} is not one. Nothing was stored`);
+        let reader = rawIo.readStdin;
+        if (reader === undefined) {
+          if (process.stdin.isTTY) throw new UsageError('app-signin reads the cookie line from standard input; pipe the output of make dev-login into it');
+          reader = readStdin;
+        }
+        let text: string;
+        try {
+          text = await reader();
+        } catch (error) {
+          throw new CliError(`cannot read standard input: ${messageOf(error)}`);
+        }
+        const { name, token } = parseCookieLine(text);
+        knownSecrets.add(token);
+        const cookie: AppCookie = { version: 1, server, name, token, stored_at: new Date(ctx.now()).toISOString() };
+        const app = appClient(cookie, false);
+        let team: string | null = null;
+        try {
+          const answer = await app.call('GET', '/api/studio');
+          if (answer.status === 200 && isObject(answer.body) && typeof answer.body.id === 'string') team = answer.body.id;
+          else if (answer.status !== 403) throw new CliError(`GET /api/studio answered ${answer.status}`);
+        } catch (error) {
+          throw new CliError(`${messageOf(error)}. Nothing was stored`);
+        }
+        const cookies = new AppCookieStore(env, server);
+        cookies.save(cookie);
+        out(
+          { server, cookie_name: name, stored: cookies.path, active_team: team },
+          `Stored the ${name} session for ${server} in ${cookies.path} (mode 0600)${team === null ? '; this account has no team yet' : `; its active team is ${team}`}.\n`,
+        );
+        return EXIT.ok;
+      }
+      case 'app-signout': {
+        if (rest.length > 0) throw new UsageError('app-signout takes no arguments');
+        const cookies = new AppCookieStore(env, server);
+        const deleted = cookies.delete();
+        out({ server, deleted, path: cookies.path }, deleted ? `Deleted the app session of ${server} (${cookies.path}).\n` : `No app session stored for ${server}; nothing to do.\n`);
         return EXIT.ok;
       }
       case 'call': {
@@ -630,6 +722,174 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
   function connect(ctx: ConstructorParameters<typeof TokenSource>[0], tokens = new TokenSource(ctx)): McpClient {
     return new McpClient({ endpoint: tokens.endpoints.resource, tokens, fetch: ctx.fetch, clientVersion: version() });
   }
+
+  function appClient(cookie: AppCookie, noWait: boolean): AppClient {
+    return new AppClient({
+      server: cookie.server,
+      cookie,
+      fetch: ctxBase.fetch,
+      sleep: rawIo.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+      noWait,
+      notice: (text) => io.stderr(`${CLI_NAME}: ${text}`),
+    });
+  }
+
+  /**
+   * import --create: refuses a target that is not a local dev stack or is the snapshot's source
+   * before anything else; then plans (dry run) or makes the structure and copies everything.
+   */
+  async function importCreate(server: string, ctx: ConstructorParameters<typeof TokenSource>[0], snapshotPath: string, confirm: boolean, noWait: boolean): Promise<number> {
+    if (!isLoopback(server)) {
+      throw new CliError(`import --create writes only to a local dev stack (localhost, 127.0.0.1 or [::1], any port); ${server} is not one. Nothing was written`);
+    }
+    const snapshot = readSnapshot(snapshotPath);
+    if (sameServer(snapshot.source_server, server)) {
+      throw new CliError(`the target ${server} is the snapshot's source server (${snapshot.source_server}); import copies into another server. Nothing was written`);
+    }
+    if (snapshot.studios === undefined) {
+      throw new CliError(`${snapshotPath} holds sessions from export --session; import --create needs a whole-account snapshot from export --all (or use --map with existing target sessions). Nothing was written`);
+    }
+    const cookie = new AppCookieStore(env, server).load();
+    if (confirm && cookie === undefined) {
+      throw new CliError(`no app session stored for ${server}: import --create makes teams, shows and sessions through the app, signed in with make dev-login. Run in the autologger-2 checkout (your email for <address>, the same account as the MCP sign-in; DEV_SLOT=N in front for dev slot N):\n  ${appSigninCommand(server)}\nNothing was written`);
+    }
+    const tokens = new TokenSource(ctx);
+    if (!tokens.scope.split(' ').includes(WRITE_SCOPE)) {
+      throw new CliError(`the sign-in to ${server} is read-only (scope '${tokens.scope}'); import needs ${WRITE_SCOPE}. Nothing was written. To sign in with it, run in a terminal:\n  ${loginCommand(server, true)}`);
+    }
+    const client = connect(ctx, tokens);
+    await client.initialize();
+    const tools = new Map((await client.listTools()).map((t) => [t.name, t]));
+    const call = caller(client, noWait);
+    const stateFile = statePath(snapshotPath);
+    const state = readState(stateFile, snapshot.source_server);
+    const target = targetState(state, server);
+    const structure = structureOf(target);
+
+    // Sessions made by an earlier run are read on the target (through MCP: the sign-in must be
+    // the same account as the app session); the rest are planned as new:<id> placeholders.
+    const resolve = async (all: boolean): Promise<TargetSession[]> => {
+      const out: TargetSession[] = [];
+      for (const t of plannedTargets(snapshot, structure)) {
+        const made = structure.sessions[t.source_session_id];
+        if (made === undefined) {
+          if (all) out.push(t);
+          continue;
+        }
+        try {
+          out.push(await targetSession(call, server, t.source_session_id, made.target_id));
+        } catch (error) {
+          throw new CliError(`${messageOf(error)}. The MCP sign-in must be the same account as the app session (make dev-login EMAIL=...)`);
+        }
+      }
+      return out;
+    };
+
+    const planned = await resolve(true);
+    const dryPlan = plan({ snapshot, targets: planned, state: target, tools, targetEvents: await readTargetEvents(call, planned, target, warn) });
+    const creating = createPlan(snapshot, structure);
+    const needed = [...dryPlan.tools, ...(creating.dashboards.some((d) => d.action === 'create') ? [DASHBOARD_TOOL] : [])];
+    const missing = needed.filter((t) => !tools.has(t));
+    if (missing.length > 0) {
+      throw new CliError(`the target ${server} has no ${missing.join(', ')} tool${missing.length === 1 ? '' : 's'}, which this import needs; nothing was written`);
+    }
+    const header = {
+      source_server: snapshot.source_server,
+      target_server: server,
+      snapshot: snapshotPath,
+      state_file: stateFile,
+      app_signed_in: cookie !== undefined,
+      ...(cookie === undefined ? { app_signin_command: appSigninCommand(server) } : {}),
+    };
+    const sessionsOf = (ts: readonly TargetSession[]) => ts.map(({ target_fps: _fps, ...rest }) => rest);
+    if (!confirm || cookie === undefined) {
+      const report = { mode: 'dry-run', ...header, sessions: sessionsOf(planned), create: creating, ...planReport(dryPlan) };
+      out(report, `${createText(creating, false)}${importText(report, dryPlan)}${cookie === undefined ? `Before --confirm, store the app session: run in the autologger-2 checkout\n  ${appSigninCommand(server)}\n` : ''}`);
+      return EXIT.ok;
+    }
+
+    const app = appClient(cookie, noWait);
+    const before = await app.call('GET', '/api/studio');
+    const previousTeam = before.status === 200 && isObject(before.body) && typeof before.body.id === 'string' ? before.body.id : undefined;
+    const save = (): void => writeJsonFile(stateFile, state, true);
+    const made: CreateResult = emptyCreateResult();
+    const notice = (text: string): void => io.stderr(`${CLI_NAME}: ${text}`);
+    let thePlan: Plan;
+    let targets: TargetSession[];
+    let result: RunResult;
+    try {
+      try {
+        await createStructure({ app, snapshot, structure, save, result: made, notice });
+        targets = await resolve(false);
+        const input = { snapshot, targets, state: target, tools, targetEvents: await readTargetEvents(call, targets, target, warn) };
+        thePlan = plan(input);
+        result = await execute({ ...input, caller: call, save }, thePlan);
+        await copyWords({ app, snapshot, structure, save, result: made, notice });
+        await copyDashboards({ app, snapshot, structure, save, result: made, notice, caller: call, tools });
+      } finally {
+        // Sessions are made in the active team: give the user back the one they had.
+        if (previousTeam !== undefined) {
+          try {
+            await app.call('PUT', '/api/profile', { active_studio_id: previousTeam });
+          } catch {
+            // best effort
+          }
+        }
+      }
+    } catch (error) {
+      const saved = existsSync(stateFile) ? ` Progress is saved in ${stateFile}; run the same import --confirm command again to resume (nothing is created twice).` : '';
+      if (error instanceof RateLimitStop) throw new CliError(`${error.message}; stopped.${saved}`);
+      throw new CliError(`${messageOf(error)}${saved}`);
+    }
+    const { failed: structureFailed, ...counts } = made;
+    const report = {
+      mode: 'confirm',
+      ...header,
+      sessions: sessionsOf(targets),
+      create: createPlan(snapshot, structure),
+      created_structure: counts,
+      ...planReport(thePlan),
+      created: result.created,
+      links_fixed: result.links_fixed,
+      timecodes_fixed: result.timecodes_fixed,
+      skipped: result.skipped,
+      failed: [...structureFailed, ...result.failed],
+      unresolved_links: result.unresolved_links,
+    };
+    out(report, `${createdText(counts, placedSessions(snapshot).length)}${importText(report, thePlan)}`);
+    return EXIT.ok;
+  }
+}
+
+/** The target's events, where an earlier run created some: their timecodes and versions. */
+async function readTargetEvents(call: Caller, targets: readonly TargetSession[], target: TargetState, warn: (m: string) => void): Promise<Map<string, Map<string, Rec>>> {
+  const targetEvents = new Map<string, Map<string, Rec>>();
+  const withEvents = new Set(Object.entries(target.created).filter(([k]) => k.startsWith('events:')).map(([, v]) => v.target_session_id));
+  for (const t of targets) {
+    if (!withEvents.has(t.target_session_id) || targetEvents.has(t.target_session_id)) continue;
+    const rows = await listAll(call, 'list_events', t.target_session_id, warn);
+    targetEvents.set(t.target_session_id, new Map(rows.flatMap((r) => (typeof r.event_id === 'string' ? [[r.event_id, r] as [string, Rec]] : []))));
+  }
+  return targetEvents;
+}
+
+function createText(p: CreatePlan, done: boolean): string {
+  const count = (list: readonly { action: string }[]): string => `${list.filter((x) => x.action === 'create').length} to create${list.some((x) => x.action === 'done') ? `, ${list.filter((x) => x.action === 'done').length} made earlier` : ''}`;
+  const lines = [done ? 'Structure:' : 'Dry run: nothing was written. On the target, import --create would make:'];
+  lines.push(`  teams: ${count(p.teams)} (${p.teams.map((t) => `${t.source_studio_id} -> ${t.target_team_id}`).join(', ') || 'none'})`);
+  lines.push(`  shows: ${count(p.shows)}`);
+  lines.push(`  sessions: ${count(p.sessions)}`);
+  const words = p.transcript_words.reduce((n, w) => n + w.total - w.done, 0);
+  lines.push(`  transcript words to copy: ${words}`);
+  lines.push(`  dashboards: ${count(p.dashboards)}`);
+  for (const t of p.teams) if (t.action === 'create') lines.push(`  team ${t.target_team_id} (${t.name}): created, or reused if you already belong to a team with that id`);
+  lines.push('  not copied:');
+  for (const n of p.not_copied) lines.push(`    - ${n}`);
+  return `${lines.join('\n')}\n`;
+}
+
+function createdText(c: Omit<CreateResult, 'failed'>, sessions: number): string {
+  return `Made on the target: ${c.teams_created} teams (${c.teams_reused} reused), ${c.shows_created} shows (${c.categories_set} given their categories), ${c.sessions_created} sessions (of ${sessions} in the snapshot), ${c.transcript_words_copied} transcript words, ${c.dashboards_saved} dashboards.\n`;
 }
 
 /** Session ids as autologger issues them. */

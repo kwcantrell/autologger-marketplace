@@ -45,6 +45,37 @@ export interface SnapshotSession {
   topics: Rec[];
   /** Each page's `list_wiki_pages` item and `get_wiki_page` fields, with the whole `body_md`. */
   wiki_pages: Rec[];
+  /** `export --all` only: the studio and show the session was listed under. */
+  studio_id?: string;
+  show_id?: string;
+  /** `export --all` only: the session's `list_sessions` item (hidden, archived). */
+  listed?: Rec;
+  /** `export --all` only: every `list_transcript_words` item. */
+  transcript_words?: Rec[];
+  /** `export --all` only: every `list_transcript_paragraphs` item. */
+  transcript_paragraphs?: Rec[];
+  /** `export --all` only: each session-scoped dashboard's `get_dashboard` result (with its tsx). */
+  dashboards?: Rec[];
+  /** `export --all` only: the `list_session_media` items (links and offsets; never media bytes). */
+  media?: Rec[];
+}
+
+/** `export --all`: a show, its categories (`list_categories`) and the ids of its sessions. */
+export interface SnapshotShow {
+  show_id: string;
+  /** The `list_shows` item. */
+  show: Rec;
+  /** The `list_categories` result for the show, when the source offers the tool. */
+  categories?: Rec;
+  session_ids: string[];
+}
+
+/** `export --all`: a studio (team) and its shows. */
+export interface SnapshotStudio {
+  studio_id: string;
+  /** The `list_studios` item. */
+  studio: Rec;
+  shows: SnapshotShow[];
 }
 
 export interface Snapshot {
@@ -52,8 +83,13 @@ export interface Snapshot {
   version: 1;
   source_server: string;
   exported_at: string;
+  /** `export --all` only: every studio, show and session the source account could read. */
+  studios?: SnapshotStudio[];
   sessions: SnapshotSession[];
 }
+
+/** The optional per-session parts `export --all` adds. */
+export const EXTRA_PARTS = ['transcript_words', 'transcript_paragraphs', 'dashboards', 'media'] as const;
 
 export interface CreatedItem {
   target_id: string;
@@ -79,6 +115,18 @@ export interface TargetState {
   created: Record<string, CreatedItem>;
   /** Items the target refused for good (a wiki title or session page it already has). */
   skipped: Record<string, SkippedItem>;
+  /** `import --create`: the teams, shows, sessions, transcript words and dashboards it made. */
+  structure?: Structure;
+}
+
+/** What `import --create` made on the target, by source id; saved after every write. */
+export interface Structure {
+  teams: Record<string, { target_id: string; reused: boolean }>;
+  shows: Record<string, { target_id: string; target_team_id: string; categories_set?: boolean }>;
+  sessions: Record<string, { target_id: string; target_show_id: string }>;
+  /** Per source session: how many of its transcript words (in snapshot order) are on the target. */
+  words: Record<string, { done: number; last_target_id?: string }>;
+  dashboards: Record<string, { target_id: string; target_session_id: string }>;
 }
 
 export interface ImportState {
@@ -133,7 +181,7 @@ export function writeJsonFile(path: string, value: unknown, overwrite: boolean):
   }
 }
 
-function readJson(path: string, what: string): unknown {
+export function readJson(path: string, what: string): unknown {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
@@ -158,6 +206,18 @@ export function readSnapshot(path: string): Snapshot {
   for (const s of value.sessions) {
     if (!isObject(s) || typeof s.session_id !== 'string' || !isObject(s.session)) throw bad('session');
     for (const kind of KINDS) if (!isRecArray(s[kind])) throw bad(kind);
+    for (const part of EXTRA_PARTS) if (s[part] !== undefined && !isRecArray(s[part])) throw bad(part);
+  }
+  if (value.studios !== undefined) {
+    if (!Array.isArray(value.studios)) throw bad('studios');
+    for (const st of value.studios) {
+      if (!isObject(st) || typeof st.studio_id !== 'string' || !isObject(st.studio) || !Array.isArray(st.shows)) throw bad('studio');
+      for (const sh of st.shows) {
+        if (!isObject(sh) || typeof sh.show_id !== 'string' || !isObject(sh.show) || !Array.isArray(sh.session_ids)) throw bad('show');
+        if (sh.categories !== undefined && !isObject(sh.categories)) throw bad('categories');
+        if (!sh.session_ids.every((id) => typeof id === 'string')) throw bad('session_ids');
+      }
+    }
   }
   return value as unknown as Snapshot;
 }

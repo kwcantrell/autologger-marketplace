@@ -56,6 +56,12 @@ export interface FakeOptions {
   beforeWrite?: (data: FakeData, tool: string, args: Record<string, unknown>) => void;
   /** Data mode: called after each successful write, to observe the target between writes. */
   afterWrite?: (data: FakeData, tool: string) => void;
+  /** App API: answer the app write request (POST/PUT) with this 1-based number HTTP 500, once, writing nothing. */
+  appFailWriteNumber?: number;
+  /** App API: how many teams the user owns before any POST /api/teams (the cap is 20). */
+  ownedTeams?: number;
+  /** App API: answer the app write request with this 1-based number 429 (Retry-After 3), once. */
+  appRateLimitWriteNumber?: number;
 }
 
 export interface FakeSession {
@@ -78,12 +84,31 @@ export interface FakeSession {
   fps?: number;
   /** The transport is rolling: take rows are refused. */
   rolling?: boolean;
+  /** Transcript words (list_transcript_words). */
+  words?: Record<string, unknown>[];
+  /** Session dashboards: dashboard_id, title, tsx, revision. */
+  dashboards?: Record<string, unknown>[];
+  /** list_session_media items. */
+  media?: Record<string, unknown>[];
+  /** Set by POST /api/sessions. */
+  start_offset_frames?: number;
+}
+
+export interface FakeShow {
+  show_id: string;
+  name: string;
+  can_access?: boolean;
+  show_code?: string;
+  /** The show's categories (list_categories; set by PUT /api/profile show_updates). */
+  categories?: { id: string; label: string; kind?: string; color?: string }[];
 }
 
 export interface FakeStudio {
   studio_id: string;
   name: string;
-  shows: { show_id: string; name: string; can_access?: boolean }[];
+  shows: FakeShow[];
+  /** Whether the user belongs to it (default true). */
+  member?: boolean;
 }
 
 export interface FakePage {
@@ -103,6 +128,8 @@ export interface FakeData {
   pages: FakePage[];
   /** list_studios / list_shows; default one studio 'st_1' with every session's show. */
   studios?: FakeStudio[];
+  /** Studio dashboard templates, listed by list_dashboards with every session. */
+  templates?: Record<string, unknown>[];
 }
 
 interface Grant {
@@ -154,7 +181,17 @@ const WRITE_SCHEMAS: Record<string, Record<string, unknown>> = {
     { page_id: { type: 'string' }, expected_revision: { type: 'integer' }, title: { type: 'string' }, kind: { type: 'string' }, body_md: { type: 'string' }, aliases: { type: 'array' } },
     ['page_id', 'expected_revision'],
   ),
+  save_dashboard: strict(
+    { dashboard_id: { type: 'string' }, expected_revision: { type: 'integer' }, title: { type: 'string' }, tsx: { type: 'string' }, scope: { type: 'object' } },
+    ['title', 'tsx', 'scope'],
+  ),
 };
+
+const pagedSession = (description: string) => ({
+  description,
+  inputSchema: strict({ session_id: { type: 'string' }, cursor: { type: 'string' }, limit: { type: 'integer' } }, ['session_id']),
+  annotations: { readOnlyHint: true },
+});
 
 const READ_TOOLS = [
   {
@@ -214,6 +251,31 @@ const READ_TOOLS = [
     ),
     annotations: { readOnlyHint: true },
   },
+  { name: 'list_transcript_words', ...pagedSession("A session's transcript words.") },
+  {
+    name: 'list_categories',
+    description: "A show's event categories.",
+    inputSchema: strict({ show_id: { type: 'string' }, session_id: { type: 'string' } }, []),
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'list_session_media',
+    description: "A session's audio media.",
+    inputSchema: strict({ session_id: { type: 'string' } }, ['session_id']),
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'list_dashboards',
+    description: 'Custom dashboards, metadata only.',
+    inputSchema: strict({ session_id: { type: 'string' }, studio_id: { type: 'string' }, cursor: { type: 'string' }, limit: { type: 'integer' } }, []),
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'get_dashboard',
+    description: "One dashboard's TSX source.",
+    inputSchema: strict({ dashboard_id: { type: 'string' }, revision: { type: 'integer' } }, ['dashboard_id']),
+    annotations: { readOnlyHint: true },
+  },
   {
     name: 'fail_tool',
     description: 'Always answers a tool error.',
@@ -231,6 +293,7 @@ const WRITE_TOOL_NAMES = [
   'create_wiki_page',
   'update_wiki_page',
   'delete_wiki_page',
+  'save_dashboard',
 ];
 const WRITE_TOOLS = WRITE_TOOL_NAMES.map((name) => ({
   name,
@@ -330,9 +393,18 @@ export class FakeAutologger {
   /** Data mode: read tool calls answered (not rate limited), and reads refused with a rate limit. */
   readonly readCounts = { answered: 0, rateLimited: 0 };
   private nextId = 1;
+  /** App API: every request (method, path, JSON body) with a valid session cookie. */
+  readonly appCalls: { method: string; path: string; body?: unknown }[] = [];
+  /** App API: the session cookie values `mintDevLogin` issued. */
+  readonly appSessions = new Set<string>();
+  /** App API: the user's active team (PUT /api/profile). */
+  activeStudio: string | undefined;
+  private appWrites = 0;
+  private ownedTeams: number;
 
   constructor(options: FakeOptions = {}) {
     this.options = options;
+    this.ownedTeams = options.ownedTeams ?? 0;
     this.server = createServer((req, res) => {
       this.handle(req, res).catch((error: unknown) => {
         res.writeHead(500).end(String(error));
@@ -386,6 +458,108 @@ export class FakeAutologger {
       refresh_token: tokens.refresh_token,
       expires_in: tokens.expires_in,
     })}\n`;
+  }
+
+  /** Plays autologger's dev-only `make dev-login`: a session for the user, as `<cookie name>=<token>`. */
+  mintDevLogin(): string {
+    const value = `als_${randomBytes(24).toString('base64url')}`;
+    this.issued.push(value);
+    this.appSessions.add(value);
+    return `autologger_sid=${value}\n`;
+  }
+
+  /** The studios (teams) in data mode; `materialize` stores the default one so the app API can add to it. */
+  studioList(materialize = false): FakeStudio[] {
+    const data = this.options.data as FakeData;
+    if (data.studios !== undefined) return data.studios;
+    const derived: FakeStudio[] = [{ studio_id: 'st_1', name: 'Studio', shows: [...new Set(data.sessions.map((x) => x.show_id))].map((id) => ({ show_id: id, name: `Show ${id}` })) }];
+    if (materialize) data.studios = derived;
+    return derived;
+  }
+
+  /** The app's HTTP API (autologger-2 server/src/routers/{teams,shows,sessions,transcribe,profile}.ts), in data mode. */
+  private async app(req: IncomingMessage, res: ServerResponse, path: string, method: string): Promise<void> {
+    const sid = /(?:^|;\s*)autologger_sid=([^;]+)/.exec(req.headers.cookie ?? '')?.[1];
+    const text = await readBody(req);
+    if (sid === undefined || !this.appSessions.has(sid)) return this.json(res, 401, { detail: 'Login required.' });
+    const body = text === '' ? undefined : (JSON.parse(text) as Record<string, unknown>);
+    this.appCalls.push({ method, path, ...(body !== undefined ? { body } : {}) });
+    if (method !== 'GET') {
+      this.appWrites++;
+      if (this.options.appFailWriteNumber === this.appWrites) return this.json(res, 500, { detail: 'Internal Server Error' });
+      if (this.options.appRateLimitWriteNumber === this.appWrites) return this.json(res, 429, { detail: 'Too many requests.' }, { 'retry-after': '3' });
+    }
+    const data = this.options.data as FakeData;
+    const studios = this.studioList(method !== 'GET');
+    const member = (id: unknown) => studios.find((st) => st.studio_id === id && st.member !== false);
+    const b = body ?? {};
+    const id = (prefix: string) => `${prefix}${this.nextId++}`;
+    let m: RegExpExecArray | null;
+    if (method === 'GET' && path === '/api/studio') {
+      const st = member(this.activeStudio);
+      return st === undefined ? this.json(res, 403, { detail: 'No team access.' }) : this.json(res, 200, { id: st.studio_id, name: st.name, categories: [] });
+    }
+    if (method === 'GET' && (m = /^\/api\/teams\/([^/]+)$/.exec(path)) !== null) {
+      const st = member(decodeURIComponent(m[1] ?? ''));
+      return st === undefined ? this.json(res, 404, { detail: 'Team not found' }) : this.json(res, 200, { id: st.studio_id, name: st.name, role: 'owner' });
+    }
+    if (method === 'POST' && path === '/api/teams') {
+      const teamId = String(b.id ?? '').trim();
+      if (!/^[a-z][a-z0-9-]{1,62}$/.test(teamId)) return this.json(res, 400, { detail: 'Team id must be a lowercase slug: start with a letter, then letters, digits, or hyphens (2-63 chars).' });
+      if (this.ownedTeams >= 20) return this.json(res, 400, { detail: 'You already own 20 teams; the limit has been reached.' });
+      if (studios.some((st) => st.studio_id === teamId)) return this.json(res, 400, { detail: 'A team with that id already exists.' });
+      studios.push({ studio_id: teamId, name: String(b.display_name), shows: [] });
+      this.ownedTeams++;
+      return this.json(res, 200, { id: teamId, name: b.display_name, role: 'owner' });
+    }
+    if (method === 'POST' && path === '/api/shows') {
+      const st = member(b.studio_id);
+      if (st === undefined) return this.json(res, 404, { detail: 'Unknown studio id.' });
+      const show: FakeShow = { show_id: id('shw_'), name: String(b.name), show_code: String(b.show_code ?? ''), categories: [{ id: id('cat_'), label: 'Note' }] };
+      st.shows.push(show);
+      return this.json(res, 200, { show: { id: show.show_id, studio_id: st.studio_id, name: show.name, show_code: show.show_code, categories: show.categories } });
+    }
+    if (method === 'PUT' && path === '/api/profile') {
+      const st = member(b.active_studio_id);
+      if (st === undefined) return this.json(res, 403, { detail: 'No access to that team.' });
+      for (const u of Array.isArray(b.show_updates) ? (b.show_updates as Record<string, unknown>[]) : []) {
+        const show = st.shows.find((sh) => sh.show_id === u.show_id);
+        if (show === undefined) return this.json(res, 400, { detail: `Show '${String(u.show_id)}' is not part of the selected team.` });
+        if (Array.isArray(u.categories)) {
+          show.categories = (u.categories as Record<string, unknown>[]).map((c) => ({ id: id('cat_'), label: String(c.name), kind: String(c.type ?? 'BUTTON'), ...(typeof c.color === 'string' ? { color: c.color } : {}) }));
+        }
+      }
+      this.activeStudio = st.studio_id;
+      return this.json(res, 200, { active_studio_id: st.studio_id });
+    }
+    if (method === 'POST' && path === '/api/sessions') {
+      const st = member(this.activeStudio);
+      if (st === undefined) return this.json(res, 403, { detail: 'No team access.' });
+      const show = st.shows.find((sh) => sh.show_id === b.show_id);
+      if (show === undefined) return this.json(res, 400, { detail: 'Show does not belong to the active team.' });
+      const session: FakeSession = {
+        session_id: id('ses_'),
+        show_id: show.show_id,
+        title: String(b.title ?? ''),
+        fps: Number(b.frame_rate ?? 24),
+        start_offset_frames: Number(b.start_offset_frames ?? 0),
+        categories: (show.categories ?? []).map((c) => ({ id: c.id, label: c.label })),
+        events: [],
+        topics: [],
+        words: [],
+      };
+      data.sessions.push(session);
+      return this.json(res, 200, { id: session.session_id, title: session.title, frame_rate: session.fps, start_offset_frames: session.start_offset_frames, show_id: show.show_id, episode: '', notes: '' });
+    }
+    if (method === 'POST' && (m = /^\/api\/sessions\/([^/]+)\/transcript-words$/.exec(path)) !== null) {
+      const session = data.sessions.find((x) => x.session_id === decodeURIComponent(m?.[1] ?? ''));
+      if (session === undefined) return this.json(res, 404, { detail: 'Session not found' });
+      session.words ??= [];
+      const word = { id: id('w_'), ordinal: session.words.length + 1, session_time: String(b.session_time ?? ''), speaker: String(b.speaker ?? ''), word: String(b.word ?? '') };
+      session.words.push(word);
+      return this.json(res, 201, word);
+    }
+    return this.json(res, 404, { detail: 'Not Found' });
   }
 
   /** Forget the access tokens only, so the next /mcp call answers 401. */
@@ -533,6 +707,7 @@ export class FakeAutologger {
       return;
     }
     if (path === '/rpc/mcp') return this.mcp(req, res);
+    if (path.startsWith('/api/') && this.options.data !== undefined) return this.app(req, res, path, method);
     this.json(res, 404, { detail: 'Not Found' });
   }
 
@@ -738,6 +913,16 @@ export class FakeAutologger {
           p.revision++;
           return done({ ...p });
         }
+        case 'save_dashboard': {
+          const scope = isObjectRecord(args.scope) ? args.scope : {};
+          const s = session(scope.session_id);
+          if (scope.kind !== 'session' || s === undefined) return text('Session not found');
+          if (String(args.tsx).includes('window.')) return text('Dashboard source refused: 1:1 window is not allowed. Nothing was saved.');
+          const row = { dashboard_id: id('db_'), title: String(args.title), tsx: String(args.tsx), revision: 1 };
+          s.dashboards ??= [];
+          s.dashboards.push(row);
+          return done({ dashboard_id: row.dashboard_id, title: row.title, scope: { kind: 'session', session_id: s.session_id }, revision: 1 });
+        }
         default:
           return text(`${name} is not played by the fake`);
       }
@@ -749,15 +934,44 @@ export class FakeAutologger {
       return text(`Rate limit exceeded; retry in ${this.options.rateLimitRetryS ?? 7} s.`);
     }
     this.readCounts.answered++;
-    const studios = (): FakeStudio[] =>
-      data.studios ?? [{ studio_id: 'st_1', name: 'Studio', shows: [...new Set(data.sessions.map((x) => x.show_id))].map((id) => ({ show_id: id, name: `Show ${id}` })) }];
+    const studios = (): FakeStudio[] => this.studioList().filter((st) => st.member !== false);
+    const showOf = (showId: unknown) => studios().flatMap((st) => st.shows).find((sh) => sh.show_id === showId);
+    const dashboardMeta = (d: Record<string, unknown>) => ({ dashboard_id: d.dashboard_id, title: d.title, scope: d.scope ?? 'session', show_ids: d.show_ids ?? [], revision: d.revision ?? 1, updated_at: '2026-11-19T12:00:00.000Z', updated_by_name: 'Kim' });
     switch (name) {
       case 'list_studios':
         return ok({ items: studios().map((st) => ({ studio_id: st.studio_id, name: st.name, role: 'owner' })), total: studios().length });
       case 'list_shows': {
         const st = studios().find((x) => x.studio_id === args.studio_id);
         if (st === undefined) return text('Studio not found');
-        return ok(page(st.shows.map((sh) => ({ show_id: sh.show_id, name: sh.name, show_code: sh.show_id, can_access: sh.can_access !== false }))));
+        return ok(page(st.shows.map((sh) => ({ show_id: sh.show_id, name: sh.name, show_code: sh.show_code ?? sh.show_id, can_access: sh.can_access !== false }))));
+      }
+      case 'list_categories': {
+        const showId = args.show_id ?? session(args.session_id)?.show_id;
+        const cats = showOf(showId)?.categories ?? data.sessions.find((x) => x.show_id === showId)?.categories ?? [];
+        const items = cats.map((c) => ({ id: c.id, name: c.label, kind: (c as { kind?: string }).kind ?? 'BUTTON', color: (c as { color?: string }).color ?? '#7cb7ff', dropdown_options: [], on_label: '', off_label: '' }));
+        return ok({ show_id: showId, source: 'show', items, total: items.length, internal_accepted: true });
+      }
+      case 'list_transcript_words': {
+        const s = session(args.session_id);
+        if (s === undefined) return text('Session not found');
+        return ok(page(s.words ?? []));
+      }
+      case 'list_session_media': {
+        const s = session(args.session_id);
+        if (s === undefined) return text('Session not found');
+        return ok({ items: s.media ?? [], total: (s.media ?? []).length });
+      }
+      case 'list_dashboards': {
+        const s = session(args.session_id);
+        if (s === undefined) return text('Session not found');
+        return ok(page([...(s.dashboards ?? []).map(dashboardMeta), ...(data.templates ?? []).map((t) => dashboardMeta({ ...t, scope: 'template' }))]));
+      }
+      case 'get_dashboard': {
+        for (const s of data.sessions) {
+          const d = (s.dashboards ?? []).find((x) => x.dashboard_id === args.dashboard_id);
+          if (d !== undefined) return ok({ ...dashboardMeta(d), studio_id: 'st_1', session_id: s.session_id, current_revision: d.revision ?? 1, tsx: d.tsx, created_by_name: 'Kim', created_at: '2026-11-19T12:00:00.000Z' });
+        }
+        return text('Dashboard not found.');
       }
       case 'list_sessions': {
         const rows = data.sessions.filter((x) => x.show_id === args.show_id && (x.hidden !== true || args.include_hidden === true));
@@ -774,7 +988,7 @@ export class FakeAutologger {
         return ok({
           session_id: s.session_id,
           show_id: s.show_id,
-          studio_id: 'st_1',
+          studio_id: this.studioList().find((st) => st.shows.some((sh) => sh.show_id === s.show_id))?.studio_id ?? 'st_1',
           title: s.title ?? s.session_id,
           date: s.date ?? '2026-11-19',
           fps: s.fps ?? 25,
