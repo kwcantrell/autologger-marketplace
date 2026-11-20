@@ -811,6 +811,12 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
     const app = appClient(cookie, noWait);
     const before = await app.call('GET', '/api/studio');
     const previousTeam = before.status === 200 && isObject(before.body) && typeof before.body.id === 'string' ? before.body.id : undefined;
+    // The active show too: PUT /api/profile with the team alone would make its first show active.
+    const profile = previousTeam === undefined ? undefined : await app.call('GET', '/api/profile');
+    const previousShow =
+      profile?.status === 200 && isObject(profile.body) && profile.body.active_studio_id === previousTeam && typeof profile.body.active_show_id === 'string' && profile.body.active_show_id !== ''
+        ? profile.body.active_show_id
+        : undefined;
     const save = (): void => writeJsonFile(stateFile, state, true);
     const made: CreateResult = emptyCreateResult();
     const notice = (text: string): void => io.stderr(`${CLI_NAME}: ${text}`);
@@ -827,10 +833,10 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
         await copyWords({ app, snapshot, structure, save, result: made, notice });
         await copyDashboards({ app, snapshot, structure, save, result: made, notice, caller: call, tools });
       } finally {
-        // Sessions are made in the active team: give the user back the one they had.
+        // Sessions are made in the active team: give the user back the team and show they had.
         if (previousTeam !== undefined) {
           try {
-            await app.call('PUT', '/api/profile', { active_studio_id: previousTeam });
+            await app.call('PUT', '/api/profile', { active_studio_id: previousTeam, ...(previousShow !== undefined ? { active_show_id: previousShow } : {}) });
           } catch {
             // best effort
           }

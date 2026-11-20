@@ -9,11 +9,11 @@
 // stopped by a rate limit (`--no-wait`, or a wait too long) or an error continues on the next run
 // of the same command without reading again what it already has.
 import { existsSync } from 'node:fs';
-import { type Caller, inputShape, readJson, readTool, type Rec, SNAPSHOT_FORMAT, type Snapshot, type SnapshotSession, type SnapshotStudio } from './copy.ts';
+import { type Caller, callWithRetry, inputShape, readJson, readTool, type Rec, SNAPSHOT_FORMAT, type Snapshot, type SnapshotSession, type SnapshotStudio } from './copy.ts';
 import { CliError } from './errors.ts';
 import { listPaged, wholePage } from './export.ts';
-import { isObject } from './http.ts';
-import type { Tool } from './mcp.ts';
+import { clip, isObject } from './http.ts';
+import { resultText, type Tool } from './mcp.ts';
 
 export const PROGRESS_FORMAT = 'autologger-mcp-export-progress';
 
@@ -156,16 +156,26 @@ export async function exportAll(input: ExportAllInput): Promise<Snapshot> {
       save();
     }
     for (const show of studio.shows) {
-      if (show.categories === undefined && has('list_categories', 'show categories')) {
-        show.categories = await readTool(caller, 'list_categories', { show_id: show.show_id });
-        save();
-      }
       if (show.session_ids !== undefined) continue;
+      // list_shows lists shows the account cannot open (can_access: false); their categories and
+      // sessions are refused ("Show not found"), so neither is read.
       if (show.show.can_access === false) {
-        warn(`show ${show.show_id} (${String(show.show.name ?? '')}): this account cannot open its sessions; they are not exported`);
+        warn(`show ${show.show_id} (${String(show.show.name ?? '')}): this account cannot open it; its categories and sessions are not exported`);
         show.session_ids = [];
         save();
         continue;
+      }
+      if (show.categories === undefined && has('list_categories', 'show categories')) {
+        const answer = await callWithRetry(caller, 'list_categories', { show_id: show.show_id });
+        if (answer.isError === true) {
+          // A refusal is about this show only: note it and go on, so a rerun does not stop here again.
+          warn(`show ${show.show_id} (${String(show.show.name ?? '')}): list_categories refused: ${clip(resultText(answer), 300)}; its categories are not exported`);
+          show.categories = { items: [], total: 0 };
+        } else {
+          if (!isObject(answer.structuredContent)) throw new CliError('list_categories answered no structured content');
+          show.categories = answer.structuredContent;
+        }
+        save();
       }
       const args: Rec = { show_id: show.show_id };
       if (includeHidden) args.include_hidden = true;

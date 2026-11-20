@@ -302,8 +302,10 @@ following every cursor and offset: each studio and show (with its categories as 
 answers them), and per session its `get_session` result (frame rate included), events, topics,
 transcript words and paragraphs, its wiki pages with whole bodies (a show page several sessions list
 is read once), its own dashboards with their TSX source (studio templates are left out), and the
-media links and offsets (never media bytes). A show the account cannot open is warned about and
-skipped. The snapshot is one JSON file (mode 0600). Progress is saved in
+media links and offsets (never media bytes). A show the account cannot open (`list_shows` lists it
+with `can_access: false`, for example a team member's show without a grant) is warned about and
+neither its categories nor its sessions are read; a show whose `list_categories` is refused is
+exported without categories, with a warning. The snapshot is one JSON file (mode 0600). Progress is saved in
 `<out>.export-progress.json` after every read: on a rate limit export waits as import does;
 with `--no-wait`, a wait over an hour or any error it stops with exit 1, and the same command run
 again continues without reading anything a second time. `--json` prints the counts.
@@ -325,7 +327,7 @@ category counts, `sessions` with title and frame rate, `transcript_words`, `tran
 `dashboards`, each `create` or `done`, and `not_copied`) and the plan for events, topics and wiki
 pages as above (sessions still to create show as `new:<source id>`). `--confirm`, through the app's
 HTTP API (`PUT /api/profile` to make each team active, since the app creates sessions in the
-active team; the user's active team is set back at the end):
+active team; the user's active team and show are set back at the end):
 
 - Teams: `POST /api/teams`, id a slug of the source studio id (`st_Main` -> `st-main`), the
   studio's name. A team with that id the user belongs to is **reused**; one taken by a team the
@@ -346,7 +348,9 @@ Each created team, show, session, word count and dashboard is saved by source id
 file's `structure` after every write: a rerun of the same command creates nothing twice and
 continues. A refused write (in `failed`) is tried again by a rerun. The app answers 401 when the
 cookie is no longer a session: run `make dev-login` and `app-signin` again. A 429 from the app is
-waited out like an MCP rate limit (its `Retry-After`).
+waited out like an MCP rate limit (its `Retry-After`). As with the import above, a `POST` whose
+answer was lost after the app made the team, show or session (a dropped connection, a proxy error)
+is not recorded, so a rerun makes it again: check the target before rerunning after such an error.
 
 ### index, moments, person-graph (cross-session questions from a local index)
 

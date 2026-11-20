@@ -150,7 +150,9 @@ test('export --all: every studio, show (with categories) and session, all their 
   files.push(out);
   const result = await run('export', '--server', source.base, '--all', '--out', out, '--json');
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stderr, /show shw_locked \(Locked\): this account cannot open its sessions/);
+  assert.match(result.stderr, /show shw_locked \(Locked\): this account cannot open it; its categories and sessions are not exported/);
+  // A show the account cannot open is not read at all: autologger refuses its categories ("Show not found").
+  assert.ok(!source.calls.some((c) => (c.arguments as Record<string, unknown> | undefined)?.show_id === 'shw_locked' && c.tool !== 'list_shows'));
   const summary = JSON.parse(result.stdout);
   assert.equal(summary.studios, 2);
   assert.equal(summary.shows, 3);
@@ -177,6 +179,7 @@ test('export --all: every studio, show (with categories) and session, all their 
   assert.deepEqual(showA.categories.items.map((c: { name: string; kind: string }) => [c.name, c.kind]), [['Joke', 'BUTTON'], ['Music', 'TEXT']]);
   assert.deepEqual(showA.session_ids, ['S1', 'S2']);
   assert.deepEqual(snap.studios[0].shows[1].session_ids, [], 'the locked show is listed, its sessions are not read');
+  assert.equal(snap.studios[0].shows[1].categories, undefined, 'nor its categories');
   assert.deepEqual(snap.sessions.map((s: { session_id: string }) => s.session_id), ['S1', 'S2', 'S3']);
   const [s1, s2] = snap.sessions;
   assert.equal(s1.session.fps, 29.97);
@@ -237,6 +240,26 @@ test('export --all waits out a rate limit; --no-wait stops with a progress file 
   assert.equal(stopped.readCounts.answered, reads, 'the two runs together read exactly what one clean run reads');
   assert.equal(existsSync(progress), false);
   assert.deepEqual(JSON.stringify(strip(out)).replaceAll(stopped.base, ''), JSON.stringify(strip(cleanOut)).replaceAll(clean.base, ''));
+});
+
+test('export --all goes on past a show whose categories are refused, with a warning', async () => {
+  const data = sourceData();
+  const showB = data.studios?.[1]?.shows[0];
+  assert.ok(showB !== undefined);
+  showB.categories_refused = true;
+  const source = await fake({ data });
+  const configDir = tempConfigDir();
+  const run = (...argv: string[]) => cli({ configDir }, ...argv);
+  assert.equal((await run('login', '--server', source.base)).code, 0);
+  const out = join(configDir, 'refused.json');
+  files.push(out);
+  const result = await run('export', '--server', source.base, '--all', '--out', out, '--json');
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stderr, /show shw_b \(Show B\): list_categories refused: Categories unavailable; its categories are not exported/);
+  const snap = JSON.parse(readFileSync(out, 'utf8'));
+  assert.deepEqual(snap.studios[1].shows[0].categories, { items: [], total: 0 });
+  assert.deepEqual(snap.studios[1].shows[0].session_ids, ['S3'], 'its sessions are still exported');
+  assert.deepEqual(snap.sessions.map((s: { session_id: string }) => s.session_id), ['S1', 'S2', 'S3']);
 });
 
 test('export --all and --session together, or neither, is a usage error', async () => {
@@ -475,6 +498,18 @@ test('an existing team you belong to is reused; a taken id gets a suffix; the ow
   assert.equal(cr.created_structure.sessions_created, 0);
   assert.deepEqual(cr.created, { events: 0, topics: 0, wiki_pages: 0 });
   assert.equal(capped.target.writeCounts.attempted, 0);
+});
+
+test('import --confirm --create gives the user back the active team and show they had', async () => {
+  const s = await setup({}, { studios: [{ studio_id: 'home', name: 'Home', shows: [{ show_id: 'sh_one', name: 'One' }, { show_id: 'sh_two', name: 'Two' }] }], sessions: [], pages: [] });
+  s.target.activeStudio = 'home';
+  s.target.activeShow = 'sh_two';
+  const r = await s.run(...createArgs(s, '--confirm'));
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).created_structure.sessions_created, 3);
+  assert.equal(s.target.activeStudio, 'home');
+  assert.equal(s.target.activeShow, 'sh_two', 'not the team\'s first show');
+  assert.deepEqual(s.target.appCalls.at(-1), { method: 'PUT', path: '/api/profile', body: { active_studio_id: 'home', active_show_id: 'sh_two' } });
 });
 
 test('a transcript word the app refuses is reported in failed; the rerun adds the rest of them', async () => {

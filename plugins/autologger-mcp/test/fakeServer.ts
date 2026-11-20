@@ -98,6 +98,8 @@ export interface FakeShow {
   show_id: string;
   name: string;
   can_access?: boolean;
+  /** list_categories refuses this show although the account can open it. */
+  categories_refused?: boolean;
   show_code?: string;
   /** The show's categories (list_categories; set by PUT /api/profile show_updates). */
   categories?: { id: string; label: string; kind?: string; color?: string }[];
@@ -399,6 +401,8 @@ export class FakeAutologger {
   readonly appSessions = new Set<string>();
   /** App API: the user's active team (PUT /api/profile). */
   activeStudio: string | undefined;
+  /** App API: the user's active show (PUT /api/profile; the team's first show when not given). */
+  activeShow: string | undefined;
   private appWrites = 0;
   private ownedTeams: number;
 
@@ -499,6 +503,10 @@ export class FakeAutologger {
       const st = member(this.activeStudio);
       return st === undefined ? this.json(res, 403, { detail: 'No team access.' }) : this.json(res, 200, { id: st.studio_id, name: st.name, categories: [] });
     }
+    if (method === 'GET' && path === '/api/profile') {
+      const st = member(this.activeStudio);
+      return this.json(res, 200, { active_studio_id: st?.studio_id ?? '', active_show_id: st === undefined ? '' : (this.activeShow ?? '') });
+    }
     if (method === 'GET' && (m = /^\/api\/teams\/([^/]+)$/.exec(path)) !== null) {
       const st = member(decodeURIComponent(m[1] ?? ''));
       return st === undefined ? this.json(res, 404, { detail: 'Team not found' }) : this.json(res, 200, { id: st.studio_id, name: st.name, role: 'owner' });
@@ -529,8 +537,12 @@ export class FakeAutologger {
           show.categories = (u.categories as Record<string, unknown>[]).map((c) => ({ id: id('cat_'), label: String(c.name), kind: String(c.type ?? 'BUTTON'), ...(typeof c.color === 'string' ? { color: c.color } : {}) }));
         }
       }
+      if (typeof b.active_show_id === 'string' && b.active_show_id !== '' && !st.shows.some((sh) => sh.show_id === b.active_show_id)) {
+        return this.json(res, 400, { detail: 'active_show_id must belong to the selected team.' });
+      }
       this.activeStudio = st.studio_id;
-      return this.json(res, 200, { active_studio_id: st.studio_id });
+      this.activeShow = typeof b.active_show_id === 'string' && b.active_show_id !== '' ? b.active_show_id : st.shows[0]?.show_id;
+      return this.json(res, 200, { active_studio_id: st.studio_id, active_show_id: this.activeShow ?? '' });
     }
     if (method === 'POST' && path === '/api/sessions') {
       const st = member(this.activeStudio);
@@ -947,6 +959,9 @@ export class FakeAutologger {
       }
       case 'list_categories': {
         const showId = args.show_id ?? session(args.session_id)?.show_id;
+        // Like autologger-2's requireShowAccess: a show the account cannot open is masked.
+        if (showOf(showId)?.can_access === false) return text('Show not found');
+        if (showOf(showId)?.categories_refused === true) return text('Categories unavailable');
         const cats = showOf(showId)?.categories ?? data.sessions.find((x) => x.show_id === showId)?.categories ?? [];
         const items = cats.map((c) => ({ id: c.id, name: c.label, kind: (c as { kind?: string }).kind ?? 'BUTTON', color: (c as { color?: string }).color ?? '#7cb7ff', dropdown_options: [], on_label: '', off_label: '' }));
         return ok({ show_id: showId, source: 'show', items, total: items.length, internal_accepted: true });
