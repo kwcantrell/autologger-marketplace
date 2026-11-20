@@ -15,7 +15,7 @@ import { FakeAutologger } from './fakeServer.ts';
 const CLI_NAME = 'autologger-mcp';
 const INVOCATION = `npx --yes --offline --loglevel=error --package="\${CLAUDE_PLUGIN_ROOT}" -- ${CLI_NAME}`;
 /** Skills in the order their commands run: reads, then writes, then seeding, the index, then sign-in (which ends with logout). */
-const SKILL_ORDER = ['query-session-data', 'write-session-data', 'seed-dev-stack', 'explore-wiki', 'sign-in'];
+const SKILL_ORDER = ['query-session-data', 'write-session-data', 'annotate-sessions', 'seed-dev-stack', 'explore-wiki', 'sign-in'];
 
 const source = fileURLToPath(new URL('..', import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), `${CLI_NAME}-e2e-`));
@@ -56,6 +56,23 @@ const wikiServer = new FakeAutologger({
     pages: [{ page_id: 'pg_jane', show_id: 'shw_w', kind: 'person', title: 'Jane Doe', aliases: [], body_md: 'Jane on [pasta](cite:W1@12).', revision: 1 }],
   },
 });
+// annotate-sessions reads, plans, applies and undoes a batch on a fourth fake.
+const annotateServer = new FakeAutologger({
+  data: {
+    sessions: [
+      {
+        session_id: 'A1',
+        show_id: 'shw_a',
+        title: 'Annotate me',
+        categories: [{ id: 'cat_n', label: 'Note' }],
+        events: [],
+        topics: [],
+        words: [{ ordinal: 1, session_time: '00:00:01:00', speaker: 'Ann', word: 'hello', start_sec: 1, end_sec: 1.4 }, { ordinal: 2, session_time: '00:00:20:00', speaker: 'Bob', word: 'bye', start_sec: 20, end_sec: 20.5 }],
+      },
+    ],
+    pages: [],
+  },
+});
 const printed: string[] = [];
 
 // Simulate the plugin cache: Claude Code installs a plugin by copying its folder.
@@ -91,6 +108,7 @@ before(async () => {
   await seedSource.start();
   await seedTarget.start();
   await wikiServer.start();
+  await annotateServer.start();
   await server.start();
   env.AUTOLOGGER_URL = server.base;
 });
@@ -98,6 +116,7 @@ after(async () => {
   await seedSource.close();
   await seedTarget.close();
   await wikiServer.close();
+  await annotateServer.close();
   await server.close();
   rmSync(scratch, { recursive: true, force: true });
 });
@@ -149,6 +168,13 @@ function fill(command: string): string {
     show_id: 'shw_w',
     topic: 'pasta',
     person: 'Jane Doe',
+    annotate_server: annotateServer.base,
+    annotate_show_id: 'shw_a',
+    annotate_session_id: 'A1',
+    gaps_file: join(cwd, 'gaps.json'),
+    next_from: '10',
+    dashboard_file: join(cwd, 'overview.tsx'),
+    plan_file: join(cwd, 'annotate-plan.json'),
   };
   return command.replace(/<([a-z_]+)>/g, (_, name: string) => seed[name] ?? `${name.toUpperCase()}-1`);
 }
@@ -173,9 +199,9 @@ test('every skill calls the CLI only through the shared npx invocation', () => {
     assert.ok(commands.length >= 2, `expected npx command lines in ${skill}`);
     for (const command of commands) assert.ok(command.startsWith(`${INVOCATION} `), command);
     // Every command line is pre-approved except import-tokens and app-signin, which write
-    // credentials, and import --confirm, which writes session data: no rule (in any skill) may cover
-    // them, so Claude has to ask first. Neither may export --force, which replaces a file, nor index
-    // clear, which deletes the local index.
+    // credentials, and import --confirm and annotate apply/undo --confirm, which write session data:
+    // no rule (in any skill) may cover them, so Claude has to ask first. Neither may export --force,
+    // which replaces a file, nor index clear, which deletes the local index.
     const prefixes = allowedPrefixes(skill);
     assert.ok(prefixes.length > 0 && prefixes.every((p) => p.startsWith(`${INVOCATION} `)), skill);
     for (const command of commands) {
@@ -184,6 +210,8 @@ test('every skill calls the CLI only through the shared npx invocation', () => {
         command.startsWith(`${INVOCATION} import-tokens`) ||
         command.startsWith(`${INVOCATION} app-signin`) ||
         command.startsWith(`${INVOCATION} import --confirm`) ||
+        command.startsWith(`${INVOCATION} annotate apply --confirm`) ||
+        command.startsWith(`${INVOCATION} annotate undo --confirm`) ||
         command.startsWith(`${INVOCATION} index clear`);
       assert.equal(allowed, !writes, `${skill}: ${command}`);
     }
@@ -192,6 +220,9 @@ test('every skill calls the CLI only through the shared npx invocation', () => {
     assert.ok(!prefixes.some((p) => `${INVOCATION} import --confirm --snapshot x --json`.startsWith(p)), `${skill} pre-approves import --confirm`);
     assert.ok(!prefixes.some((p) => `${INVOCATION} export --force --server x --json`.startsWith(p)), `${skill} pre-approves export --force`);
     assert.ok(!prefixes.some((p) => `${INVOCATION} index clear --server x --json`.startsWith(p)), `${skill} pre-approves index clear`);
+    for (const sub of ['apply', 'undo']) {
+      assert.ok(!prefixes.some((p) => `${INVOCATION} annotate ${sub} --confirm --plan x --json`.startsWith(p)), `${skill} pre-approves annotate ${sub} --confirm`);
+    }
   }
   assert.ok(skillCommands('sign-in').some((c) => c.startsWith(`${INVOCATION} import-tokens `)), 'the sign-in skill shows import-tokens');
   for (const flow of ['export --server <source_server> --all ', 'app-signin ', 'import --snapshot <full_snapshot_file> --server <local_server> --create ', 'import --confirm --snapshot <full_snapshot_file> --server <local_server> --create ']) {
@@ -226,7 +257,24 @@ test('every skill command line runs from a fresh copy and exits 0', async () => 
   // The output of `make dev-login` for the local target, fed to app-signin on stdin (a fake cookie).
   writeFileSync(join(cwd, 'COOKIE_FILE-1'), seedTarget.mintDevLogin(), { mode: 0o600 });
   // The user's sign-ins for seed-dev-stack: the source read-only, the local target with --write.
-  for (const [base, write] of [[seedSource.base, ''], [seedTarget.base, ' --write'], [wikiServer.base, '']] as const) {
+  // The plan Claude wrote for annotate-sessions: one event, topic, wiki page and dashboard.
+  writeFileSync(
+    join(cwd, 'annotate-plan.json'),
+    JSON.stringify({
+      format: 'autologger-mcp-annotate-plan',
+      version: 1,
+      sessions: [
+        {
+          session_id: 'A1',
+          events: [{ category: 'Note', message: 'Greeting', session_time: 1 }],
+          topics: [{ session_time: 0, duration_sec: 20, topic_level: 1, summary: 'Hello and goodbye' }],
+          wiki_pages: [{ kind: 'topic', title: 'Greetings', body_md: 'Said [hello](cite:A1@1).' }],
+          dashboards: [{ template: 'session-overview', title: 'Overview' }],
+        },
+      ],
+    }),
+  );
+  for (const [base, write] of [[seedSource.base, ''], [seedTarget.base, ' --write'], [wikiServer.base, ''], [annotateServer.base, ' --write']] as const) {
     const login = await sh(`${INVOCATION} login${write} --server ${base} --json`);
     assert.equal(login.status, 0, login.stderr);
   }
@@ -256,6 +304,12 @@ test('every skill command line runs from a fresh copy and exits 0', async () => 
   assert.equal(targetData?.pages.find((p) => p.show_id === created?.show_id)?.body_md, `A [quote](cite:${created?.session_id}@2).`);
   const called = server.calls.filter((c) => c.tool !== undefined).map((c) => c.tool);
   assert.ok(called.includes('create_wiki_page') && called.includes('list_studios'), called.join(','));
+  // annotate-sessions: the dry runs wrote nothing; apply --confirm created the four items, and undo
+  // --confirm deleted exactly them.
+  const annotateWrites = annotateServer.calls.flatMap((c) => (c.tool !== undefined && /^(create_|save_|delete_|update_)/.test(c.tool) ? [c.tool] : []));
+  assert.deepEqual(annotateWrites, ['create_event', 'create_topic', 'create_wiki_page', 'save_dashboard', 'delete_event', 'delete_topic', 'delete_wiki_page', 'delete_dashboard']);
+  assert.equal(annotateServer.options.data?.sessions[0]?.events.length, 0);
+  assert.ok(existsSync(join(cwd, 'gaps.json')) && existsSync(join(cwd, 'overview.tsx')));
   // explore-wiki: the build read the show with read tools only; moments and person-graph found the
   // pasta moments and Jane's graph (the outputs are checked in wikiIndex.test.ts).
   assert.ok(wikiServer.calls.some((c) => c.tool === 'list_transcript_paragraphs'));
@@ -287,7 +341,7 @@ test('no token appeared in any output', () => {
     ...printed,
     ...['snapshot.json', 'snapshot.json.import-state.json', 'full-snapshot.json', 'full-snapshot.json.import-state.json'].map((f) => readFileSync(join(cwd, f), 'utf8')),
   ].join('\n');
-  for (const t of [...server.issued, ...seedSource.issued, ...seedTarget.issued, ...wikiServer.issued]) assert.ok(!all.includes(t), 'a token was printed or stored');
+  for (const t of [...server.issued, ...seedSource.issued, ...seedTarget.issued, ...wikiServer.issued, ...annotateServer.issued]) assert.ok(!all.includes(t), 'a token was printed or stored');
 });
 
 // Guard against `--package=""`: npm reads an empty spec as the registry package `undefined` (owned by a

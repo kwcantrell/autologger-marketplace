@@ -247,7 +247,7 @@ function candidate(entry: Entry): { args: Rec } | { skip: string } {
 }
 
 /** Cuts `args` down to what `shape` accepts; the fields cut, and missing required ones. */
-function fit(args: Rec, shape: InputShape): { args: Rec; dropped: string[]; missing: string[] } {
+export function fit(args: Rec, shape: InputShape): { args: Rec; dropped: string[]; missing: string[] } {
   const out: Rec = {};
   const dropped: string[] = [];
   for (const [key, value] of Object.entries(args)) {

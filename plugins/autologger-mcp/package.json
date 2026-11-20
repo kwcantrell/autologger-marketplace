@@ -1,8 +1,8 @@
 {
   "name": "autologger-mcp",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
-  "description": "CLI for the autologger-mcp Claude Code plugin (autologger OAuth sign-in, MCP tool calls, export/import of session data, and a local index for cross-session moments and person graphs); run by its skills via npx.",
+  "description": "CLI for the autologger-mcp Claude Code plugin (autologger OAuth sign-in, MCP tool calls, export/import of session data, bulk annotation of sessions, and a local index for cross-session moments and person graphs); run by its skills via npx.",
   "type": "module",
   "engines": {
     "node": ">=22.18.0"

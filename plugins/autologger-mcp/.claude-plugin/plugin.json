@@ -1,7 +1,7 @@
 {
   "name": "autologger-mcp",
-  "version": "0.6.0",
-  "description": "Read and write autologger session data (studios, shows, sessions, events, transcripts, topics, wiki pages, dashboards) through autologger's MCP endpoint: OAuth sign-in, token refresh, MCP tool calls, a wiki-link checker, export/import to seed a local dev stack from another server, and a local index to find moments about a topic and map a person across sessions, all in a TypeScript CLI.",
+  "version": "0.7.0",
+  "description": "Read and write autologger session data (studios, shows, sessions, events, transcripts, topics, wiki pages, dashboards) through autologger's MCP endpoint: OAuth sign-in, token refresh, MCP tool calls, a wiki-link checker, export/import to seed a local dev stack from another server, bulk annotation of sessions (gaps report, compact transcripts, a checked plan of events, topics, wiki pages and dashboards applied create-only, resumable and undoable), and a local index to find moments about a topic and map a person across sessions, all in a TypeScript CLI.",
   "author": {
     "name": "Kalen Cantrell"
   },
