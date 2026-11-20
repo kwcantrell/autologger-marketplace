@@ -1,6 +1,6 @@
 {
   "name": "autologger-clips",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Clips autologger moments into OpenReel video timelines (FCPXML/OTIO) and playlist compilations: maps session time to video time, keeps a session-to-video map, fetches YouTube sources with yt-dlp, runs the OpenReel web editor, and publishes YouTube clips as an autologger custom dashboard.",
   "author": {
     "name": "Kalen Cantrell"
