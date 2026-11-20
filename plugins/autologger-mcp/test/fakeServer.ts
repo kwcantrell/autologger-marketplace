@@ -155,6 +155,7 @@ const WRITE_SCHEMAS: Record<string, Record<string, unknown>> = {
       metadata: { type: 'object' },
       marked_at_utc: { type: ['string', 'null'] },
       timecode: { type: 'string' },
+      client_request_id: { type: 'string' },
     },
     ['session_id', 'category', 'message'],
   ),
@@ -172,13 +173,17 @@ const WRITE_SCHEMAS: Record<string, Record<string, unknown>> = {
     ['session_id', 'event_id', 'category', 'message', 'wall_time_utc', 'version'],
   ),
   create_topic: strict(
-    { session_id: { type: 'string' }, session_time: { type: 'string' }, duration_sec: { type: 'number' }, topic_level: { type: 'integer' }, summary: { type: 'string' } },
+    { session_id: { type: 'string' }, session_time: { type: 'string' }, duration_sec: { type: 'number' }, topic_level: { type: 'integer' }, summary: { type: 'string' }, client_request_id: { type: 'string' } },
     ['session_id'],
   ),
   create_wiki_page: strict(
-    { show_id: { type: 'string' }, kind: { type: 'string' }, title: { type: 'string' }, body_md: { type: 'string' }, aliases: { type: 'array' }, session_id: { type: 'string' } },
+    { show_id: { type: 'string' }, kind: { type: 'string' }, title: { type: 'string' }, body_md: { type: 'string' }, aliases: { type: 'array' }, session_id: { type: 'string' }, client_request_id: { type: 'string' } },
     ['show_id', 'kind', 'title'],
   ),
+  delete_event: strict({ session_id: { type: 'string' }, event_id: { type: 'string' }, version: { type: 'integer' } }, ['session_id', 'event_id', 'version']),
+  delete_topic: strict({ session_id: { type: 'string' }, topic_id: { type: 'string' }, version: { type: 'integer' } }, ['session_id', 'topic_id', 'version']),
+  delete_wiki_page: strict({ page_id: { type: 'string' }, expected_revision: { type: 'integer' } }, ['page_id', 'expected_revision']),
+  delete_dashboard: strict({ dashboard_id: { type: 'string' }, expected_revision: { type: 'integer' } }, ['dashboard_id', 'expected_revision']),
   update_wiki_page: strict(
     { page_id: { type: 'string' }, expected_revision: { type: 'integer' }, title: { type: 'string' }, kind: { type: 'string' }, body_md: { type: 'string' }, aliases: { type: 'array' } },
     ['page_id', 'expected_revision'],
@@ -255,6 +260,12 @@ const READ_TOOLS = [
   },
   { name: 'list_transcript_words', ...pagedSession("A session's transcript words.") },
   {
+    name: 'get_session_aggregates',
+    description: 'Computed session aggregates.',
+    inputSchema: strict({ session_id: { type: 'string' } }, ['session_id']),
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: 'list_categories',
     description: "A show's event categories.",
     inputSchema: strict({ show_id: { type: 'string' }, session_id: { type: 'string' } }, []),
@@ -296,6 +307,7 @@ const WRITE_TOOL_NAMES = [
   'update_wiki_page',
   'delete_wiki_page',
   'save_dashboard',
+  'delete_dashboard',
 ];
 const WRITE_TOOLS = WRITE_TOOL_NAMES.map((name) => ({
   name,
@@ -392,6 +404,8 @@ export class FakeAutologger {
   readonly counts = { registrations: 0, refreshes: 0, revocations: 0, reuses: 0 };
   /** Data mode: write tool calls answered (any outcome), successful writes, rate-limit refusals. */
   readonly writeCounts = { attempted: 0, succeeded: 0, rateLimited: 0, failed500: 0 };
+  /** Data mode: the first answer of each client_request_id a create was sent with. */
+  readonly requestIds = new Map<string, Record<string, unknown>>();
   /** Data mode: read tool calls answered (not rate limited), and reads refused with a rate limit. */
   readonly readCounts = { answered: 0, rateLimited: 0 };
   private nextId = 1;
@@ -797,7 +811,50 @@ export class FakeAutologger {
       const invalidTimecode = (fps: number) =>
         text(`Invalid timecode: use HH:MM:SS:FF, or HH:MM:SS;FF for drop-frame, with hours below 24, minutes and seconds below 60 and frames below ${fpsInt(fps)} at this session's ${Math.round(fps * 1000) / 1000} fps. Nothing was written.`);
       const id = (prefix: string) => `${prefix}${this.nextId++}`;
+      // autologger's client_request_id (factory job 012): a repeat answers the first result, writing nothing.
+      const requestId = typeof args.client_request_id === 'string' ? `${name}\u0000${args.client_request_id}` : undefined;
+      if (requestId !== undefined && this.requestIds.has(requestId)) return ok(this.requestIds.get(requestId) as Record<string, unknown>);
+      const remember = (out: Record<string, unknown>): Record<string, unknown> => {
+        if (requestId !== undefined) this.requestIds.set(requestId, out);
+        return done(out);
+      };
+      const conflict = (row: unknown) => text(`Version conflict: nothing was written. The current row is ${JSON.stringify(row)}`);
       switch (name) {
+        case 'delete_event': {
+          const s = session(args.session_id);
+          if (s === undefined) return text('Session not found');
+          const at = s.events.findIndex((x) => x.event_id === args.event_id);
+          if (at < 0) return text('Event not found.');
+          if (s.events[at]?.version !== args.version) return conflict(s.events[at]);
+          s.events.splice(at, 1);
+          return done({ deleted: true });
+        }
+        case 'delete_topic': {
+          const s = session(args.session_id);
+          if (s === undefined) return text('Session not found');
+          const at = s.topics.findIndex((x) => x.id === args.topic_id);
+          if (at < 0) return text('Topic not found.');
+          if (s.topics[at]?.version !== args.version) return conflict(s.topics[at]);
+          s.topics.splice(at, 1);
+          return done({ deleted: true });
+        }
+        case 'delete_wiki_page': {
+          const at = data.pages.findIndex((q) => q.page_id === args.page_id);
+          if (at < 0) return text('Wiki page not found');
+          if (data.pages[at]?.revision !== args.expected_revision) return conflict(data.pages[at]);
+          data.pages.splice(at, 1);
+          return done({ deleted: true });
+        }
+        case 'delete_dashboard': {
+          for (const s of data.sessions) {
+            const at = (s.dashboards ?? []).findIndex((d) => d.dashboard_id === args.dashboard_id);
+            if (at < 0) continue;
+            if ((s.dashboards?.[at]?.revision ?? 1) !== args.expected_revision) return text('Version conflict: the dashboard has a newer revision. Nothing was deleted.');
+            s.dashboards?.splice(at, 1);
+            return done({ deleted: true });
+          }
+          return text('Dashboard not found.');
+        }
         case 'create_event': {
           const s = session(args.session_id);
           if (s === undefined) return text('Session not found');
@@ -838,7 +895,7 @@ export class FakeAutologger {
           };
           if (isTakeRow(row) && s.rolling === true) return text(TAKE_ROW_ROLLING_TEXT);
           s.events.push(row);
-          return done(row);
+          return remember(row);
         }
         case 'update_event': {
           const s = session(args.session_id);
@@ -888,7 +945,7 @@ export class FakeAutologger {
             version: 1,
           };
           s.topics.push(row);
-          return done(row);
+          return remember(row);
         }
         case 'create_wiki_page': {
           const showId = String(args.show_id);
@@ -914,7 +971,7 @@ export class FakeAutologger {
             ...(typeof args.session_id === 'string' ? { session_id: args.session_id } : {}),
           };
           data.pages.push(row);
-          return done({ ...row });
+          return remember({ ...row });
         }
         case 'update_wiki_page': {
           const p = data.pages.find((q) => q.page_id === args.page_id);
@@ -990,7 +1047,35 @@ export class FakeAutologger {
       }
       case 'list_sessions': {
         const rows = data.sessions.filter((x) => x.show_id === args.show_id && (x.hidden !== true || args.include_hidden === true));
-        return ok(page(rows.map((x) => ({ session_id: x.session_id, title: x.title ?? x.session_id, date: x.date ?? '2026-11-19', archived: false, hidden: x.hidden === true }))));
+        return ok(
+          page(
+            rows.map((x) => ({
+              session_id: x.session_id,
+              title: x.title ?? x.session_id,
+              date: x.date ?? '2026-11-19',
+              archived: false,
+              hidden: x.hidden === true,
+              counts: { events: x.events.length, words: (x.words ?? []).length, paragraphs: (x.paragraphs ?? []).length, topics: x.topics.length, wiki_pages: associated(x).length },
+            })),
+          ),
+        );
+      }
+      case 'get_session_aggregates': {
+        const s = session(args.session_id);
+        if (s === undefined) return text('Session not found');
+        const words = s.words ?? [];
+        const starts = words.map((w) => Number(w.start_sec));
+        const ends = words.map((w) => Number(w.end_sec));
+        const available = words.length > 0;
+        return ok({
+          session_duration: { available, reason: available ? null : 'No transcript.', durationSec: available ? Math.max(...ends) - Math.min(...starts) : null },
+          talk_time: { available: false },
+          utterances: { available: false },
+          fillers: { available: false },
+          topic_timeline: { entries: [] },
+          event_counts: { totalEvents: s.events.length, byCategory: {} },
+          event_density: { available: false },
+        });
       }
       case 'list_transcript_paragraphs': {
         const s = session(args.session_id);
@@ -1007,7 +1092,7 @@ export class FakeAutologger {
           title: s.title ?? s.session_id,
           date: s.date ?? '2026-11-19',
           fps: s.fps ?? 25,
-          counts: { events: s.events.length, words: 0, paragraphs: (s.paragraphs ?? []).length, topics: s.topics.length, wiki_pages: associated(s).length },
+          counts: { events: s.events.length, words: (s.words ?? []).length, paragraphs: (s.paragraphs ?? []).length, topics: s.topics.length, wiki_pages: associated(s).length },
           revision: s.revision ?? 1,
         });
       }

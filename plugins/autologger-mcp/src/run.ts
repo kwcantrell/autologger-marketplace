@@ -1,13 +1,16 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { parseArgs } from 'node:util';
+import { DEFAULT_MAX_CHARS, gaps, GAPS_FORMAT, type GapsReport, MAX_MAX_CHARS, MIN_MAX_CHARS, transcript } from './annotate.ts';
+import { applyPlan, type ApplyPlan, applyStatePath, DELETE_TOOLS, estimate, planApply, readApplyState, readPlan, readSessions, undoItems, undoPlan } from './annotatePlan.ts';
+import { cleanTitle, DEFAULT_OVERVIEW_TITLE, dashboardProblems, overviewTsx } from './dashboard.ts';
 import { importTokens, isExpired, login, logout, parseDevTokenGrant, requireSignedIn, TokenSource } from './auth.ts';
 import { AppClient, type AppCookie, AppCookieStore, parseCookieLine } from './appApi.ts';
 import { appSigninCommand, CLI_NAME, devTokenHint, importTokensCommand, indexBuildCommand, loginCommand, reusableClientId } from './commands.ts';
 import { CliError, messageOf, UsageError } from './errors.ts';
 import { DEFAULT_SERVER, type Fetch, isLoopback, isObject, resolveServer } from './http.ts';
-import { type Caller, type Rec, RateLimitStop, readSnapshot, readState, statePath, type TargetState, writeJsonFile } from './copy.ts';
+import { type Caller, readJson, readTool, type Rec, RateLimitStop, readSnapshot, readState, statePath, type TargetState, writeJsonFile } from './copy.ts';
 import { exportSessions, listAll, summarize } from './export.ts';
 import { exportAll, progressPath, readProgress } from './exportAll.ts';
 import { execute, plan, type Plan, type RunResult, targetSession, targetState, type TargetSession } from './importer.ts';
@@ -134,6 +137,40 @@ Commands:
                                From the index only: a person's wiki page, the pages it links to and
                                that link to it, the moments it cites and the topics they fall in,
                                as nodes, edges and a Mermaid diagram.
+  annotate gaps [--show <show_id> ...] --out <file.json> [--no-wait]
+                               Read only: every session the account can see (or only those shows'),
+                               with its show, title, duration, last event time, transcript size and
+                               its events (take rows not counted), topics, wiki pages and session
+                               dashboards, and which of the four kinds it has none of. Writes the
+                               report to --out (a .json file; an existing one only when it is an
+                               earlier gaps report); --json prints the totals.
+  annotate transcript --session <id> [--from <s>] [--to <s>] [--max-chars <n>]
+                               Read only: the session's transcript as '[HH:MM:SS] speaker: text'
+                               lines (from its paragraphs, else grouped from its words), at most
+                               --max-chars characters (default ${DEFAULT_MAX_CHARS}), and next_from, the
+                               --from of the rest.
+  annotate dashboard --session <id> --out <file.tsx> [--title <text>]
+                               Read only: write the built-in session overview dashboard (events by
+                               category, topics in time order, wiki pages, all read at runtime by
+                               the dashboard hooks) to --out.
+  annotate apply --plan <file.json>
+                               Dry run of a plan file (schema in the README): per item create, skip
+                               (created by an earlier apply, or a wiki title the show has) or
+                               invalid (with the reason), the write count and how long the write
+                               rate limit makes it take. Writes nothing.
+  annotate apply --confirm --plan <file.json> [--no-wait]
+                               Create the valid items (--confirm must come right after apply) with
+                               create_event, create_topic, create_wiki_page and save_dashboard;
+                               never updates or deletes. Needs a 'login --write' sign-in. Each
+                               created item's id is saved in <plan>.apply-state.json at once, so a
+                               rerun creates nothing twice. A rate limit is waited out (--no-wait:
+                               stop). Refused and invalid items are listed in failed.
+  annotate undo --plan <file.json>
+                               Dry run: list what the state file says this plan created.
+  annotate undo --confirm --plan <file.json> [--no-wait]
+                               Delete exactly those items, each only while its version (revision)
+                               is still the one it was created with; changed ones are reported and
+                               left as they are.
 
 Options:
   --server <url>   autologger server (default: $AUTOLOGGER_URL, else ${DEFAULT_SERVER})
@@ -169,12 +206,17 @@ const OPTIONS = {
   map: { type: 'string', multiple: true },
   confirm: { type: 'boolean', default: false },
   'no-wait': { type: 'boolean', default: false },
-  show: { type: 'string' },
+  show: { type: 'string', multiple: true },
   studio: { type: 'string' },
   all: { type: 'boolean', default: false },
   'max-reads': { type: 'string' },
   term: { type: 'string', multiple: true },
   create: { type: 'boolean', default: false },
+  plan: { type: 'string' },
+  from: { type: 'string' },
+  to: { type: 'string' },
+  'max-chars': { type: 'string' },
+  title: { type: 'string' },
 } as const;
 
 type OptionName = keyof typeof OPTIONS;
@@ -194,6 +236,16 @@ const COMMAND_OPTIONS: Record<string, OptionName[]> = {
   index: ['server', 'show', 'studio', 'all', 'max-reads'],
   moments: ['server', 'show', 'studio', 'all', 'term'],
   'person-graph': ['server', 'show', 'studio', 'all'],
+  annotate: ['server', 'show', 'session', 'out', 'plan', 'from', 'to', 'max-chars', 'title', 'confirm', 'no-wait'],
+};
+
+/** The options each annotate subcommand takes. */
+const ANNOTATE_OPTIONS: Record<string, OptionName[]> = {
+  gaps: ['server', 'show', 'out', 'no-wait'],
+  transcript: ['server', 'session', 'from', 'to', 'max-chars', 'no-wait'],
+  dashboard: ['server', 'session', 'out', 'title', 'no-wait'],
+  apply: ['server', 'plan', 'confirm', 'no-wait'],
+  undo: ['server', 'plan', 'confirm', 'no-wait'],
 };
 
 function version(): string {
@@ -383,6 +435,8 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
       out({ ...coverage, ...graph }, `${notice}${graph.mermaid}`);
       return EXIT.ok;
     }
+
+    if (command === 'annotate') return await annotate(server, ctx, rest);
 
     switch (command) {
       case 'login': {
@@ -734,6 +788,196 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
     });
   }
 
+  /** annotate gaps | transcript | dashboard | apply | undo. */
+  async function annotate(server: string, ctx: ConstructorParameters<typeof TokenSource>[0], rest: readonly string[]): Promise<number> {
+    const [sub, ...extra] = rest;
+    const allowed = sub === undefined ? undefined : ANNOTATE_OPTIONS[sub];
+    if (sub === undefined || allowed === undefined) throw new UsageError('annotate takes gaps, transcript, dashboard, apply or undo');
+    if (extra.length > 0) throw new UsageError(`annotate ${sub} takes no further arguments`);
+    for (const [name, value] of Object.entries(values)) {
+      const key = name as OptionName;
+      if (value === undefined || value === false || (Array.isArray(value) && value.length === 0) || COMMON.includes(key) || allowed.includes(key)) continue;
+      throw new UsageError(`annotate ${sub} does not take --${name}`);
+    }
+    // A pre-approved `annotate apply --plan ...` (or undo) command line must never be able to write.
+    if (values.confirm) {
+      const at = argv.findIndex((a, i) => a === 'annotate' && argv[i + 1] === sub);
+      if (argv[at + 2] !== '--confirm') throw new UsageError(`--confirm must come right after ${sub}: annotate ${sub} --confirm --plan <file.json> --server <url>`);
+    }
+    const noWait = values['no-wait'];
+    const oneSession = (): string => {
+      const ids = values.session ?? [];
+      if (ids.length !== 1) throw new UsageError(`annotate ${sub} needs one --session <id>`);
+      const id = ids[0] as string;
+      if (!ID_RE.test(id)) throw new UsageError(`--session '${id}' is not a session id`);
+      return id;
+    };
+
+    if (sub === 'gaps') {
+      const shows = values.show ?? [];
+      for (const id of shows) if (!ID_RE.test(id)) throw new UsageError(`--show '${id}' is not a show id`);
+      const outPath = outputFile(values.out, '.json');
+      if (existsSync(outPath)) {
+        let earlier: unknown;
+        try {
+          earlier = readJson(outPath, 'file');
+        } catch {
+          earlier = undefined;
+        }
+        if (!isObject(earlier) || earlier.format !== GAPS_FORMAT) throw new CliError(`${outPath} exists and is not an earlier gaps report; give another --out`);
+      }
+      const client = connect(ctx);
+      await client.initialize();
+      const tools = new Map((await client.listTools()).map((t) => [t.name, t]));
+      let report: GapsReport;
+      try {
+        report = await gaps({ caller: caller(client, noWait), tools, server, shows, warn, now: ctx.now() });
+      } catch (error) {
+        if (error instanceof RateLimitStop) throw new CliError(`${error.message}; stopped. Nothing was written to ${outPath}; run it again later`);
+        throw error;
+      }
+      writeJsonFile(outPath, report, true);
+      const t = report.totals;
+      const summary = { server, out: outPath, totals: t, skipped_shows: report.skipped_shows };
+      out(
+        summary,
+        `Gaps on ${server} (${outPath}): ${t.sessions} sessions (${t.with_transcript} with a transcript, ${t.transcript_words} words); without events ${t.missing.events}, topics ${t.missing.topics}, wiki pages ${t.missing.wiki_pages}, dashboards ${t.missing.dashboards}; ${t.missing_all} have none of the four.\n${report.skipped_shows.map((s) => `  skipped show ${s.show_id}: ${s.reason}\n`).join('')}`,
+      );
+      return EXIT.ok;
+    }
+
+    if (sub === 'transcript') {
+      const sessionId = oneSession();
+      const seconds = (raw: string | undefined, flag: string): number | undefined => {
+        if (raw === undefined) return undefined;
+        const n = Number(raw);
+        if (raw.trim() === '' || !Number.isFinite(n) || n < 0) throw new UsageError(`${flag} must be a number of seconds, 0 or more`);
+        return n;
+      };
+      const from = seconds(values.from, '--from') ?? 0;
+      const to = seconds(values.to, '--to');
+      if (to !== undefined && to <= from) throw new UsageError('--to must be after --from');
+      let maxChars = DEFAULT_MAX_CHARS;
+      if (values['max-chars'] !== undefined) {
+        maxChars = Number(values['max-chars']);
+        if (!Number.isInteger(maxChars) || maxChars < MIN_MAX_CHARS || maxChars > MAX_MAX_CHARS) throw new UsageError(`--max-chars must be a whole number from ${MIN_MAX_CHARS} to ${MAX_MAX_CHARS}`);
+      }
+      const client = connect(ctx);
+      await client.initialize();
+      const result = await transcript({ caller: caller(client, noWait), sessionId, from, to, maxChars });
+      out(
+        { server, ...result },
+        `${result.text}${result.text === '' ? `(no transcript ${result.source === 'none' ? 'in this session' : 'in this range'})` : ''}\n${result.next_from === null ? '(end)' : `(continue with --from ${result.next_from})`}\n`,
+      );
+      return EXIT.ok;
+    }
+
+    if (sub === 'dashboard') {
+      const sessionId = oneSession();
+      const outPath = outputFile(values.out, '.tsx');
+      const client = connect(ctx);
+      await client.initialize();
+      const session = await readTool(caller(client, noWait), 'get_session', { session_id: sessionId });
+      const title = cleanTitle(values.title ?? (typeof session.title === 'string' && session.title.trim() !== '' ? `Overview: ${session.title}` : DEFAULT_OVERVIEW_TITLE)) || DEFAULT_OVERVIEW_TITLE;
+      const tsx = overviewTsx(title);
+      const problems = dashboardProblems(tsx);
+      if (problems.length > 0) throw new CliError(`the dashboard fails autologger's dashboard rules: ${problems.join('; ')}`);
+      writeFileSync(outPath, tsx);
+      out(
+        { server, session_id: sessionId, out: outPath, title, tsx_chars: tsx.length, save_dashboard_args: { title, scope: { kind: 'session', session_id: sessionId } } },
+        `Wrote ${outPath} ("${title}", ${tsx.length} characters), a session overview for ${sessionId}. Add it to a plan as {"template": "session-overview", "title": ...} to save it with annotate apply.\n`,
+      );
+      return EXIT.ok;
+    }
+
+    // apply and undo
+    if (values.plan === undefined || values.plan === '') throw new UsageError(`annotate ${sub} needs --plan <file.json>`);
+    if (!values.plan.endsWith('.json')) throw new UsageError(`--plan '${values.plan}' must be a .json file`);
+    const planPath = resolvePath(values.plan);
+    const plan = readPlan(planPath);
+    const stateFile = applyStatePath(planPath);
+    const state = readApplyState(stateFile, server, plan.plan_id, existsSync(stateFile));
+    const save = (): void => writeJsonFile(stateFile, state, true);
+    const tokens = new TokenSource(ctx);
+    const canWrite = tokens.scope.split(' ').includes(WRITE_SCOPE);
+    if (values.confirm && !canWrite) {
+      throw new CliError(`the sign-in to ${server} is read-only (scope '${tokens.scope}'); annotate ${sub} --confirm needs ${WRITE_SCOPE}. Nothing was written. To sign in with it, run in a terminal:\n  ${loginCommand(server, true)}`);
+    }
+    const header = { server, plan: planPath, plan_id: plan.plan_id, state_file: stateFile, can_write: canWrite, ...(canWrite ? {} : { login_write_command: loginCommand(server, true) }) };
+    const stopped = (error: unknown): never => {
+      const saved = existsSync(stateFile) ? ` Progress is saved in ${stateFile}; run the same annotate ${sub} --confirm command again to continue (nothing is done twice).` : '';
+      if (error instanceof RateLimitStop) throw new CliError(`${error.message}; stopped.${saved}`);
+      throw new CliError(`${messageOf(error)}${saved}`);
+    };
+
+    if (sub === 'undo') {
+      const listed = undoItems(state);
+      if (!values.confirm) {
+        const report = { mode: 'dry-run', ...header, items: listed, count: listed.length, estimate: estimate(listed.length) };
+        out(report, `Dry run: nothing was deleted. annotate undo --confirm would delete ${listed.length} item${listed.length === 1 ? '' : 's'} this plan created on ${server} (each only if unchanged since), ${estimate(listed.length).text} at the write rate limit:\n${listed.map((i) => `  ${i.kind} ${i.target_id} (session ${i.session_id}): ${i.label}\n`).join('')}`);
+        return EXIT.ok;
+      }
+      const client = connect(ctx, tokens);
+      await client.initialize();
+      const tools = new Map((await client.listTools()).map((t) => [t.name, t]));
+      const needed = [...new Set(listed.map((i) => DELETE_TOOLS[i.kind]))].filter((t) => !tools.has(t));
+      if (needed.length > 0) throw new CliError(`the server has no ${needed.join(', ')} tool${needed.length === 1 ? '' : 's'}, which this undo needs; nothing was deleted`);
+      let result;
+      try {
+        result = await undoPlan({ caller: caller(client, noWait), tools, state, save, now: ctx.now });
+      } catch (error) {
+        return stopped(error);
+      }
+      const report = { mode: 'confirm', ...header, ...result };
+      out(
+        report,
+        `Undone on ${server}: ${result.deleted.length} deleted, ${result.changed.length} changed since (left as they are), ${result.gone.length} already gone, ${result.failed.length} failed.\n${[...result.changed, ...result.failed].map((i) => `  ${i.kind} ${i.target_id}: ${i.reason}\n`).join('')}`,
+      );
+      return EXIT.ok;
+    }
+
+    const client = connect(ctx, tokens);
+    await client.initialize();
+    const tools = new Map((await client.listTools()).map((t) => [t.name, t]));
+    const call = caller(client, noWait);
+    let thePlan: ApplyPlan;
+    try {
+      const sessions = await readSessions(call, plan, warn);
+      thePlan = planApply({ plan, server, state, sessions, tools });
+    } catch (error) {
+      if (error instanceof RateLimitStop) throw new CliError(`${error.message}; stopped before writing anything`);
+      throw error;
+    }
+    const sessionsReport = thePlan.sessions.map((s) => {
+      const of = thePlan.items.filter((i) => i.session_id === s.session_id);
+      const n = (action: string, kind?: string): number => of.filter((i) => i.action === action && (kind === undefined || i.kind === kind)).length;
+      return {
+        session_id: s.session_id,
+        found: s.found,
+        title: s.title ?? null,
+        create: { events: n('create', 'events'), topics: n('create', 'topics'), wiki_pages: n('create', 'wiki_pages'), dashboards: n('create', 'dashboards') },
+        skip: n('skip'),
+        invalid: n('invalid'),
+      };
+    });
+    const planned = { ...header, sessions: sessionsReport, counts: thePlan.counts, writes: thePlan.writes.size, estimate: thePlan.estimate, items: thePlan.items };
+    if (!values.confirm) {
+      out({ mode: 'dry-run', ...planned }, applyText('dry-run', server, planned, undefined));
+      return EXIT.ok;
+    }
+    const needed = [...new Set([...thePlan.writes.values()].map((w) => w.tool))].filter((t) => !tools.has(t));
+    if (needed.length > 0) throw new CliError(`the server has no ${needed.join(', ')} tool${needed.length === 1 ? '' : 's'}, which this plan needs; nothing was written`);
+    let result;
+    try {
+      result = await applyPlan({ caller: call, tools, state, save, now: ctx.now }, thePlan);
+    } catch (error) {
+      return stopped(error);
+    }
+    const report = { mode: 'confirm', ...planned, created: result.created, skipped: result.skipped, failed: result.failed, dropped_fields: result.dropped_fields };
+    out(report, applyText('confirm', server, planned, result));
+    return EXIT.ok;
+  }
+
   /**
    * import --create: refuses a target that is not a local dev stack or is the snapshot's source
    * before anything else; then plans (dry run) or makes the structure and copies everything.
@@ -867,6 +1111,54 @@ export async function run(argv: readonly string[], rawIo: Io): Promise<number> {
   }
 }
 
+/**
+ * An output file a pre-approved command may write: the extension `ext`, and not a symbolic link or
+ * anything but a regular file (so it cannot write through a link or onto a device or directory).
+ */
+function outputFile(raw: string | undefined, ext: string): string {
+  if (raw === undefined || raw === '') throw new UsageError(`give --out <file${ext}>`);
+  if (!raw.endsWith(ext)) throw new UsageError(`--out '${raw}' must be a ${ext} file`);
+  const full = resolvePath(raw);
+  let stat;
+  try {
+    stat = lstatSync(full);
+  } catch {
+    return full;
+  }
+  if (stat.isSymbolicLink()) throw new UsageError(`--out ${full} is a symbolic link; give a plain file path`);
+  if (!stat.isFile()) throw new UsageError(`--out ${full} exists and is not a regular file`);
+  return full;
+}
+
+interface AnnotateCounts {
+  sessions: { session_id: string; found: boolean; title: string | null; create: Record<string, number>; skip: number; invalid: number }[];
+  counts: { create: Record<string, number>; skip: number; invalid: number };
+  writes: number;
+  estimate: { text: string };
+  items: { key: string; kind: string; session_id: string; label: string; action: string; reason?: string }[];
+  state_file: string;
+  can_write: boolean;
+  login_write_command?: string;
+}
+
+function applyText(mode: 'dry-run' | 'confirm', server: string, p: AnnotateCounts, r: { created: Record<string, number>; failed: { key: string; reason: string }[]; skipped: unknown[] } | undefined): string {
+  const lines: string[] = [];
+  const c = r?.created ?? p.counts.create;
+  lines.push(mode === 'confirm' ? `Applied to ${server}:` : `Dry run: nothing was written. annotate apply --confirm would, on ${server}:`);
+  for (const s of p.sessions) {
+    const k = s.create;
+    lines.push(`  session ${s.session_id}${s.title ? ` (${s.title})` : ''}: ${s.found ? `${k.events ?? 0} events, ${k.topics ?? 0} topics, ${k.wiki_pages ?? 0} wiki pages, ${k.dashboards ?? 0} dashboards to create, ${s.skip} skip, ${s.invalid} invalid` : 'not found'}`);
+  }
+  lines.push(`  ${mode === 'confirm' ? 'created' : 'create'}: ${c.events ?? 0} events, ${c.topics ?? 0} topics, ${c.wiki_pages ?? 0} wiki pages, ${c.dashboards ?? 0} dashboards`);
+  if (mode === 'dry-run') lines.push(`  ${p.writes} writes, ${p.estimate.text} at the write rate limit`);
+  for (const i of p.items.filter((x) => x.action === 'invalid')) lines.push(`  invalid ${i.key}: ${i.reason ?? ''}`);
+  for (const i of p.items.filter((x) => x.action === 'skip')) lines.push(`  skip ${i.key}: ${i.reason ?? ''}`);
+  for (const f of (r?.failed ?? []).filter((x) => !x.reason.startsWith('invalid:'))) lines.push(`  failed ${f.key}: ${f.reason}`);
+  if (!p.can_write) lines.push(`The sign-in is read-only; before --confirm, run in a terminal:\n  ${p.login_write_command ?? ''}`);
+  lines.push(mode === 'confirm' ? `Progress: ${p.state_file}` : 'Run the same command as annotate apply --confirm ... to write.');
+  return `${lines.join('\n')}\n`;
+}
+
 /** The target's events, where an earlier run created some: their timecodes and versions. */
 async function readTargetEvents(call: Caller, targets: readonly TargetSession[], target: TargetState, warn: (m: string) => void): Promise<Map<string, Map<string, Rec>>> {
   const targetEvents = new Map<string, Map<string, Rec>>();
@@ -902,12 +1194,14 @@ function createdText(c: Omit<CreateResult, 'failed'>, sessions: number): string 
 const ID_RE = /^[A-Za-z0-9_-]{1,200}$/;
 
 /** The one scope option given: --show <id>, --studio <id> or --all. */
-function parseScope(values: { show?: string; studio?: string; all?: boolean }): Scope {
-  const given = [values.show !== undefined, values.studio !== undefined, values.all === true].filter(Boolean).length;
+function parseScope(values: { show?: string[]; studio?: string; all?: boolean }): Scope {
+  if ((values.show ?? []).length > 1) throw new UsageError('give one --show <id>');
+  const show = values.show?.[0];
+  const given = [show !== undefined, values.studio !== undefined, values.all === true].filter(Boolean).length;
   if (given !== 1) throw new UsageError('give one scope: --show <id>, --studio <id> or --all');
-  if (values.show !== undefined) {
-    if (!ID_RE.test(values.show)) throw new UsageError(`--show '${values.show}' is not a show id`);
-    return { kind: 'show', id: values.show };
+  if (show !== undefined) {
+    if (!ID_RE.test(show)) throw new UsageError(`--show '${show}' is not a show id`);
+    return { kind: 'show', id: show };
   }
   if (values.studio !== undefined) {
     if (!ID_RE.test(values.studio)) throw new UsageError(`--studio '${values.studio}' is not a studio id`);

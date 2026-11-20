@@ -27,6 +27,7 @@ Skills:
 | `query-session-data` | Lists the tools and calls the read tools, with paging. |
 | `write-session-data` | Calls the write tools after you confirm each change; runs `check-links` on wiki bodies first. |
 | `explore-wiki` | Cross-session questions from a local index: `index build` / `index status`, `moments` about a topic, and `person-graph` (JSON and a Mermaid diagram). |
+| `annotate-sessions` | Annotates many sessions in bulk: `annotate gaps`, then per batch `annotate transcript`, a plan file of Claude-written events, topics, wiki pages and dashboards, the `annotate apply` dry run, and `annotate apply --confirm` after you say yes to that batch; `annotate undo` takes a batch back out. |
 | `seed-dev-stack` | Copies sessions from another server (such as stage) onto a local dev stack: `export`, the `import` plan, and `import --confirm` after you say yes. |
 
 autologger's AI features go through this plugin now: the in-app aichat agents are being retired, so
@@ -417,6 +418,120 @@ Markdown in titles stay inside their node.
 
 **Server search.** autologger-2 plans server-side search and wiki-graph read tools; once they
 exist, these commands can use them instead of the local index (a later change).
+
+### annotate (events, topics, wiki pages and dashboards for many sessions)
+
+Claude writes the content (from each session's transcript; not autologger's billed `generate_*`
+tools) into a **plan file**; the CLI checks it against the server, creates it batch by batch,
+keeps track of what it created, and can take it back out. Writes need a `login --write` sign-in;
+everything else works read-only.
+
+```sh
+autologger-mcp annotate gaps --server <url> [--show <show_id> ...] --out gaps.json [--json]
+autologger-mcp annotate transcript --server <url> --session <id> [--from <s>] [--to <s>] [--max-chars <n>] --json
+autologger-mcp annotate dashboard --server <url> --session <id> --out overview.tsx [--title <text>]
+autologger-mcp annotate apply --plan plan.json --server <url> [--json]             # dry run
+autologger-mcp annotate apply --confirm --plan plan.json --server <url> [--no-wait] # writes
+autologger-mcp annotate undo --plan plan.json --server <url> [--json]              # dry run
+autologger-mcp annotate undo --confirm --plan plan.json --server <url> [--no-wait]  # deletes
+```
+
+- **gaps** (read only) lists every session the account can see (hidden sessions, which the write
+  tools refuse, are left out; shows it cannot open are listed in `skipped_shows`), or only the
+  `--show`s': show, title, date, `duration_s` (the transcript's extent, from
+  `get_session_aggregates`), `last_session_time_s` (the latest event timecode), transcript words
+  and paragraphs, and counts of its events (recording-take rows not counted), topics, wiki pages
+  linked to it and session dashboards, with `missing` naming the kinds it has none of. It reads with
+  `list_studios`, `list_shows`, `list_sessions`, `get_session` (only when `list_sessions` has no
+  counts), `list_events`, `get_session_aggregates` and `list_dashboards`, through every page, and
+  waits out read rate limits (`--no-wait`: stop). The report goes to `--out` (a `.json` file, mode
+  0600; an existing file only when it is an earlier gaps report); `--json` prints the totals.
+- **transcript** (read only) prints `[HH:MM:SS] speaker: text` lines in `text`: one per paragraph
+  when the session has timed paragraphs, else words grouped by speaker (a new line at a change of
+  speaker or about 400 characters). At most `--max-chars` characters (default 20000; a single
+  paragraph longer than that is printed whole, with `over_max_chars`), from `--from` (inclusive) to
+  `--to` (exclusive) by each unit's start second. `next_from` is the `--from` of the rest (null at
+  the end): units that start at the same instant are never split, so following it prints every word
+  exactly once. For a 10,000-word transcript the output is under a tenth of the raw
+  `list_transcript_words` JSON. Each call reads the transcript from its start up to the range it
+  prints.
+- **dashboard** (read only) writes the built-in session overview to `--out` (a `.tsx` file; never
+  through a symbolic link): the session's events by category (take rows left out), its topics in
+  time order and its wiki pages, all read at runtime with the dashboard hooks (`useSession`,
+  `useEvents`, `useTopics`, `useWikiPages`). Its imports are on autologger's custom-dashboard
+  allowlist; the only value in the source is its heading, as escaped JSON data (`const DATA = ...`),
+  so no session text can become code. The title defaults to `Overview: <session title>`.
+- **apply** without `--confirm` is a dry run. It reads each plan session (`get_session`, its
+  categories, its transcript's extent, the wiki pages linked to it) and prints per item `create`,
+  `skip` (created by an earlier apply of this plan; a wiki title the show already has among the
+  pages linked to the session; a session page when the session has one) or `invalid` with the
+  reason (an unknown session; a category the show lacks, with the show's categories; a time outside
+  the session's transcript, with a second's slack; a missing or unknown field; a wiki body failing
+  `check-links`; a dashboard failing the dashboard rules below), per-session counts, the write count
+  and `estimate` (the time at autologger's write window of 30 writes a minute and 300 an hour per
+  user, starting from a full window; it is shared with every other write the user makes).
+- **apply --confirm** (`--confirm` right after `apply`, so a pre-approved `annotate apply --plan`
+  can never write) creates the valid items in plan order (per session: events, topics, wiki pages,
+  dashboards) with `create_event`, `create_topic`, `create_wiki_page` and `save_dashboard`, sending
+  only the fields each tool's `inputSchema` accepts (fields cut are listed in `dropped_fields`). It
+  never updates or deletes. It refuses (exit 1, nothing written) a sign-in without
+  `session-data:write`. Each created item's id and version is saved in
+  `<plan>.apply-state.json` (mode 0600) right after its write; creates also send a
+  `client_request_id` derived from the plan and item when the server takes one, so a write whose
+  answer was lost is not repeated either. A rerun of the same command creates nothing twice. A rate
+  limit (`Rate limit exceeded; retry in N s.`) is waited out (`--no-wait`: stop; the same command
+  continues). Invalid items and writes the server refuses are listed in `failed` and do not stop the
+  run; a wiki title the server reports as taken is a skip. Every created event carries
+  `metadata: {"created_by": "autologger-mcp annotate", "annotate_plan": "<plan_id>",
+  "annotate_item": "<key>"}` when `create_event` accepts `metadata`.
+- **undo** without `--confirm` lists what the state file says this plan created. **undo --confirm**
+  deletes exactly those items with `delete_event`, `delete_topic`, `delete_wiki_page` and
+  `delete_dashboard`, each with the version (revision) read just before from the session's list
+  tool, and only while it is still the one it was created with: an item changed since is reported in
+  `changed` and left alone (a wiki page not linked to the session is deleted with its recorded
+  revision, which the server refuses if it changed). Items already gone are dropped from the state
+  file; deleted ones move to its `undone`. Nothing outside the state file is ever deleted.
+
+#### The plan file
+
+```json
+{
+  "format": "autologger-mcp-annotate-plan",
+  "version": 1,
+  "plan_id": "show-one-batch-1",
+  "sessions": [
+    {
+      "session_id": "ses_123",
+      "events": [
+        { "category": "Joke", "message": "The pasta joke", "session_time": 754.2 },
+        { "id": "guest-arrives", "category": "Guest", "message": "Jane arrives", "timecode": "00:12:30:00" }
+      ],
+      "topics": [{ "session_time": 600, "duration_sec": 240, "topic_level": 1, "summary": "Cooking stories" }],
+      "wiki_pages": [{ "kind": "topic", "title": "Pasta", "aliases": ["Noodles"], "body_md": "Discussed [here](cite:ses_123@754.2)." }],
+      "dashboards": [
+        { "template": "session-overview", "title": "Overview" },
+        { "title": "Jokes only", "tsx": "import { useEvents } from '@autologger/dashboard';\nexport default function Jokes() { ... }" }
+      ]
+    }
+  ]
+}
+```
+
+| Field | Rules |
+| --- | --- |
+| `format`, `version` | Required: `"autologger-mcp-annotate-plan"`, `1`. |
+| `plan_id` | Optional, 1-64 of `A-Za-z0-9._-`; default the file name. Named in each event's marker. |
+| `sessions[].session_id` | Each session once. Only `events`, `topics`, `wiki_pages`, `dashboards` besides it. |
+| any item's `id` | Optional, 1-64 of `A-Za-z0-9._-`, unique per session and kind; the item's key is `<session>/<kind>/<id>`, else a hash of its fields (so an edited item without an `id` counts as a new one). |
+| event | `category` (the show's category **name**, any case; not `internal`), `message` (1-8000 characters), and one of `session_time` (seconds, the transcript's timeline) or `timecode` (`HH:MM:SS:FF` at the session's frame rate). Sent as the category's id and a timecode (the frame holding the instant). |
+| topic | `session_time` (seconds or timecode), `duration_sec` (0 or more), `summary` (1-8000), `topic_level` (1-10, default 1). Start and end must lie in the session. |
+| wiki page | `kind` (`person`, `topic`, `bit`, `session`), `title` (1-200, unique in the show and in the plan), `aliases` (up to 50; none for a session page), `body_md` (up to 100,000; must pass `check-links`). Created in the session's show; a `session` page for the session itself. |
+| dashboard | `title` (1-200, no control characters; default `Session overview` for the template) and either `"template": "session-overview"` or `tsx`. A `tsx` source must pass the pre-check of autologger's save rules: at most 100,000 characters, static named imports only from the allowlist (`react` may also be imported as a default or namespace), at most 60 bindings, exactly one export (`export default function`), no denied element (`script`, `iframe`, `object`, `embed`, `base`, `meta`, `link`, `form`), no `dangerouslySetInnerHTML`/`srcDoc` or string event handler, and no reference to a denied global (`window`, `document`, `fetch`, `eval`, `setInterval`, ...). Saved with session scope. |
+
+The allowlist and denylists are copied from autologger-2's
+`packages/contract/src/customDashboards.ts` into `src/dashboardRules.ts`; a test fails when the copy
+drifts from an autologger-2 checkout on the machine. autologger's `save_dashboard` checks a source
+again, authoritatively.
 
 ### Output and exit codes
 
