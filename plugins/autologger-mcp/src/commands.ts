@@ -68,3 +68,12 @@ export function devTokenHint(server: string, clientId?: string): string {
 export function indexBuildCommand(server: string, scopeArgs: readonly string[], more: readonly string[] = []): string {
   return terminalCommand(['index', 'build', '--server', server, ...scopeArgs, ...more].map(shellQuote).join(' '));
 }
+
+/**
+ * The line a user runs in their autologger-2 checkout to give `import --create` the local app's
+ * session: the dev-only `make dev-login` piped into `app-signin`, so the cookie never reaches the
+ * screen or a command line.
+ */
+export function appSigninCommand(server: string): string {
+  return `make dev-login EMAIL=<address> | ${terminalCommand(`app-signin --server ${shellQuote(server)}`)}`;
+}

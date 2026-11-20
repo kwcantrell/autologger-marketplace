@@ -1,6 +1,6 @@
 {
   "name": "autologger-clips",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "CLI for the autologger-clips Claude Code plugin; run by its skills via npx.",
   "type": "module",

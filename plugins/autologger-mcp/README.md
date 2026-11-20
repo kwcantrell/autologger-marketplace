@@ -159,8 +159,10 @@ finds any, 0 when the body is clean.
 
 ### export, import (seed a local dev stack from another server)
 
-To build against realistic data, copy sessions from another server (stage is
-`https://stage.nrvo.ai`) onto a local dev stack, in two steps:
+To build against realistic data, copy data from another server (stage is `https://stage.nrvo.ai`)
+onto a local dev stack. There are two ways: the **whole account** (`export --all`, then
+`import --create`, which makes the teams, shows and sessions itself; see "Whole account" below), or
+**chosen sessions into sessions that already exist** on the local stack, in two steps:
 
 ```sh
 npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp export --server https://stage.nrvo.ai --session <id> [--session <id> ...] --out snap.json
@@ -181,11 +183,29 @@ existing `--out`; `export --force ...` replaces it (`--force` must come right af
 pre-approved `export --server ...` command line can never replace a file). `--out` must end in
 `.json`. `--json` prints the counts per session and in total.
 
-**What is and is not copied.** The MCP write tools create events, topics and wiki pages only. They
-cannot create studios, shows, sessions or transcripts, so `import` copies **into sessions that
-already exist on the target**: each `--map <source_session>=<target_session>` names one, and the
-target session's show receives the wiki pages. Transcripts, session aggregates and dashboards are
-not copied. Per kind:
+**What is and is not copied.** **Audio and video are never copied**, by either way: no media file
+is downloaded, uploaded or imported (no YouTube or audio import on the target). The MCP write tools
+create events, topics and wiki pages only; they cannot create studios, shows, sessions or
+transcripts. So `import --map` copies **into sessions that already exist on the target**: each
+`--map <source_session>=<target_session>` names one, and the target session's show receives the
+wiki pages; it copies no transcripts or dashboards. `import --create` (below) also makes the teams,
+shows and sessions, and copies transcript words and dashboards, through the local app's HTTP API.
+What neither copies, and why:
+
+- Audio and video files: out of scope by design (large, and media is not session data); a whole
+  export keeps only `list_session_media`'s links and offsets, which nothing imports.
+- Transcript paragraphs: autologger stores them only from its own transcript generation runs;
+  neither its MCP tools nor its HTTP API can write one. The words are copied, so the target can
+  generate paragraphs again.
+- Session aggregates: computed by the target from what is copied.
+- A session's start offset, episode and notes: the MCP read tools do not answer them, so a created
+  session has offset 0 and no episode or notes (its title and frame rate are the source's).
+- Hidden and archived flags: created sessions are visible and active.
+- Studio dashboard templates (only a session's own dashboards are copied), team members, invites
+  and show grants, OAuth apps, provider keys and AI chat history: not session data, or not the
+  user's to copy.
+
+Per kind:
 
 - Events: `create_event` with the category's **name** (`category_label`; the target show's
   categories have other ids, and the tool resolves a name), `message`, `metadata`, the source
@@ -264,6 +284,73 @@ are listed as `skip` with that reason instead: update the local stack first.
 
 Neither file holds a token, and content from the source is only ever sent as tool arguments: it
 never selects a tool, a server or a file.
+
+#### Whole account: export --all, app-signin, import --create
+
+```sh
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp export --server https://stage.nrvo.ai --all --out all.json
+make dev-login EMAIL=<address> | npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp app-signin --server https://localhost:8787   # in the autologger-2 checkout
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp import --snapshot all.json --server https://localhost:8787 --create            # dry run: the plan
+npx --yes --offline --loglevel=error --package="<plugin dir>" -- autologger-mcp import --confirm --snapshot all.json --server https://localhost:8787 --create  # writes
+```
+
+**export --all** reads everything the signed-in source account can see, with read tools only
+(`list_studios`, `list_shows`, `list_sessions` with `include_hidden`, `list_categories`,
+`get_session`, `list_events`, `list_topics`, `list_transcript_words`, `list_transcript_paragraphs`,
+`list_wiki_pages`, `get_wiki_page`, `list_dashboards`, `get_dashboard`, `list_session_media`),
+following every cursor and offset: each studio and show (with its categories as `list_categories`
+answers them), and per session its `get_session` result (frame rate included), events, topics,
+transcript words and paragraphs, its wiki pages with whole bodies (a show page several sessions list
+is read once), its own dashboards with their TSX source (studio templates are left out), and the
+media links and offsets (never media bytes). A show the account cannot open (`list_shows` lists it
+with `can_access: false`, for example a team member's show without a grant) is warned about and
+neither its categories nor its sessions are read; a show whose `list_categories` is refused is
+exported without categories, with a warning. The snapshot is one JSON file (mode 0600). Progress is saved in
+`<out>.export-progress.json` after every read: on a rate limit export waits as import does;
+with `--no-wait`, a wait over an hour or any error it stops with exit 1, and the same command run
+again continues without reading anything a second time. `--json` prints the counts.
+
+**app-signin** stores the local app's session for `import --create`: the line `make dev-login
+EMAIL=<address>` prints (`<cookie name>=<token>`), read from standard input only (never an
+argument), checked with `GET /api/studio`, and kept in `<config dir>/app-cookies/<server>.json`
+(mode 0600, directories 0700). Only a loopback server (`localhost`, `127.0.0.1`, `[::1]`, any port,
+so dev slots too) is accepted, and the cookie is only ever sent there. It is never printed, nor
+written into a snapshot or state file. Use the same account as the target's MCP sign-in (`login
+--write`): the sessions it creates must be readable and writable through MCP. `app-signout` deletes
+it.
+
+**import --create** takes a snapshot from `export --all` (no `--map`) and a local target. It
+refuses, with exit 1 and nothing written, a target that is not a loopback host or is the
+snapshot's source server (`localhost`, `127.0.0.1` and `[::1]` count as the same host), and, with
+`--confirm`, a missing app session. The dry run prints `create` (the `teams`, `shows` with their
+category counts, `sessions` with title and frame rate, `transcript_words`, `transcript_paragraphs`,
+`dashboards`, each `create` or `done`, and `not_copied`) and the plan for events, topics and wiki
+pages as above (sessions still to create show as `new:<source id>`). `--confirm`, through the app's
+HTTP API (`PUT /api/profile` to make each team active, since the app creates sessions in the
+active team; the user's active team and show are set back at the end):
+
+- Teams: `POST /api/teams`, id a slug of the source studio id (`st_Main` -> `st-main`), the
+  studio's name. A team with that id the user belongs to is **reused**; one taken by a team the
+  user is not in gets `-2` ... `-5`. When the user already owns 20 teams (autologger's cap) the
+  studio is reported in `failed` with what to do, and the rest goes on.
+- Shows: `POST /api/shows` with the name and show code, then the source show's categories (names,
+  kinds, colours, dropdown options, on/off labels) with `PUT /api/profile` `show_updates`, so
+  `create_event` by category name resolves.
+- Sessions: `POST /api/sessions` with the title, the source frame rate (so timecodes copy
+  exactly), offset 0, in the show made for it.
+- Events, topics and wiki pages: the import above, into the created sessions and shows.
+- Transcript words: `POST /api/sessions/:id/transcript-words` (`session_time`, `speaker`, `word`),
+  one per word in order, so the target's `list_transcript_words` holds the same words.
+- Dashboards: `save_dashboard` with the source title and TSX, scope the created session. One the
+  target refuses (its source rules) is reported in `failed`, not fatal.
+
+Each created team, show, session, word count and dashboard is saved by source id in the state
+file's `structure` after every write: a rerun of the same command creates nothing twice and
+continues. A refused write (in `failed`) is tried again by a rerun. The app answers 401 when the
+cookie is no longer a session: run `make dev-login` and `app-signin` again. A 429 from the app is
+waited out like an MCP rate limit (its `Retry-After`). As with the import above, a `POST` whose
+answer was lost after the app made the team, show or session (a dropped connection, a proxy error)
+is not recorded, so a rerun makes it again: check the target before rerunning after such an error.
 
 ### index, moments, person-graph (cross-session questions from a local index)
 
@@ -348,6 +435,10 @@ Refresh tokens rotate, and autologger revokes the whole sign-in when one is used
 therefore refreshes under a lock file next to the credentials, re-reads the file first (another
 process may already have refreshed) and saves the new tokens atomically before using them, so
 concurrent invocations are safe.
+
+The local app session `app-signin` stores (a `make dev-login` cookie, for `import --create`) is one
+file per server in `.../autologger-mcp/app-cookies/`, also mode `0600` in `0700` directories;
+`app-signout` deletes it.
 
 ## Development
 

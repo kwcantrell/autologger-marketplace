@@ -30,6 +30,8 @@ const seedSource = new FakeAutologger({
         categories: [{ id: 'cat_a', label: 'Joke' }],
         events: [{ event_id: 'e1', wall_time_utc: '2026-01-01T10:00:00.000Z', category: 'cat_a', category_label: 'Joke', message: 'a joke', metadata: {}, version: 1 }],
         topics: [{ id: 't1', session_time: '00:01:00:00', duration_sec: 30, topic_level: 1, summary: 'Openers', ordinal: 1, version: 1 }],
+        words: [{ ordinal: 1, session_time: '00:00:01:00', speaker: 'Ann', word: 'hello', start_sec: 1, end_sec: 1.4 }],
+        dashboards: [{ dashboard_id: 'db_1', title: 'Jokes', tsx: 'export default function D() { return null; }', revision: 1 }],
       },
     ],
     pages: [{ page_id: 'pg_a', show_id: 'shw_src', kind: 'session', title: 'Session one', aliases: [], body_md: 'A [quote](cite:S1@2).', revision: 1, session_id: 'S1' }],
@@ -141,6 +143,7 @@ function fill(command: string): string {
     local_server: seedTarget.base,
     source_session_id: 'S1',
     snapshot_file: join(cwd, 'snapshot.json'),
+    full_snapshot_file: join(cwd, 'full-snapshot.json'),
     mapping: 'S1=T1',
     server: wikiServer.base,
     show_id: 'shw_w',
@@ -169,24 +172,31 @@ test('every skill calls the CLI only through the shared npx invocation', () => {
     const commands = skillCommands(skill);
     assert.ok(commands.length >= 2, `expected npx command lines in ${skill}`);
     for (const command of commands) assert.ok(command.startsWith(`${INVOCATION} `), command);
-    // Every command line is pre-approved except import-tokens, which writes credentials, and
-    // import --confirm, which writes session data: no rule (in any skill) may cover them, so Claude
-    // has to ask first. Neither may export --force, which replaces a file, nor index clear, which
-    // deletes the local index.
+    // Every command line is pre-approved except import-tokens and app-signin, which write
+    // credentials, and import --confirm, which writes session data: no rule (in any skill) may cover
+    // them, so Claude has to ask first. Neither may export --force, which replaces a file, nor index
+    // clear, which deletes the local index.
     const prefixes = allowedPrefixes(skill);
     assert.ok(prefixes.length > 0 && prefixes.every((p) => p.startsWith(`${INVOCATION} `)), skill);
     for (const command of commands) {
       const allowed = prefixes.some((p) => command.startsWith(p));
       const writes =
-        command.startsWith(`${INVOCATION} import-tokens`) || command.startsWith(`${INVOCATION} import --confirm`) || command.startsWith(`${INVOCATION} index clear`);
+        command.startsWith(`${INVOCATION} import-tokens`) ||
+        command.startsWith(`${INVOCATION} app-signin`) ||
+        command.startsWith(`${INVOCATION} import --confirm`) ||
+        command.startsWith(`${INVOCATION} index clear`);
       assert.equal(allowed, !writes, `${skill}: ${command}`);
     }
     assert.ok(!prefixes.some((p) => `${INVOCATION} import-tokens --json`.startsWith(p)), `${skill} pre-approves import-tokens`);
+    assert.ok(!prefixes.some((p) => `${INVOCATION} app-signin --server x --json`.startsWith(p)), `${skill} pre-approves app-signin`);
     assert.ok(!prefixes.some((p) => `${INVOCATION} import --confirm --snapshot x --json`.startsWith(p)), `${skill} pre-approves import --confirm`);
     assert.ok(!prefixes.some((p) => `${INVOCATION} export --force --server x --json`.startsWith(p)), `${skill} pre-approves export --force`);
     assert.ok(!prefixes.some((p) => `${INVOCATION} index clear --server x --json`.startsWith(p)), `${skill} pre-approves index clear`);
   }
   assert.ok(skillCommands('sign-in').some((c) => c.startsWith(`${INVOCATION} import-tokens `)), 'the sign-in skill shows import-tokens');
+  for (const flow of ['export --server <source_server> --all ', 'app-signin ', 'import --snapshot <full_snapshot_file> --server <local_server> --create ', 'import --confirm --snapshot <full_snapshot_file> --server <local_server> --create ']) {
+    assert.ok(skillCommands('seed-dev-stack').some((c) => c.startsWith(`${INVOCATION} ${flow}`)), `seed-dev-stack shows ${flow}`);
+  }
   assert.equal(existsSync(join(pluginRoot, 'node_modules')), false);
 });
 
@@ -213,6 +223,8 @@ test('every skill command line runs from a fresh copy and exits 0', async () => 
   writeFileSync(join(cwd, 'wiki-page.json'), JSON.stringify({ show_id: 'SHOW-1', kind: 'topic', title: 'Jokes', body_md: 'x' }));
   // The output of `make dev-mcp-token` the user saved, fed to import-tokens on stdin (fake tokens).
   writeFileSync(join(cwd, 'TOKEN_FILE-1'), server.mintDevTokens('dashboards session-data:write'), { mode: 0o600 });
+  // The output of `make dev-login` for the local target, fed to app-signin on stdin (a fake cookie).
+  writeFileSync(join(cwd, 'COOKIE_FILE-1'), seedTarget.mintDevLogin(), { mode: 0o600 });
   // The user's sign-ins for seed-dev-stack: the source read-only, the local target with --write.
   for (const [base, write] of [[seedSource.base, ''], [seedTarget.base, ' --write'], [wikiServer.base, '']] as const) {
     const login = await sh(`${INVOCATION} login${write} --server ${base} --json`);
@@ -228,10 +240,20 @@ test('every skill command line runs from a fresh copy and exits 0', async () => 
       if (command.includes(' import-tokens ')) imported = JSON.parse(stdout);
     }
   }
-  // seed-dev-stack: export read the source, the dry run wrote nothing, --confirm wrote the target.
+  // seed-dev-stack: export read the source, the dry runs wrote nothing, each --confirm wrote the target.
   assert.ok(seedSource.calls.every((c) => c.tool === undefined || !c.tool.startsWith('create_')));
-  assert.deepEqual(seedTarget.writeCounts.succeeded, 3, 'one event, one topic, one wiki page');
-  assert.equal(seedTarget.options.data?.pages[0]?.body_md, 'A [quote](cite:T1@2).');
+  assert.equal(seedSource.writeCounts.attempted, 0);
+  // import --create: a team, show and session through the app API; in it one event, topic, wiki
+  // page, word and dashboard. import --map: one event, topic and wiki page into T1.
+  const targetData = seedTarget.options.data;
+  const created = targetData?.sessions.find((x) => x.session_id !== 'T1');
+  assert.ok(targetData?.studios?.some((st) => st.studio_id === 'st-1'), 'the team made for studio st_1');
+  assert.equal(created?.events.length, 1);
+  assert.deepEqual(created?.words?.map((w) => w.word), ['hello']);
+  assert.equal(created?.dashboards?.length, 1);
+  assert.deepEqual(seedTarget.writeCounts.succeeded, 7, 'event, topic, wiki page and dashboard of --create; event, topic and wiki page of --map');
+  assert.equal(targetData?.pages.find((p) => p.show_id === 'shw_t')?.body_md, 'A [quote](cite:T1@2).');
+  assert.equal(targetData?.pages.find((p) => p.show_id === created?.show_id)?.body_md, `A [quote](cite:${created?.session_id}@2).`);
   const called = server.calls.filter((c) => c.tool !== undefined).map((c) => c.tool);
   assert.ok(called.includes('create_wiki_page') && called.includes('list_studios'), called.join(','));
   // explore-wiki: the build read the show with read tools only; moments and person-graph found the
@@ -261,7 +283,10 @@ test('an unknown command through npx exits 2 with the message on stderr', async 
 
 test('no token appeared in any output', () => {
   assert.ok(server.issued.length > 0);
-  const all = [...printed, readFileSync(join(cwd, 'snapshot.json'), 'utf8'), readFileSync(join(cwd, 'snapshot.json.import-state.json'), 'utf8')].join('\n');
+  const all = [
+    ...printed,
+    ...['snapshot.json', 'snapshot.json.import-state.json', 'full-snapshot.json', 'full-snapshot.json.import-state.json'].map((f) => readFileSync(join(cwd, f), 'utf8')),
+  ].join('\n');
   for (const t of [...server.issued, ...seedSource.issued, ...seedTarget.issued, ...wikiServer.issued]) assert.ok(!all.includes(t), 'a token was printed or stored');
 });
 

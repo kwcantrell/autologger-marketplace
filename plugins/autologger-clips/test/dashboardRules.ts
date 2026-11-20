@@ -1,6 +1,6 @@
 // autologger's custom-dashboard save-time rules, copied from autologger-2's
 // `packages/contract/src/customDashboards.ts` (DASHBOARD_IMPORT_ALLOWLIST, DASHBOARD_DENIED_ELEMENTS,
-// DASHBOARD_DENIED_GLOBALS) at main ec7b1b5b, for the tests. A plugin cannot import autologger, so
+// DASHBOARD_DENIED_GLOBALS) at main 457b8598, for the tests. A plugin cannot import autologger, so
 // dashboard.test.ts checks this copy against the contract file when an autologger-2 checkout is there.
 
 export const UI_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
@@ -37,6 +37,7 @@ export const DATA_EXPORTS = [
   'useWikiPages',
   'useWikiPage',
   'useAggregates',
+  'useMedia',
   'formatTimecode',
   'formatDuration',
   'Unavailable',

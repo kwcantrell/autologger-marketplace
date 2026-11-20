@@ -61,11 +61,25 @@ export async function wholePage(caller: Caller, sessionId: string, listed: Rec):
   throw new CliError(`get_wiki_page ${pageId} did not end after ${MAX_PAGES} slices`);
 }
 
+export interface SessionCounts {
+  session_id: string;
+  events: number;
+  topics: number;
+  wiki_pages: number;
+  transcript_words?: number;
+  transcript_paragraphs?: number;
+  dashboards?: number;
+  media?: number;
+}
+
 export interface ExportSummary {
   source_server: string;
   out: string;
-  sessions: { session_id: string; events: number; topics: number; wiki_pages: number }[];
-  totals: { sessions: number; events: number; topics: number; wiki_pages: number };
+  /** export --all only. */
+  studios?: number;
+  shows?: number;
+  sessions: SessionCounts[];
+  totals: Omit<SessionCounts, 'session_id'> & { sessions: number };
 }
 
 export async function exportSessions(caller: Caller, server: string, sessionIds: readonly string[], now: number, warn: (m: string) => void): Promise<Snapshot> {
@@ -82,13 +96,24 @@ export async function exportSessions(caller: Caller, server: string, sessionIds:
   return { format: SNAPSHOT_FORMAT, version: 1, source_server: server, exported_at: new Date(now).toISOString(), sessions };
 }
 
+const EXTRA = ['transcript_words', 'transcript_paragraphs', 'dashboards', 'media'] as const;
+
 export function summarize(snapshot: Snapshot, out: string): ExportSummary {
-  const sessions = snapshot.sessions.map((s) => ({ session_id: s.session_id, events: s.events.length, topics: s.topics.length, wiki_pages: s.wiki_pages.length }));
-  const sum = (k: 'events' | 'topics' | 'wiki_pages'): number => sessions.reduce((n, s) => n + s[k], 0);
-  return {
-    source_server: snapshot.source_server,
-    out,
-    sessions,
-    totals: { sessions: sessions.length, events: sum('events'), topics: sum('topics'), wiki_pages: sum('wiki_pages') },
-  };
+  const sessions = snapshot.sessions.map((s) => {
+    const counts: SessionCounts = { session_id: s.session_id, events: s.events.length, topics: s.topics.length, wiki_pages: s.wiki_pages.length };
+    for (const part of EXTRA) {
+      const list = s[part];
+      if (list !== undefined) counts[part] = list.length;
+    }
+    return counts;
+  });
+  const sum = (k: Exclude<keyof SessionCounts, 'session_id'>): number => sessions.reduce((n, s) => n + (s[k] ?? 0), 0);
+  const totals: ExportSummary['totals'] = { sessions: sessions.length, events: sum('events'), topics: sum('topics'), wiki_pages: sum('wiki_pages') };
+  const summary: ExportSummary = { source_server: snapshot.source_server, out, sessions, totals };
+  if (snapshot.studios !== undefined) {
+    for (const part of EXTRA) totals[part] = sum(part);
+    summary.studios = snapshot.studios.length;
+    summary.shows = snapshot.studios.reduce((n, st) => n + st.shows.length, 0);
+  }
+  return summary;
 }
