@@ -51,6 +51,22 @@ Each clip: `{ sessionId, startSec, endSec, label }` — seconds from the session
    again — retry logs no new events, so prefer it over deleting and re-creating. A `bad_request` from the retry means a clip's session lost its YouTube source: create a
    new compilation without those clips. Users can also press Retry on the Compilations page.
 
+## Private videos and the bot check: build locally
+
+The server can't download audio imported from **private** videos (`media_list` → `sourcePrivate:
+true`), so `compilations_create` rejects those clips ("the video is private (imported with the
+local import helper)…"), and a server build can fail on YouTube's bot check. Then:
+
+1. `compilations_create` again with the same clips and `buildLocally: true`. It stays `queued`
+   with progress "Waiting for a local build".
+2. Build it on the user's computer with the local import helper (see the autologger
+   `import-videos` skill for getting `autologger-import.mjs` and its `AUTOLOGGER_URL` /
+   `AUTOLOGGER_TOKEN`): `node autologger-import.mjs compile <compilationId>
+   --cookies-from-browser <browser>` (needs `yt-dlp` and `ffmpeg`). In Claude Code on the user's
+   own machine you may run it with Bash once they agree; elsewhere give them the command.
+3. Wait with `compilations_get` `waitSec: 55` as usual — it turns `ready` with a `url` once the
+   helper has uploaded the MP4.
+
 ## Report back
 
 Title, number of clips, total length, the link, and any clips left out and why. If a tool was

@@ -1,6 +1,6 @@
 ---
 name: import-videos
-description: Import one YouTube video or a whole playlist into an AutoLogger show — one session per video, audio download and transcription — and optionally annotate each session afterwards (transcript cleanup, topics, events, dashboard, wiki). Use when the user gives YouTube links or a playlist and asks to create sessions, import, transcribe or log them.
+description: Import one YouTube video or a whole playlist into an AutoLogger show — one session per video, audio download and transcription — and optionally annotate each session afterwards (transcript cleanup, topics, events, dashboard, wiki). Use when the user gives YouTube links or a playlist (public or private) and asks to create sessions, import, transcribe or log them.
 argument-hint: "[YouTube URL or playlist] [team/show]"
 ---
 
@@ -38,6 +38,32 @@ the whole list — keep existing ones by `id`). If the user names a team that do
 - **Per-episode key terms:** after the playlist call, `sessions_update` each session with
   `keyTerms` for its guest/subject **before** its transcription starts — or set them later and
   `media_retranscribe` (which replaces manual transcript edits).
+
+### Private playlists, or the server hits YouTube's bot check
+
+The server can't download private or account-only videos, and from a datacenter IP YouTube may
+block it ("YouTube is blocking this server's downloads (bot check)" or "requires a signed-in
+account" from `media_importPlaylist` / `media_importYoutube` or a failed `youtube_import` job).
+Don't retry server imports then: use the **local import helper**, which downloads on the user's
+own computer with their browser's YouTube login and uploads only the audio. Their cookies never
+leave their machine.
+
+1. Get it from the user's AutoLogger server:
+   `curl -fLO <AUTOLOGGER_URL>/api/importer/autologger-import.mjs` (Node 20+; needs `yt-dlp` on
+   `PATH`). It needs `AUTOLOGGER_URL` (the server origin) and `AUTOLOGGER_TOKEN` — a personal
+   access token the user creates in **Settings › Agents**. Ask the user to set the token in their
+   environment; never ask them to paste it into the chat.
+2. Ask which browser they're signed in to YouTube with (`chrome`, `firefox`, `safari`, `edge`, …).
+3. Preview, then import:
+   `node autologger-import.mjs playlist '<url>' --show <showId> --cookies-from-browser <browser> --dry-run`,
+   then the same without `--dry-run`. One video: `video '<url>' --session <sessionId>` (or
+   `--show <showId>`). Options: `--order reverse`, `--title-template`.
+   - **Running in Claude Code on the user's own computer:** you can run these commands yourself
+     with Bash after the user agrees; reading their browser cookies may show a keychain prompt.
+   - **Running anywhere else** (cloud, remote agent): you can't — give the user the commands.
+4. Re-running resumes (stored audio is skipped). Sessions look like server imports
+   (`sourceKind: "youtube"`, `sourceUrl`); `media_list` shows `sourcePrivate: true` for audio
+   from private videos. Then wait for transcription as below (`kinds: ["transcribe"]`).
 
 ## 3. Wait
 
