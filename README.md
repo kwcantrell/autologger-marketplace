@@ -21,6 +21,8 @@ access the first time; run `/mcp` to sign in) and adds skills that use it:
 
 | Skill | What it does |
 |---|---|
+| `/autologger:import-videos` | Imports a YouTube video or playlist into a show: one session per video, downloaded and transcribed, then optionally annotated. |
+| `/autologger:transcript-cleanup` | Fixes systematic transcription errors (jargon, numbers, spoken math), names speakers and notes what changed. |
 | `/autologger:session-topics` | Chapters a session from its transcript (`topics_replace`). |
 | `/autologger:log-moments` | Finds moments you describe and logs them as timecoded events with your show's buttons. |
 | `/autologger:session-dashboard` | Designs a declarative dashboard (live queries + computed stats). |
