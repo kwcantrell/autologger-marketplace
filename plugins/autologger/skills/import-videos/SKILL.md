@@ -11,41 +11,59 @@ argument-hint: "[YouTube URL or playlist] [team/show]"
 `teams_list` and `shows_list` (filter by `teamId`). Sessions need a show: create one with
 `shows_create` (owner/admin of the team) and set its buttons with `categories_save` (it replaces
 the whole list — keep existing ones by `id`). If the user names a team that doesn't exist yet,
-`teams_create` makes it (the user becomes owner). For technical talks, set `shows_update`
-`smartFormat: false`, `keyTerms` and `transcriptRules` (see `transcript-cleanup`) **before**
-importing, and `titleSuffix: "episode"` if episodes are numbered.
+`teams_create` makes it (the user becomes owner). Set transcription options with `shows_update`
+**before** importing:
+- `titleSuffix: "episode"` if episodes are numbered.
+- `smartFormat: false` for technical or math talk. Leave it on for conversation, but expect it to
+  turn spoken numbers into clock times ("four fifty" pounds → "04:50") and glue sponsor URLs
+  together; fix those with `transcriptRules` (see `transcript-cleanup`).
+- `keyTerms` on the show only for names said in **every** session (host, show name, co-hosts).
+  Deepgram pushes key terms into the audio, so a guest's name set show-wide turns up in other
+  episodes ("Rotten Tomatoes" → "Rotten Tom Segura", D'Angelo → "Deion Sanders"). Put guest names
+  and episode-specific jargon on the **session** instead (`sessions_create` / `sessions_update`
+  `keyTerms`).
 
-## 2. List the videos
+## 2. Import
 
-For a single video, use its URL. For a playlist, get the ordered list of video ids, titles and
-durations. If `yt-dlp` is available locally:
-`yt-dlp --flat-playlist --print "%(playlist_index)s	%(id)s	%(duration)s	%(title)s" "<playlist URL>"`.
-Otherwise ask the user for the list. Check `sessions_list` for the show first so you don't
-import a video twice.
+- **Playlist:** one `media_importPlaylist` call (`showId`, `url` with `list=`, `order:
+  "playlist"` or `"reverse"` for newest-first channel playlists, optional `titleTemplate` with
+  `{title}` / `{episode}`). It creates one session per video with episode numbers from the show
+  counter, queues every download and returns `created` (session ids, titles, durations) and
+  `skipped` (already imported, private or deleted). Running it again imports only new videos.
+  Agents can't delete sessions (that's web-only), so for an unfamiliar playlist call it first with
+  `dryRun: true` to see what would be created.
+  Session dates are set from the YouTube upload date when the audio arrives.
+- **Single video:** `sessions_create` (clear `title`; omit `episode` to use the show counter),
+  then `media_importYoutube`.
+- **Per-episode key terms:** after the playlist call, `sessions_update` each session with
+  `keyTerms` for its guest/subject **before** its transcription starts — or set them later and
+  `media_retranscribe` (which replaces manual transcript edits).
 
-## 3. Create and import
+## 3. Wait
 
-- One `sessions_create` per video in playlist order, with a clear `title` and no `episode`: the
-  show's counter numbers them 1, 2, 3 … and stays correct for the next session.
-- One `media_importYoutube` per session. It queues a background job: the worker downloads the
-  audio, stores it and queues transcription automatically.
-- Wait with one `jobs_list({ showId, status: ["queued", "running"] })` call every 15–30 seconds
-  until it returns nothing; then `jobs_list({ showId, status: ["failed"] })` for errors (each job
-  carries `sessionId` and `sessionTitle`). A `failed` job carries its error: "yt-dlp not found" or a Deepgram key error means the
-  server is misconfigured (tell the user; don't retry blindly). Without a Deepgram key the audio
-  imports but is never transcribed.
+The worker downloads, then transcribes each session as soon as its own download finishes (two jobs
+at a time; an hour of audio takes well under a minute to transcribe). Wait with
+`jobs_list({ showId, status: ["queued","running"], waitSec: 50 })` in a loop: each call returns as
+soon as a job changes, or after `waitSec`, and queued jobs show `queuePosition`. Don't sleep in
+between. Start annotating a session as soon as its `transcriptStatus` is `done` rather than
+waiting for the whole playlist. Then `jobs_list({ showId, status: ["failed"] })`: "yt-dlp not
+found" or a Deepgram key error means the server is misconfigured (tell the user; don't retry
+blindly). Without a Deepgram key the audio imports but is never transcribed. The transcribe job's
+`progress` ends with key-term hit counts ("key terms: Tom Segura ×41, …") — a term showing up
+where it shouldn't is a sign of key-term bleed.
 
 ## 4. Annotate (if asked)
 
 Per session, in this order: `transcript-cleanup` → `session-topics` → `log-moments` →
 `session-dashboard` → `show-wiki` (recap only). For many sessions:
 - Fix the conventions once, up front, and give the same brief to everyone working on them:
-  which buttons to use for what, the recap title pattern ("Chapter N: <title>"), the
-  dashboard layout, and how to write spoken math in transcripts.
-- Sessions are independent, so they can be split between parallel agents. Shared wiki pages
-  (people, the series hub, recurring bits) are written once at the end, by one writer.
-- Finish with a consistency pass across sessions: same speaker names, same dashboard layout,
-  every `[[link]]` resolves.
+  which buttons to use for what, the recap title pattern ("Ep N: <Guest>"), the dashboard layout
+  (same widget ids everywhere), and how to write spoken numbers/math in transcripts.
+- Sessions are independent, so they can be split between parallel agents (about 3–4 hours of
+  audio per agent). Shared wiki pages (people, the series hub, recurring bits) are written once
+  at the end by one writer, from facts the session agents collected with episode + timecode.
+- Finish with a consistency pass: same speaker names, same dashboard layout, and `wiki_lint` for
+  the show returns no unresolved links.
 
 ## Report back
 

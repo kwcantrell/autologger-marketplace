@@ -13,17 +13,28 @@ jokes) and `session` (one recap per session). Pages link to each other with `[[T
 ## Steps
 
 1. Resolve the session; `sessions_get` gives `showId`.
-2. Read the source: `transcript_text`, `topics_list`, `events_list`.
-3. Read the wiki before writing: `wiki_list` for the show, then `wiki_get` on every page you might
-   touch. Update existing pages — `wiki_upsert` without `pageId` matches by title or alias, so
-   reuse the exact existing title.
-4. Recap page: `wiki_upsert` with `kind: "session"` and `sessionId`. Include a 2–4 sentence
-   summary, key moments with `HH:MM:SS` times, and `[[links]]` to people and bits.
+2. Read the source: `transcript_text` (`format: "compact"`, paged for long sessions),
+   `topics_list`, `events_list` (`compact: true`).
+3. Read the wiki before writing: `wiki_list` for the show returns `{ pages, total, nextOffset }`
+   (50 per page by default, `limit` up to 200; pass `offset: nextOffset` until it is null).
+   `include: "summary"` adds each page's first paragraph; `include: "body"` the full text (large —
+   filter by `kind` and page it) — one call instead of a `wiki_get` per page. Then `wiki_get` the
+   pages you will change. Update existing pages — `wiki_upsert` without
+   `pageId` matches by title or alias, so reuse the exact existing title.
+4. Recap page: `wiki_upsert` with `kind: "session"`, `sessionId` and `compact: true` (returns
+   `{ id, revision, unresolvedLinks }` instead of echoing the page). Include a 2–4 sentence
+   summary, key moments with `HH:MM:SS` times, and `[[links]]` to people and bits. `bodyMd` is
+   raw Markdown stored as sent — don't JSON-escape quotes or newlines inside it.
 5. People and bits: add what this session revealed (new facts, callbacks, quotes) under a dated
    heading, and link back to the recap. Create a page only for someone or something that will
    matter again; keep facts grounded in the transcript — never invent biography.
 6. Keep each page's existing structure and tone; don't rewrite what you didn't need to change.
-   Every save is a revision the operator can restore.
+   For a one-line fix or an addition use `wiki_patch` (`edits: [{ find, replace }]` — each `find`
+   must match exactly once — and/or `append`) instead of resending the whole body. Every save is
+   a revision the operator can restore.
+7. Check links: `wiki_lint` for the show lists every `[[link]]` with no matching page
+   (`unresolved`) and pages nothing links to (`orphans`). Fix titles, or leave a link dim on
+   purpose and say so.
 
 ## Formatting and links
 
