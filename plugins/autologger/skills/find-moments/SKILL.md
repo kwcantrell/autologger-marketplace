@@ -13,7 +13,8 @@ Read-only: never create or change anything with this skill.
 1. Start with `search` — full-text over events, transcript lines, topics, wiki pages and sessions
    the user can access. Try 2–3 phrasings (names, key nouns, synonyms); narrow with `showId`,
    `sessionId` or `kinds` when the question is specific.
-2. Hits carry `sessionId` and `atSec`. For promising hits, read context with `transcript_text`
+2. Hits carry `sessionId`, `atSec` and `endSec` (where a transcript line ends, or a topic's start
+   plus its length; null for events and wiki pages). For promising hits, read context with `transcript_text`
    using `fromSec = atSec - 60`, `toSec = atSec + 120`.
 3. For structural questions ("which sessions had an audio issue") use `sessions_list` +
    `events_list` with category filters instead of text search.

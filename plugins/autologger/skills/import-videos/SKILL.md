@@ -46,11 +46,14 @@ at a time; an hour of audio takes well under a minute to transcribe). Wait with
 `jobs_list({ showId, status: ["queued","running"], waitSec: 50 })` in a loop: each call returns as
 soon as a job changes, or after `waitSec`. Queued jobs show `queuePosition`, and queued or running
 jobs a rough `etaSec` — use it to pick `waitSec`, not as a deadline; `sessions_get` carries
-`transcriptJob` for one session. Don't sleep in
+`transcriptJob` for one session (its `etaSec` covers download and transcription, for single
+imports as well as playlists). Don't sleep in
 between. Start annotating a session as soon as its `transcriptStatus` is `done` rather than
 waiting for the whole playlist. Then `jobs_list({ showId, status: ["failed"] })`: "yt-dlp not
 found" or a Deepgram key error means the server is misconfigured (tell the user; don't retry
-blindly). Without a Deepgram key the audio imports but is never transcribed. The transcribe job's
+blindly). A failed `youtube_import` job carries the video's `sourceUrl`: to retry a transient
+failure (network, throttling), call `media_importYoutube` with that `sourceUrl` and the job's
+`sessionId`. Without a Deepgram key the audio imports but is never transcribed. The transcribe job's
 `progress` ends with key-term hit counts ("key terms: Tom Segura ×41, …") — a term showing up
 where it shouldn't is a sign of key-term bleed.
 
