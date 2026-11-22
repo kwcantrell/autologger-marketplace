@@ -1,0 +1,23 @@
+{
+  "name": "autologger",
+  "description": "Claude Code plugins for AutoLogger: connect agents to your sessions, and build AutoLogger itself.",
+  "owner": { "name": "AutoLogger" },
+  "plugins": [
+    {
+      "name": "autologger",
+      "source": "./plugins/autologger",
+      "description": "For producers and operators: connect Claude to your AutoLogger server over MCP and generate topics, log moments, build dashboards, update the show wiki, search sessions and write session briefs.",
+      "version": "1.0.0",
+      "category": "productivity",
+      "tags": ["autologger", "mcp", "production", "transcripts", "logging"]
+    },
+    {
+      "name": "autologger-dev",
+      "source": "./plugins/autologger-dev",
+      "description": "For AutoLogger contributors: skills for adding ops, schema changes, web and Companion work, running the dev stack and checking the MCP surface, plus an architecture reviewer and guard rails.",
+      "version": "1.0.0",
+      "category": "development",
+      "tags": ["autologger", "development", "typescript", "drizzle", "mcp"]
+    }
+  ]
+}

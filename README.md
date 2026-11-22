@@ -1,0 +1,65 @@
+# AutoLogger plugin marketplace
+
+Claude Code plugins for [AutoLogger](../autologger-3): one for the people who **use** it, one for the
+people who **build** it.
+
+```bash
+claude plugin marketplace add ~/autologger-marketplace      # or <owner>/<repo> once pushed
+claude plugin install autologger@autologger                 # users
+claude plugin install autologger-dev@autologger             # contributors
+```
+
+Inside Claude Code the same works with `/plugin marketplace add …` and `/plugin install …`.
+
+## `autologger` — for producers and operators
+
+Connects Claude to your AutoLogger server over MCP (OAuth: Claude opens your browser to approve
+access the first time; run `/mcp` to sign in) and adds skills that use it:
+
+| Skill | What it does |
+|---|---|
+| `/autologger:session-topics` | Chapters a session from its transcript (`topics_replace`). |
+| `/autologger:log-moments` | Finds moments you describe and logs them as timecoded events with your show's buttons. |
+| `/autologger:session-dashboard` | Designs a declarative dashboard (live queries + computed stats). |
+| `/autologger:show-wiki` | Writes a session recap and updates people / recurring-bit pages. |
+| `/autologger:find-moments` | Read-only search across sessions with timecodes. |
+| `/autologger:session-brief` | Read-only editor / producer / social brief in chat. |
+
+Claude also picks these up automatically when you ask in plain words ("chapter yesterday's
+episode"). Everything it writes is attributed to you plus the client name, and can be undone from
+the session's **Agents** tab.
+
+Configure the server URL (asked at install, or later):
+
+```bash
+echo '{"server_url":"https://autologger.example.com"}' | claude plugin configure autologger@autologger --values-stdin
+```
+
+Prefer a static token (scripts, headless runs)? Skip the plugin's server and add one yourself:
+`claude mcp add --transport http autologger https://autologger.example.com/mcp --header "Authorization: Bearer alp_…"`
+(create the token in AutoLogger → Settings → Agents).
+
+## `autologger-dev` — for contributors
+
+| Piece | What it does |
+|---|---|
+| `/autologger-dev:add-op` | The one way to add a capability: contract → op with authz, change log, publish → test → web hook. |
+| `/autologger-dev:schema-change` | Drizzle schema edits, generated migrations, undo registration. |
+| `/autologger-dev:web-feature` | UI work that keeps the Show Ignition look, typed RPC hooks and live updates. |
+| `/autologger-dev:companion-module` | The `/ws/companion` protocol and the Bitfocus module, kept in sync. |
+| `/autologger-dev:dev-stack` | Start / check / seed / stop the local stack; dev login. |
+| `/autologger-dev:mcp-check` | See and call the MCP tools the way an agent does. |
+| `ops-reviewer` agent | Reviews a diff against the architecture rules before you commit. |
+| Guard hook | Blocks edits to generated migrations (`apps/server/drizzle/**`) and real `.env` files in AutoLogger checkouts. |
+| `autologger-local` MCP server | Your dev server's MCP endpoint (`dev_url`, default `http://localhost:5173`), so you can try new tools immediately. Use exactly the server's `PUBLIC_URL` origin — OAuth discovery rejects other hostnames (`127.0.0.1` ≠ `localhost`). If both plugins point at the same URL, Claude Code keeps a single connection. |
+| `scripts/seed.mjs` | Demo team, show, session, events, topics, dashboard and wiki through the RPC API. |
+
+## Layout
+
+```
+.claude-plugin/marketplace.json
+plugins/autologger/       .claude-plugin/plugin.json, .mcp.json, skills/*
+plugins/autologger-dev/   .claude-plugin/plugin.json, .mcp.json, skills/*, agents/, hooks/, scripts/
+```
+
+Validate before publishing: `claude plugin validate . && claude plugin validate plugins/autologger && claude plugin validate plugins/autologger-dev`.

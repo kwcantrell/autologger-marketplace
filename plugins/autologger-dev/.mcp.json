@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "autologger-local": {
+      "type": "http",
+      "url": "${user_config.dev_url}/mcp"
+    }
+  }
+}

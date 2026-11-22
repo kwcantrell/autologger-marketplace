@@ -1,0 +1,16 @@
+{
+  "name": "autologger",
+  "version": "1.0.0",
+  "description": "Connect Claude to AutoLogger over MCP and work with your sessions: topics, logged moments, dashboards, show wiki, search and session briefs. Every change is attributed to you and undoable from the session's Agents tab.",
+  "author": { "name": "AutoLogger" },
+  "keywords": ["autologger", "mcp", "transcripts", "logging", "production"],
+  "userConfig": {
+    "server_url": {
+      "type": "string",
+      "title": "AutoLogger URL",
+      "description": "Base URL of your AutoLogger server, without a trailing slash (e.g. https://autologger.example.com). Claude signs in through your browser the first time.",
+      "required": true,
+      "default": "http://localhost:5173"
+    }
+  }
+}
