@@ -38,7 +38,7 @@
       "name": "autologger-contribute",
       "source": "./plugins/autologger-contribute",
       "description": "How to contribute to AutoLogger: a guided first tour, the idea-to-PR workflow, curated starter tasks, a pre-PR check and how to improve these plugins.",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "category": "development",
       "tags": [
         "autologger",
