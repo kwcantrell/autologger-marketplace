@@ -8,10 +8,11 @@ argument-hint: "[YouTube URL or playlist] [team/show]"
 
 ## 1. Pick the show
 
-`teams_list` and `shows_list` (filter by `teamId`). Sessions need a show. There is no MCP tool to
-create a show or event buttons: if the team has no suitable show, ask the user to add one in
-**Settings → Shows** (and any extra buttons under **Event buttons**), then continue.
-`categories_list` shows the buttons you can log with.
+`teams_list` and `shows_list` (filter by `teamId`). Sessions need a show: create one with
+`shows_create` (owner/admin of the team) and set its buttons with `categories_save` (it replaces
+the whole list — keep existing ones by `id`). Teams can only be created in the web app
+(Settings → Team details). For technical talks, set `shows_update` `smartFormat: false` and
+`keyTerms` **before** importing, and `titleSuffix: "episode"` if episodes are numbered.
 
 ## 2. List the videos
 
@@ -23,8 +24,8 @@ import a video twice.
 
 ## 3. Create and import
 
-- One `sessions_create` per video, with a clear `title` and an explicit `episode` number in
-  playlist order (the show's next-episode counter is otherwise used).
+- One `sessions_create` per video in playlist order, with a clear `title` and no `episode`: the
+  show's counter numbers them 1, 2, 3 … and stays correct for the next session.
 - One `media_importYoutube` per session. It queues a background job: the worker downloads the
   audio, stores it and queues transcription automatically.
 - Wait with `jobs_list` per session until both the `youtube_import` and the `transcribe` job are

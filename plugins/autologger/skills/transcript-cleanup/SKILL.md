@@ -6,6 +6,10 @@ argument-hint: "[session] [known errors, e.g. \"doctor\" should be \"dr\"]"
 
 # Clean up a session transcript
 
+Prevention first: for technical shows set `smartFormat: false` and `keyTerms` with `shows_update`
+before importing (numbers are then spelled out). Deepgram still mangles notation ("doctor", "dsdt",
+"sin"), so cleanup is still needed.
+
 Deepgram transcripts are good on plain speech and weak on jargon, names, numbers and spoken math.
 The errors are usually **systematic**: the same pattern repeats through the whole session, so fix
 patterns, not single words.
@@ -24,19 +28,19 @@ patterns, not single words.
    - fractions and operators collapsed: "onex", "onetwo", "dydx", "dsdt", "x=zero", "-threefour";
    - units abbreviated wrongly: "ms"/"mss" for meters / meters per second;
    - function names cut short or arguments dropped: "sin", "ln", "cos(1.52)".
-4. **Find the segment ids.** `transcript_text` has no ids. For each line to fix, call
-   `transcript_get` with a narrow window around its `@seconds` (`fromSec` = @s − 0.05,
-   `toSec` = @s + 0.05) and take the segment `id`. Its response includes word timings, so keep the
-   window small.
-5. **Fix each line** with `transcript_updateSegment` (the full corrected text):
+4. **Find the lines.** `transcript_find` with each pattern (`regex: true` for PostgreSQL
+   regexes such as `\mdoctor\M`, `\m[a-zA-Z]+[0-9]+\M`, `\md[a-z]d[a-z]\M`; plain text is a
+   case-insensitive substring). It returns `{ id, startSec, text }` per line without word timings.
+   `\m`/`\M` treat apostrophes as word boundaries (`\mm\M` matches "I'm"), so check each hit.
+5. **Fix them in one call** with `transcript_updateSegments` (up to 500 `{ segmentId, text }`, full
+   corrected text each):
    - Write math and numbers **as they were spoken** ("x squared", "dy dx", "one over x",
      "e to the three t"), not as symbols. Use the same convention across every session of a show.
    - Fix only clear transcription errors. Don't rephrase, tidy grammar or add words you can't
      infer with confidence from the sentence itself. If unsure, leave the line and list it.
-   - Each edit replaces the segment's word timings with evenly spaced ones, so edit only lines
-     that are actually wrong.
-6. **Re-read** the affected ranges with `transcript_text` to confirm no instance of each pattern
-   remains.
+   - Unchanged words keep their recorded timings; only replaced or inserted words get
+     interpolated ones, so prefer small targeted edits over rewriting whole lines.
+6. **Re-check** with the same `transcript_find` patterns that nothing is left.
 7. **Leave a trace.** Log one `Note` event per pattern (what, how many lines, time range,
    "corrected by hand") with `events_createMany`, so editors know captions were changed.
 
