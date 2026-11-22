@@ -27,8 +27,7 @@ jokes) and `session` (one recap per session). Pages link to each other with `[[T
 
 ## Formatting and links
 
-- The wiki renders Markdown **without tables**: a `| a | b |` table shows as raw text. Use lists
-  (e.g. one numbered line per episode) instead.
+- Tables render (GFM). Inside a table cell, escape the pipe of an aliased link: `[[Title\|label]]`.
 - A `[[link]]` resolves only against an exact page title or alias in the same show; anything else
   renders dim as "No page named …". Before linking, `wiki_list` and reuse the exact titles.
 - For a series of sessions, decide the recap titles up front (e.g. "Chapter 3: <video title>") so

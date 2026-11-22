@@ -31,21 +31,21 @@ Read the full description of the `dashboards_save` tool. It defines:
    `data` only for numbers you derived yourself (e.g. laughs per minute), and say so in the
    widget `caption` or `description`.
 5. Lead with 2–4 `stat` widgets (span 1), then charts (span 2), then tables/timelines (span 4).
-   Keep titles short. `markdown` is plain Markdown (no HTML, no tables).
+   Keep titles short. `markdown` is Markdown (tables render; no HTML).
 6. Save with `dashboards_save`. If validation fails, read the error path and fix the spec.
 
 ## Gotchas
 
 - The `events` query's `label` field is the **button name**, not a time. For a time column use
   `atSec` (seconds from the start).
-- The `topics` query returns every level, so a `topics` timeline mixes chapters and sub-topics.
-  For a clean chapter timeline, use static `data` with only the level-1 topics, or create no
-  level-2 topics.
+- For a chapter timeline use `{ "name": "topics", "maxLevel": 1 }`; without `maxLevel` the query
+  returns every level and the timeline gets crowded.
 - Bar chart category labels wrap and overlap when long: keep them to about 18 characters
   ("Taylor polynomial", not "Building the general Taylor polynomial").
-- Speaking pace, if you show it: words (`summary_stats`) ÷ minutes from the first transcript
-  line's start to the last line's end. Use the same definition on every dashboard in a show and
-  state it in the caption.
+- Speaking pace: bind a `stat` to `summary_stats` field `wpm` (live; words over first-to-last
+  transcript line, `speechSec`). Don't compute it by hand.
+- Length and chapter minutes can't be formatted live yet (MM:SS / minutes), so they are static;
+  say so in the caption.
 - When several dashboards belong to one series, keep the same layout and widget ids so they read
   as a set.
 
