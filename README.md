@@ -1,10 +1,12 @@
 # AutoLogger plugin marketplace
 
-Claude Code plugins for [AutoLogger](../autologger-3): one for the people who **use** it, one for the
+[![Validate plugins](https://github.com/kwcantrell/autologger-marketplace/actions/workflows/validate.yml/badge.svg)](https://github.com/kwcantrell/autologger-marketplace/actions/workflows/validate.yml)
+
+Claude Code plugins for [AutoLogger](https://github.com/kwcantrell/autologger): one for the people who **use** it, one for the
 people who **build** it, and one for people **getting started** as contributors.
 
 ```bash
-claude plugin marketplace add ~/autologger-marketplace      # or <owner>/<repo> once pushed
+claude plugin marketplace add kwcantrell/autologger-marketplace
 claude plugin install autologger@autologger                 # users
 claude plugin install autologger-dev@autologger             # contributors
 claude plugin install autologger-contribute@autologger      # new contributors
@@ -76,4 +78,11 @@ plugins/autologger-dev/   .claude-plugin/plugin.json, .mcp.json, skills/*, agent
 plugins/autologger-contribute/   .claude-plugin/plugin.json, skills/*
 ```
 
-Validate before publishing: `claude plugin validate . && claude plugin validate plugins/autologger && claude plugin validate plugins/autologger-dev && claude plugin validate plugins/autologger-contribute`.
+Validate before publishing: `claude plugin validate --strict .` and `claude plugin validate --strict plugins/<plugin>`.
+CI runs the same checks plus a test of the `autologger-dev` guard hook on every push and pull request.
+
+## Contributing
+
+Use the `contribute` workflow from `autologger-contribute` (and its `improve-plugins` skill): branch,
+change, validate, bump the plugin `version` in both `plugin.json` and `.claude-plugin/marketplace.json`,
+then open a pull request.

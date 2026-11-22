@@ -2,8 +2,18 @@
   "name": "autologger",
   "version": "1.0.0",
   "description": "Connect Claude to AutoLogger over MCP and work with your sessions: topics, logged moments, dashboards, show wiki, search and session briefs. Every change is attributed to you and undoable from the session's Agents tab.",
-  "author": { "name": "AutoLogger" },
-  "keywords": ["autologger", "mcp", "transcripts", "logging", "production"],
+  "author": {
+    "name": "AutoLogger"
+  },
+  "homepage": "https://github.com/kwcantrell/autologger-marketplace/tree/main/plugins/autologger",
+  "repository": "https://github.com/kwcantrell/autologger-marketplace",
+  "keywords": [
+    "autologger",
+    "mcp",
+    "transcripts",
+    "logging",
+    "production"
+  ],
   "userConfig": {
     "server_url": {
       "type": "string",

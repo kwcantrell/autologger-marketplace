@@ -1,0 +1,41 @@
+name: Validate plugins
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Validate marketplace and plugins
+        run: |
+          claude plugin validate --strict .
+          for p in plugins/*/; do
+            claude plugin validate --strict "$p"
+          done
+      - name: Test the autologger-dev guard hook
+        run: |
+          guard=plugins/autologger-dev/scripts/guard-edits.mjs
+          repo=$(mktemp -d)
+          mkdir -p "$repo/apps/server/src/db" "$repo/apps/server/drizzle"
+          touch "$repo/apps/server/src/db/schema.ts"
+          expect() {
+            echo "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$2\"}}" | node "$guard" 2>/dev/null
+            code=$?
+            if [ "$code" != "$1" ]; then echo "expected exit $1 for $2, got $code"; exit 1; fi
+          }
+          expect 2 "$repo/apps/server/drizzle/0000_init.sql"
+          expect 2 "$repo/.env"
+          expect 0 "$repo/.env.example"
+          expect 0 "$repo/apps/server/src/db/schema.ts"
+          expect 0 "/tmp/elsewhere/.env"
+          echo "guard hook ok"

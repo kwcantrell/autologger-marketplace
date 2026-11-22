@@ -7,7 +7,8 @@ description: Guided first tour for a new AutoLogger contributor — what the pro
 
 Walk the contributor through this interactively — one step at a time, show real code, and check
 they are with you before moving on. Work inside their AutoLogger checkout (the repo root has
-`ARCHITECTURE.md` and `apps/server/src/db/schema.ts`). If you are not in one, ask where it is.
+`ARCHITECTURE.md` and `apps/server/src/db/schema.ts`). If you are not in one, ask where it is, or
+clone it: `git clone https://github.com/kwcantrell/autologger.git`.
 
 ## 1. The product in two minutes
 

@@ -2,8 +2,19 @@
   "name": "autologger-dev",
   "version": "1.0.0",
   "description": "Build AutoLogger: skills for ops, schema changes, web and Companion work, the dev stack and the MCP surface; an architecture reviewer agent; hooks that protect generated migrations and secrets; and an MCP connection to your local dev server.",
-  "author": { "name": "AutoLogger" },
-  "keywords": ["autologger", "development", "typescript", "drizzle", "hono", "react"],
+  "author": {
+    "name": "AutoLogger"
+  },
+  "homepage": "https://github.com/kwcantrell/autologger-marketplace/tree/main/plugins/autologger-dev",
+  "repository": "https://github.com/kwcantrell/autologger-marketplace",
+  "keywords": [
+    "autologger",
+    "development",
+    "typescript",
+    "drizzle",
+    "hono",
+    "react"
+  ],
   "userConfig": {
     "dev_url": {
       "type": "string",
