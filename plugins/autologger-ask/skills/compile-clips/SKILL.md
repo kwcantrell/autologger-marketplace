@@ -33,7 +33,7 @@ Each clip: `{ sessionId, startSec, endSec, label }` — seconds from the session
 1. `compilations_create` with `showId`, a `title` (e.g. the question) and `clips`. A
    `bad_request` names the clips that aren't covered by a YouTube source — drop or fix them and
    retry once.
-2. Wait with `compilations_get` `waitSec: 60` in a loop until `status` is `ready` or `failed`
+2. Wait with `compilations_get` `waitSec: 55` (the maximum; MCP clients time out at ~60 s) in a loop until `status` is `ready` or `failed`
    (no sleeps needed; it long-polls). Report `progress` to the user every few minutes on long
    builds.
 3. `ready`: give the `url` (a download link that expires after about an hour) and say the video is
