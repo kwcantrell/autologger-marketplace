@@ -35,3 +35,4 @@ Read `apps/web/DESIGN.md` (the visual system) before writing UI.
 
 `npx tsc -p apps/web && (cd apps/web && npx vite build)`, then load the page against the dev stack
 (`dev-stack` skill) and check it in a browser, including a second tab for live updates.
+Then run the `browser-smoke` agent (this plugin) for a regression pass over the main flows.
