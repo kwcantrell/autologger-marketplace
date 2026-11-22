@@ -30,6 +30,12 @@ Read `apps/web/DESIGN.md` (the visual system) before writing UI.
 - Respect `prefers-reduced-motion`; check 390 px width for no horizontal scroll.
 - Agent-authored content (dashboards, wiki, topics) is data: render Markdown without raw HTML and
   never execute anything from a spec.
+- The public landing page (`src/routes/landing/`) shows mocks of the real UI. The log button and the
+  feed, transcript, topic and change-log rows are shared components (`session/LogButton.tsx`,
+  `session/tabs/*Row.tsx`) that the mocks render too — keep them presentational (props in, markup
+  out) so that stays possible. The other mocks are static and name the component they imitate in
+  a comment: if you change that component's look, update its mock in `landing/mocks.tsx` by hand.
+  Either way, check the landing page signed out at 1440 and 390 px.
 
 ## Verify
 
