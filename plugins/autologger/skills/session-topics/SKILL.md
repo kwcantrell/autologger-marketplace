@@ -24,6 +24,9 @@ If the user gave an id (`ses_…`), use it. Otherwise call `sessions_list` (opti
    before replacing them.
 4. `events_list` — operator markers (e.g. "Scene", "Ad read") often mark segment boundaries.
 
+If the transcript is machine-made and garbled (technical terms, numbers, math), clean it first
+with the `transcript-cleanup` skill so topic titles and summaries quote it correctly.
+
 ## Write topics
 
 - Level 1: one topic per real segment of the conversation, usually 3–15 minutes. Titles are short
