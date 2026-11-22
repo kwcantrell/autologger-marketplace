@@ -82,7 +82,7 @@ doesn't exist is reported as a candidate page, not silently deleted.
 the hub or a topic). Report: recaps rewritten (with citation counts), shared pages updated, new
 pages created, anything skipped. Mention the user can now ask questions with the `autologger-ask`
 plugin, whose answers cite these pages' sessions, and that every save can be restored from the
-page's revisions.
+page's revisions or undone from the show's **Changes** page.
 
 If an AutoLogger tool was missing, failed, or cost far too many calls, file it with the
 `report-issue` skill when done.
