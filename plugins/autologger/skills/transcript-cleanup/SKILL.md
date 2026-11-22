@@ -27,7 +27,11 @@ Errors are usually **systematic**: fix patterns, not single words.
    music get their own label for just that stretch: `transcript_renameSpeaker` with
    `fromSec`/`toSec` (and no `from` to relabel everyone in the range, e.g. "Promo" for 0–47 s).
    A line holding two voices: `transcript_splitSegment` with `atText` (the phrase where the second
-   speaker starts) or `atSec`, then rename the new piece. Sessions transcribed since the speaker
+   speaker starts) or `atSec`, then rename the new piece. To find them, run `transcript_find` with
+   `suspect: true` (`countOnly: true` first for the numbers): it lists turns where a question is
+   followed by 20+ more words (`reasons: ["question"]`, `matches` = the question — split right
+   after it, `speaker` = the other person) and turns over 60 s (`"long"`). Many hits are
+   rhetorical questions — read each one before splitting. Sessions transcribed since the speaker
    fix split most of these automatically; for older ones with many mixed lines,
    `media_retranscribe` is cheaper than splitting by hand (it replaces manual edits — do it first).
 3. **List the error patterns** before editing, each with an example and a count

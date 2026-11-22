@@ -69,11 +69,13 @@ Unless the user said not to, `wiki_upsert` a `question` page (`compact: true`) i
 - `title`: the question, phrased generally ("What does Tom think about free tiers?"); reuse the
   exact title of an existing question page to update it.
 - `bodyMd`: the synthesis, then `## Where it comes up` with one bullet per range as a citation link
-  `[<session title> 00:12:30–00:15:10](/sessions/<sessionId>?t=750&to=910) — what happens`
+  `[<session title> 00:12:30–00:15:10](@<sessionId>:750-910) — what happens` (short form; the long
+  `/sessions/<sessionId>?t=750&to=910` link also works)
   (`t`/`to` in seconds), then `[[links]]` to the person/topic/bit pages involved.
 - Link back: if a person or topic page is central, `wiki_patch` it to add
   `- [[<question title>]]` under a `## Questions` heading (append if missing).
-- Run `wiki_lint` for the show and fix any citation or link it reports.
+- The save result lists `badCitations` (`unknown_session`, `bad_range`, `past_end`,
+  `label_mismatch`); fix them with `wiki_patch`. Then run `wiki_lint` for any link it reports.
 
 Mention that the page is in the show's wiki and every save is a revision the user can restore.
 

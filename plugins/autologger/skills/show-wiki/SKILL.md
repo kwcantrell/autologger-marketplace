@@ -11,9 +11,10 @@ jokes), `session` (one recap per session) and `question` (an answered question �
 knowledge base, written by the `autologger-ask` plugin). Pages link to each other with `[[Title]]`
 or `[[Title|label]]`; aliases also match.
 
-The wiki is a knowledge base: back facts with **citations** — a Markdown link to the session
-range they come from, `[short label](/sessions/<sessionId>?t=<startSec>&to=<endSec>)` (seconds as
-in `transcript_text`'s `@seconds`). They render as chips that play that range. Prefer a citation
+The wiki is a knowledge base: back facts with **citations** — a link to the session range they
+come from (seconds as in `transcript_text`'s `@seconds`). On a recap use the short form
+`[short label](@<startSec>-<endSec>)`; on other pages `[short label](@<sessionId>:<startSec>-<endSec>)`
+(the long `/sessions/<sessionId>?t=…&to=…` link also works). They render as chips that play that range. Prefer a citation
 to a bare `HH:MM:SS`.
 
 For a whole show or many sessions at once (detailed recaps for every episode, then the shared
@@ -41,7 +42,9 @@ pages), use the `detailed-wiki` skill instead.
    For a one-line fix or an addition use `wiki_patch` (`edits: [{ find, replace }]` — each `find`
    must match exactly once — and/or `append`) instead of resending the whole body. Every save is
    a revision the operator can restore.
-7. Check links: `wiki_lint` for the show lists every `[[link]]` with no matching page
+7. Every `wiki_upsert` / `wiki_patch` result has `citationCount` and `badCitations` for that page
+   (`unknown_session`, `bad_range`, `past_end`, `label_mismatch`) — fix them with `wiki_patch` right
+   away. Ends up to 5 s past the audio are clamped on save. Then check links: `wiki_lint` for the show lists every `[[link]]` with no matching page
    (`unresolved`), pages nothing links to (`orphans`) and broken citations (unknown session, bad
    range). Fix titles, or leave a link dim on
    purpose and say so.

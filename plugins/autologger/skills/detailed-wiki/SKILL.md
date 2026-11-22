@@ -59,10 +59,14 @@ linking recurring people, topics, bits and question pages.
 
 ## Citations (all pages)
 
-`[HH:MM:SS](/sessions/<sessionId>?t=<startSec>&to=<endSec>)` — seconds from the session start (the
-`@seconds` of `transcript_text`), `t` at the set-up line, `to` where the moment ends (+~2 s), never
-past the session's audio end. They render as chips that play the range. Every specific claim gets
-one.
+On recaps the short form `[HH:MM:SS](@<startSec>-<endSec>)` (the recap's own session; bare
+`[@<startSec>-<endSec>]` without a label); on shared pages `[label](@<sessionId>:<startSec>-<endSec>)`.
+Seconds from the session start (the `@seconds` of `transcript_text`), `t` at the set-up line, `to`
+where the moment ends (+~2 s), never past the session's audio end (up to 5 s over is clamped). A
+timecode label must match `t`. They render as chips that play the range. Every specific claim gets
+one. Every save returns the page's `citationCount` and `badCitations`; agents fix those as they go.
+For progress, `wiki_list` with `citesSession`, `countOnly: true` and `limit: 1` gives `total`
+(citing pages) and `citationTotal` per session without pulling every range.
 
 ## Accuracy
 
