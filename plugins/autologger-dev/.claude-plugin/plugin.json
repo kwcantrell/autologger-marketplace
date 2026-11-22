@@ -1,6 +1,6 @@
 {
   "name": "autologger-dev",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Build AutoLogger: skills for ops, schema changes, web and Companion work, the dev stack and the MCP surface; an architecture reviewer agent; hooks that protect generated migrations and secrets; and an MCP connection to your local dev server.",
   "author": {
     "name": "AutoLogger"

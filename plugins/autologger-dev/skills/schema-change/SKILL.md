@@ -8,6 +8,7 @@ argument-hint: "<schema change>"
 
 The schema lives in `apps/server/src/db/schema.ts` (Drizzle). Migrations in
 `apps/server/drizzle/` are **generated** — never hand-edit them (a hook in this plugin blocks it).
+The one exception is a data migration (see below).
 
 ## Steps
 
@@ -26,6 +27,18 @@ The schema lives in `apps/server/src/db/schema.ts` (Drizzle). Migrations in
    themselves.
 4. Update `ops/map.ts`, `packages/contract/src/entities.ts` and any op that reads/writes the table.
 5. Verify: `npx tsc -p apps/server && (cd apps/server && npx vitest run)`.
+
+## Data migrations (backfills)
+
+To change existing rows rather than the schema: `cd apps/server && npx drizzle-kit generate
+--custom --name <change>`. It creates an empty `.sql` starting with `-- Custom SQL migration file`
+plus its meta entry; write your SQL in that file (the hook allows it; meta stays generated).
+- Make it idempotent (e.g. `where col is null`) — it runs once per database, but tests and reruns
+  must not double-apply.
+- Verify on a copy of the dev DB (`pg_dump … | psql` into a private database), report how many rows
+  it touches, then drop the copy. Never run it against the shared dev database yourself; the API
+  applies it on boot after merge.
+- Add a test that seeds old-style rows and runs the migration's SQL.
 
 Destructive changes (drop/rename column or table) — stop and confirm with the user first; there is
 no automatic down-migration.

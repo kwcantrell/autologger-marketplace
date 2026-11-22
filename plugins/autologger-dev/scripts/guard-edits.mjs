@@ -5,7 +5,7 @@
 // Only acts inside an AutoLogger checkout (a dir with apps/server/src/db/schema.ts above the file).
 // Exit 2 blocks the tool call; stderr is shown to Claude as the reason.
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
 
 let raw = '';
@@ -35,7 +35,20 @@ if (!root) process.exit(0);
 const rel = relative(root, filePath).split(sep).join('/');
 const name = basename(filePath);
 
-if (rel.startsWith('apps/server/drizzle/')) {
+// drizzle-kit `generate --custom` creates a migration whose SQL is written by hand (data
+// migrations). Allow editing such a file — a top-level `.sql` that already starts with drizzle's
+// custom placeholder — but never meta/** or generated migrations.
+const CUSTOM_MARK = '-- Custom SQL migration file';
+function isCustomMigration() {
+  if (!/^apps\/server\/drizzle\/[^/]+\.sql$/.test(rel) || !existsSync(filePath)) return false;
+  try {
+    return readFileSync(filePath, 'utf8').trimStart().startsWith(CUSTOM_MARK);
+  } catch {
+    return false;
+  }
+}
+
+if (rel.startsWith('apps/server/drizzle/') && !isCustomMigration()) {
   console.error(
     `${rel} is a generated migration. Edit apps/server/src/db/schema.ts and run ` +
       '`npx drizzle-kit generate --name <change>` in apps/server instead (see the schema-change skill).',
