@@ -34,3 +34,7 @@ fact, from the transcript.
 
 A table of time (HH:MM:SS), button, message. Mention that every event is tagged as created by the
 agent and can be undone from the session's **Agents** tab.
+
+If an AutoLogger tool was missing, failed, or cost far too many calls or tokens along the way — or
+something was left for later — file it with the `report-issue` skill when the task is done and
+list the issue links in your report.

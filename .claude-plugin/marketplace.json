@@ -10,7 +10,7 @@
       "name": "autologger",
       "source": "./plugins/autologger",
       "description": "For producers and operators: connect Claude to your AutoLogger server over MCP, import YouTube videos and playlists, clean up transcripts, generate topics, log moments, build dashboards, update the show wiki, search sessions and write session briefs.",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "category": "productivity",
       "tags": [
         "autologger",
@@ -24,7 +24,7 @@
       "name": "autologger-dev",
       "source": "./plugins/autologger-dev",
       "description": "For AutoLogger contributors: skills for adding ops, schema changes, web and Companion work, running the dev stack and checking the MCP surface, plus an architecture reviewer and guard rails.",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "category": "development",
       "tags": [
         "autologger",
@@ -38,7 +38,7 @@
       "name": "autologger-contribute",
       "source": "./plugins/autologger-contribute",
       "description": "How to contribute to AutoLogger: a guided first tour, the idea-to-PR workflow, curated starter tasks, a pre-PR check and how to improve these plugins.",
-      "version": "1.0.3",
+      "version": "1.1.0",
       "category": "development",
       "tags": [
         "autologger",

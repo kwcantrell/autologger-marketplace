@@ -64,8 +64,14 @@ Per session, in this order: `transcript-cleanup` → `session-topics` → `log-m
   at the end by one writer, from facts the session agents collected with episode + timecode.
 - Finish with a consistency pass: same speaker names, same dashboard layout, and `wiki_lint` for
   the show returns no unresolved links.
+- Ask every agent to report friction (tool, what it needed, what happened). Merge the reports,
+  drop duplicates and file one issue per distinct problem with `report-issue`.
 
 ## Report back
 
 One line per video: session title, session id, audio length, transcript status, and what was
 annotated. Point to the show's sessions list and wiki.
+
+If an AutoLogger tool was missing, failed, or cost far too many calls or tokens along the way — or
+something was left for later — file it with the `report-issue` skill when the task is done and
+list the issue links in your report.

@@ -56,7 +56,13 @@ Draft it from the diff:
 <what you checked by hand, with steps>
 
 ## Follow-ups
-<anything deliberately left out>
+- #<issue> <short title>   ← one tracked issue per deferred item, or "None"
 ```
 
-End with a clear verdict: **ready**, or the list of what to fix first.
+Before drafting Follow-ups, file every deferred item, simplification, unfixed review finding and
+out-of-scope bug as an issue with the `file-issue` skill (label `follow-up`; plugin/skill items go
+to `kwcantrell/autologger-marketplace`). Untracked follow-ups are not allowed: the
+`autologger-contribute` hook blocks `gh pr create` / `gh pr edit` when a Follow-ups item has no
+issue reference.
+
+End with a clear verdict: **ready**, or the list of what to fix first (untracked follow-ups count).
