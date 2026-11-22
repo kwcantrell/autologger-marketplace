@@ -24,6 +24,8 @@ ask which one. Note `showId`.
 - If a question page answers it, reuse its citations, check whether sessions newer than the page's
   last update could add anything (step 3 on just those sessions), and update the page instead of
   starting over.
+- Once you know the candidate sessions, `wiki_list` with `citesSession: <sessionId>` lists the
+  pages already citing each one (with their ranges) — reuse them instead of re-reading.
 - Person, topic and bit pages often summarise the answer and point at sessions — use them to
   narrow the search, but cite the session ranges, not the wiki page.
 
