@@ -35,10 +35,14 @@ Read `apps/web/DESIGN.md` (the visual system) before writing UI.
   (`session/LogButton.tsx`, `session/tabs/*Row.tsx`), dashboard widget parts
   (`session/dashboards/WidgetParts.tsx`), the wiki page header/backlinks (`routes/wiki/WikiPageParts.tsx`)
   and `WikiMarkdown`, `routes/compilations/CompilationCard.tsx`, `routes/PlaylistResult.tsx` and
-  `session/tabs/ExportOptions.tsx`. Keep them presentational (props in, markup out; callbacks instead
+  `session/tabs/ExportOptions.tsx` and ConnectCard's `session/tabs/CopyRow.tsx`. Keep them presentational (props in, markup out; callbacks instead
   of queries/context) so that stays possible. Still static, naming the component they imitate in a
-  comment: the hero transport/clock/waveform, the Stream Deck page and ConnectCard's command line —
-  if you change their look, update `landing/mocks.tsx` by hand.
+  comment: the hero transport/clock/waveform and the Stream Deck page —
+  if you change their look, update the mock by hand.
+  The hero mock is in `landing/heroMock.tsx`; the feature mocks in `landing/mocks.tsx` and
+  `landing/wikiMocks.tsx` (the only ones that pull in react-markdown) load lazily near the
+  viewport, behind placeholders whose heights are set per mock in `LandingPage.tsx` — if you
+  change a mock's size, re-measure it at 390, 800 and 1440 px and update those heights.
   Either way, check the landing page signed out at 1440 and 390 px.
 
 ## Verify

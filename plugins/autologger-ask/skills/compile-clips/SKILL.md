@@ -28,12 +28,18 @@ Each clip: `{ sessionId, startSec, endSec, label }` — seconds from the session
 - Order: as the user asked; otherwise chronologically (episode date, then start time) — or by
   relevance for a "best of".
 - More than ~30 min total or 40 clips? Confirm with the user first, with the numbers.
+- Already clipped? Every compilation logs a `Compilation` event at each clip's start in its
+  session — `events_list` and look for category `Compilation` to see which moments are already in
+  a video, and mention overlaps to the user.
 
 ## 3. Create and wait
 
 1. `compilations_create` with `showId`, a `title` (e.g. the question) and `clips`. A
    `bad_request` names the clips that aren't covered by a YouTube source — drop or fix them and
-   retry once.
+   retry once. Creating it also logs a grey `Compilation` event at each clip's start in that
+   clip's session (each returned clip has its `eventId`); pass `logEvents: false` for drafts and
+   tests. To remove just those events and keep the video, `changes_revertGroup` the create's group;
+   `compilations_delete` removes the video and its events together.
 2. Wait with `compilations_get` `waitSec: 55` (the maximum; MCP clients time out at ~60 s) in a loop until `status` is `ready` or `failed`
    (no sleeps needed; it long-polls). While queued or running it has `queuePosition` and a rough
    `etaSec` — tell the user about how long it will take (an estimate, not a deadline) and report
@@ -42,7 +48,7 @@ Each clip: `{ sessionId, startSec, endSec, label }` — seconds from the session
    also in AutoLogger under **Compilations** for the show, where a fresh link is always available.
    `failed`: report `error`. If it looks transient (network, YouTube throttling, a worker
    restart), call `compilations_retry {compilationId}` once — same id, title and clips — and wait
-   again. A `bad_request` from the retry means a clip's session lost its YouTube source: create a
+   again — retry logs no new events, so prefer it over deleting and re-creating. A `bad_request` from the retry means a clip's session lost its YouTube source: create a
    new compilation without those clips. Users can also press Retry on the Compilations page.
 
 ## Report back
