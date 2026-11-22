@@ -29,8 +29,8 @@ jobs:
           mkdir -p "$repo/apps/server/src/db" "$repo/apps/server/drizzle"
           touch "$repo/apps/server/src/db/schema.ts"
           expect() {
-            echo "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$2\"}}" | node "$guard" 2>/dev/null
-            code=$?
+            code=0
+            echo "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$2\"}}" | node "$guard" 2>/dev/null || code=$?
             if [ "$code" != "$1" ]; then echo "expected exit $1 for $2, got $code"; exit 1; fi
           }
           expect 2 "$repo/apps/server/drizzle/0000_init.sql"
