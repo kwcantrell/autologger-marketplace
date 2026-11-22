@@ -16,6 +16,9 @@ range they come from, `[short label](/sessions/<sessionId>?t=<startSec>&to=<endS
 in `transcript_text`'s `@seconds`). They render as chips that play that range. Prefer a citation
 to a bare `HH:MM:SS`.
 
+For a whole show or many sessions at once (detailed recaps for every episode, then the shared
+pages), use the `detailed-wiki` skill instead.
+
 ## Steps
 
 1. Resolve the session; `sessions_get` gives `showId`.
