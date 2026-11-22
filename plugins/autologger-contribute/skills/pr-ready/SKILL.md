@@ -25,7 +25,8 @@ cd apps/server && npx vitest run        # needs the dev Postgres and autologger_
 `npx biome check --write <files>` fixes formatting and import order. Suppress a rule only for a
 deliberate pattern, with a `biome-ignore` comment that says why. Never "fix" unrelated files in the
 same PR. If `apps/companion` changed: `cd apps/companion && npm run build && npx vitest run`.
-If `apps/web` changed: `cd apps/web && npx vite build`.
+If `apps/web` changed: `cd apps/web && npx vite build`, and (with the `autologger-dev` plugin)
+run its `browser-smoke` agent against the dev stack.
 
 ## 3. Review
 
