@@ -40,12 +40,16 @@ Read the full description of the `dashboards_save` tool. It defines:
   `atSec` (seconds from the start).
 - For a chapter timeline use `{ "name": "topics", "maxLevel": 1 }`; without `maxLevel` the query
   returns every level and the timeline gets crowded.
-- Bar chart category labels wrap and overlap when long: keep them to about 18 characters
-  ("Taylor polynomial", not "Building the general Taylor polynomial").
+- Values can be formatted: `format` on a `stat` or on a bar/line value axis — `"duration"`
+  (seconds → M:SS / H:MM:SS), `"minutes"` (seconds → minutes, one decimal), `"number"`,
+  `"percent"` (0–1 ratio). Long bar labels: `labelMaxChars` (about 18) truncates with the full
+  label in the tooltip.
 - Speaking pace: bind a `stat` to `summary_stats` field `wpm` (live; words over first-to-last
   transcript line, `speechSec`). Don't compute it by hand.
-- Length and chapter minutes can't be formatted live yet (MM:SS / minutes), so they are static;
-  say so in the caption.
+- Keep everything live: Length = `stat` on `summary_stats` field `audioSec` with
+  `format: "duration"`; chapter lengths = horizontal `bar` on `{ "name": "topics", "maxLevel": 1 }`
+  with x `label`, y `durationSec`, `format: "minutes"`, `labelMaxChars: 18`.
+- `dashboards_save` with `compact: true` returns only `{ id, revision }`.
 - When several dashboards belong to one series, keep the same layout and widget ids so they read
   as a set.
 

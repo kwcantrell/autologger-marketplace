@@ -11,7 +11,7 @@ argument-hint: "[start|status|seed|stop]"
 | Postgres 17 | `localhost:54329` (db `autologger`, tests use `autologger_test`) | `docker compose -f compose.dev.yaml up -d` |
 | S3 (SeaweedFS) | `localhost:9000`, key `autologger` / `autologger-secret` | same |
 | API + WS + MCP | `localhost:${PORT}` from `.env` (default 18081) | `npm run dev:server` |
-| Worker | — | `npm run dev:worker -w @autologger/server` |
+| Worker | — | `npm run dev:worker -w @autologger/server` (needs `yt-dlp` on PATH for YouTube import), or in Docker with yt-dlp included: `docker compose -f compose.dev.yaml --profile worker up -d --build` (run one or the other) |
 | Web (Vite) | `localhost:5173`, proxies `/api`, `/auth`, `/oauth/*`, `/mcp`, `/ws` | `cd apps/web && npx vite` |
 
 `.env` at the repo root (copy `.env.example`). `PUBLIC_URL` should be the Vite origin in dev
