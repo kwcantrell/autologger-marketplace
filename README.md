@@ -28,6 +28,7 @@ access the first time; run `/mcp` to sign in) and adds skills that use it:
 | `/autologger:log-moments` | Finds moments you describe and logs them as timecoded events with your show's buttons. |
 | `/autologger:session-dashboard` | Designs a declarative dashboard (live queries + computed stats). |
 | `/autologger:show-wiki` | Writes a session recap and updates people / recurring-bit pages. |
+| `/autologger:detailed-wiki` | Builds a detailed, cited wiki for a whole show: an in-depth recap per session (written in parallel by the `session-recap` agent), then host, guest, bit, topic and hub pages from those recaps. |
 | `/autologger:find-moments` | Read-only search across sessions with timecodes. |
 | `/autologger:session-brief` | Read-only editor / producer / social brief in chat. |
 
