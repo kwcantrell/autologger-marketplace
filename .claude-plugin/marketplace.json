@@ -10,7 +10,7 @@
       "name": "autologger",
       "source": "./plugins/autologger",
       "description": "For producers and operators: connect Claude to your AutoLogger server over MCP, import YouTube videos and playlists, clean up transcripts, generate topics, log moments, build dashboards, update the show wiki, search sessions and write session briefs.",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "category": "productivity",
       "tags": [
         "autologger",
