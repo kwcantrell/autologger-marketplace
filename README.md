@@ -67,6 +67,9 @@ Needs the `autologger` plugin (it uses that MCP connection).
 | `/autologger-dev:dev-stack` | Start / check / seed / stop the local stack; dev login. |
 | `/autologger-dev:mcp-check` | See and call the MCP tools the way an agent does. |
 | `ops-reviewer` agent | Reviews a diff against the architecture rules before you commit. |
+| `browser-smoke` agent | Clicks through the main flows in a real browser and reports pass/fail. |
+| `visual-review` agent | Looks over every page at desktop, tablet and phone width for visual bugs and files an issue for each. |
+| `bug-hunt` agent | Tries to break the local stack (odd input, races, undo, access, API edges) and files an issue per reproducible bug; security findings are reported privately. |
 | Guard hook | Blocks edits to generated migrations (`apps/server/drizzle/**`) and real `.env` files in AutoLogger checkouts. |
 | `autologger-local` MCP server | Your dev server's MCP endpoint (`dev_url`, default `http://localhost:5173`), so you can try new tools immediately. Use exactly the server's `PUBLIC_URL` origin — OAuth discovery rejects other hostnames (`127.0.0.1` ≠ `localhost`). If both plugins point at the same URL, Claude Code keeps a single connection. |
 | `scripts/seed.mjs` | Demo team, show, session, events, topics, dashboard and wiki through the RPC API. |
