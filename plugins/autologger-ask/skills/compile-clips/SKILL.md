@@ -35,12 +35,15 @@ Each clip: `{ sessionId, startSec, endSec, label }` — seconds from the session
    `bad_request` names the clips that aren't covered by a YouTube source — drop or fix them and
    retry once.
 2. Wait with `compilations_get` `waitSec: 55` (the maximum; MCP clients time out at ~60 s) in a loop until `status` is `ready` or `failed`
-   (no sleeps needed; it long-polls). Report `progress` to the user every few minutes on long
-   builds.
+   (no sleeps needed; it long-polls). While queued or running it has `queuePosition` and a rough
+   `etaSec` — tell the user about how long it will take (an estimate, not a deadline) and report
+   `progress` every few minutes on long builds.
 3. `ready`: give the `url` (a download link that expires after about an hour) and say the video is
    also in AutoLogger under **Compilations** for the show, where a fresh link is always available.
-   `failed`: report `error`; one retry is reasonable if it looks transient (network, YouTube
-   throttling).
+   `failed`: report `error`. If it looks transient (network, YouTube throttling, a worker
+   restart), call `compilations_retry {compilationId}` once — same id, title and clips — and wait
+   again. A `bad_request` from the retry means a clip's session lost its YouTube source: create a
+   new compilation without those clips. Users can also press Retry on the Compilations page.
 
 ## Report back
 

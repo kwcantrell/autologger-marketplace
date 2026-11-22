@@ -32,7 +32,8 @@ ask which one. Note `showId`.
 ## 3. Find the ranges
 
 1. `search` with `showId` and 3–5 phrasings (names, key nouns, synonyms, how a speaker would
-   actually say it). Hits carry `sessionId` and `atSec`.
+   actually say it). Hits carry `sessionId`, `atSec` and `endSec`
+   (transcript line end or topic end; null for events) — a first guess at the range.
 2. `topics_list` for sessions with hits — a topic's `startSec`/`durationSec` often bounds the whole
    discussion; topic summaries also catch paraphrases text search misses.
 3. For each promising hit read context with `transcript_text` (`fromSec = atSec - 90`,
