@@ -1,6 +1,6 @@
 {
   "name": "autologger-contribute",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "How to contribute to AutoLogger: a guided first tour of the codebase, the contribution workflow from idea to pull request, curated starter tasks, a pre-PR check, and how to improve these plugins.",
   "author": {
     "name": "AutoLogger"
