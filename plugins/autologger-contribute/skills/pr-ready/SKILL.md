@@ -18,12 +18,13 @@ Run and report each result verbatim when something fails:
 
 ```bash
 npm run typecheck
-npx biome check $(git diff --name-only main...HEAD -- '*.ts' '*.tsx' '*.css' '*.json')
+npm run lint                            # the repo is lint-clean; keep it that way
 cd apps/server && npx vitest run        # needs the dev Postgres and autologger_test database
 ```
 
-Lint only the changed files so pre-existing findings don't block them; never "fix" unrelated
-files in the same PR. If `apps/companion` changed: `cd apps/companion && npm run build && npx vitest run`.
+`npx biome check --write <files>` fixes formatting and import order. Suppress a rule only for a
+deliberate pattern, with a `biome-ignore` comment that says why. Never "fix" unrelated files in the
+same PR. If `apps/companion` changed: `cd apps/companion && npm run build && npx vitest run`.
 If `apps/web` changed: `cd apps/web && npx vite build`.
 
 ## 3. Review
@@ -51,7 +52,7 @@ Draft it from the diff:
 <key decisions; ops added or changed (name, surfaces); schema changes>
 
 ## Verification
-- [ ] typecheck  - [ ] lint (changed files)  - [ ] server tests  - [ ] web build / browser check
+- [ ] typecheck  - [ ] lint  - [ ] server tests  - [ ] web build / browser check
 <what you checked by hand, with steps>
 
 ## Follow-ups
