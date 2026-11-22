@@ -24,7 +24,7 @@
       "name": "autologger-dev",
       "source": "./plugins/autologger-dev",
       "description": "For AutoLogger contributors: skills for adding ops, schema changes, web and Companion work, running the dev stack and checking the MCP surface, plus an architecture reviewer and guard rails.",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "category": "development",
       "tags": [
         "autologger",
