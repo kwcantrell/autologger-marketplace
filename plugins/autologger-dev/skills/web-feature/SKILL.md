@@ -30,6 +30,10 @@ Read `apps/web/DESIGN.md` (the visual system) before writing UI.
 - Respect `prefers-reduced-motion`; check 390 px width for no horizontal scroll.
 - Agent-authored content (dashboards, wiki, topics) is data: render Markdown without raw HTML and
   never execute anything from a spec.
+- The public landing page (`src/routes/landing/`) shows mocks of the real UI. Changed how a tab,
+  the event buttons, the feed, transcript lines, topics or the Agents log look? Update the matching
+  mock in `landing/mocks.tsx` too — or better, reuse the shared presentational component both render
+  — and check the landing page signed out.
 
 ## Verify
 
