@@ -40,10 +40,18 @@ Read the full description of the `dashboards_save` tool. It defines:
   `atSec` (seconds from the start).
 - For a chapter timeline use `{ "name": "topics", "maxLevel": 1 }`; without `maxLevel` the query
   returns every level and the timeline gets crowded.
-- Values can be formatted: `format` on a `stat` or on a bar/line value axis — `"duration"`
-  (seconds → M:SS / H:MM:SS), `"minutes"` (seconds → minutes, one decimal), `"number"`,
-  `"percent"` (0–1 ratio). Long bar labels: `labelMaxChars` (about 18) truncates with the full
-  label in the tooltip.
+- Values can be formatted: `format` on a `stat`, a bar/line value axis, a `pie` (legend and
+  tooltip — e.g. talk time in `"minutes"`) and per `table` column (`{ key, label, format }`, e.g.
+  `atSec` as `"duration"`) — `"duration"` (seconds → M:SS / H:MM:SS), `"minutes"` (seconds →
+  minutes, one decimal), `"number"`, `"percent"` (0–1 ratio). Long bar labels: `labelMaxChars`
+  (about 18) truncates with the full label in the tooltip.
+- Unknown widget fields are rejected with their path (e.g. `spec.widgets[4].colour`) — fix the
+  field rather than retrying; nothing is silently dropped.
+- Small fixes to a saved dashboard (a label, a format, a caption): `dashboards_updateWidgets`
+  with `[{ id, ...changedFields }]` instead of resending the whole spec (`null` removes an
+  optional field). Adding, removing or reordering widgets still uses `dashboards_save`.
+- Speaker talk time is only as good as diarization: if the transcript still has lines that mix
+  two voices, say so in the widget `caption`.
 - Speaking pace: bind a `stat` to `summary_stats` field `wpm` (live; words over first-to-last
   transcript line, `speechSec`). Don't compute it by hand.
 - Keep everything live: Length = `stat` on `summary_stats` field `audioSec` with

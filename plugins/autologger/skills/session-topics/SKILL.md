@@ -18,8 +18,9 @@ If the user gave an id (`ses_…`), use it. Otherwise call `sessions_list` (opti
 
 1. `sessions_get` — check `transcriptStatus`. If it is `none` or `pending`, stop and tell the user
    the transcript is not ready (they can record/import audio, or wait for transcription).
-2. `transcript_text` — the whole transcript as `[HH:MM:SS @123.4s] Speaker: text` lines. For long
-   sessions page with `fromSec` / `toSec` (e.g. 30-minute windows) rather than one huge call.
+2. `transcript_text` with `format: "compact"` — paragraphs per speaker turn, each starting with
+   its `@seconds`. The result's `totalSegments` / `durationSec` tell you whether to page: for long
+   sessions use ~25-minute `fromSec` / `toSec` windows (pages don't overlap).
 3. `topics_list` — what already exists. If the operator has hand-edited topics, say so and ask
    before replacing them.
 4. `events_list` — operator markers (e.g. "Scene", "Ad read") often mark segment boundaries.

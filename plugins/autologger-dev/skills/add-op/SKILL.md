@@ -48,6 +48,16 @@ Rules:
 - Throw `AppError` helpers from `core/errors.ts` (`badRequest`, `conflict`, `unavailable`, …).
 - Map rows to entities in `ops/map.ts`; never return raw rows.
 - A new domain file must be imported in `ops/index.ts`.
+- Every op runs inside one `db.transaction` (`core/op.ts`, pool of 10). Never do slow external
+  work (yt-dlp, HTTP, sleeps) in `run`: put it in `prepare(actor, input)`, which runs before the
+  transaction (authorize there too; `run` re-authorizes and gets the result as its third
+  argument). Long-polling reads use `watch(input, signal)`, which waits on the bus after commit
+  and re-runs the op — see `jobs.list`.
+- Agent-facing bulk or large outputs take `compact` (default false): add the compact shape to
+  `CompactOpOutputs` in `packages/contract/src/ops.ts` (not a union in `OpOutputs`), so
+  `OpResult<N, I>` types callers by their input with no casts.
+- Rows inserted in one transaction share `now()`; give batches explicit, increasing timestamps when
+  order matters (see `enqueueJob`'s `at`).
 - Server code runs on Node type stripping: no enums, namespaces or parameter properties; relative
   imports end in `.ts`.
 

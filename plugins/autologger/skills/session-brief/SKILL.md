@@ -10,7 +10,8 @@ A read-only summary for people who will not re-listen to the recording.
 
 ## Gather
 
-`sessions_get`, `events_list`, `topics_list`, `transcript_text` (paged for long sessions), and
+`sessions_get`, `events_list` (`compact: true`), `topics_list`, `transcript_text`
+(`format: "compact"`; ~25-minute `fromSec`/`toSec` pages for long sessions), and
 `dashboards_list` if there are dashboards with useful numbers.
 
 ## Write

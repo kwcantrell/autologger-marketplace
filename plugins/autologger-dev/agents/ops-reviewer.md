@@ -25,7 +25,11 @@ Check every changed op (`apps/server/src/ops/*.ts`, `defineOp`) and related code
    (units like `atSec` vs timecode, where ids come from, side effects, undo)? Surfaces correct
    (`mcp` only when agents should have it; admin, member/role management and deleting teams,
    shows or sessions stay web-only — `teams.create` is the one team op on MCP). Bulk write ops
-   should accept `compact` so agents don't get the whole object echoed back.
+   should accept `compact` so agents don't get the whole object echoed back (compact shapes go in
+   `CompactOpOutputs`, not as unions in `OpOutputs`; no casts at call sites). Long sessions are
+   the norm (hour-plus transcripts): unbounded list/read outputs need paging or a cap.
+   Every op runs in a transaction: flag slow external work in `run` (it belongs in `prepare`)
+   and waits that hold a connection (use `watch`).
 7. **User-supplied regexes** — never run them in Node (ReDoS can hang the API or worker): use
    PostgreSQL (`~*`, `regexp_replace`, …) inside a transaction with
    `set local statement_timeout`, and map 2201B (invalid) and 57014 (timeout) to `bad_request`.
