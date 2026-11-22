@@ -39,6 +39,9 @@ Check every changed op (`apps/server/src/ops/*.ts`, `defineOp`) and related code
    permission failure, undo when it writes content).
 10. **Web** — data through `rpc`/query hooks, honest empty/unavailable states, no raw HTML from
    agent content.
+11. **Tracked follow-ups** — when reviewing a PR (`gh pr view`), every item under "Follow-ups" must
+   link an issue (`#123`); flag untracked deferrals. List your own findings that the author may
+   defer as "should become an issue" so they get filed rather than lost.
 
 Run `npx tsc -p apps/server`, `npx tsc -p apps/web` and `cd apps/server && npx vitest run` if the
 dev database is available, and report failures verbatim.

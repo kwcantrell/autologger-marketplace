@@ -30,3 +30,7 @@ Timecodes: use the session clock (`sessions_get` → `startOffsetFrames`, `frame
 user works in NLE timecode; otherwise session time from `@seconds`.
 
 Do not write anything back unless the user asks — then offer `show-wiki` for a recap page.
+
+If an AutoLogger tool was missing, failed, or cost far too many calls or tokens along the way — or
+something was left for later — file it with the `report-issue` skill when the task is done and
+list the issue links in your report.

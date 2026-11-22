@@ -48,6 +48,11 @@ every input and output, op descriptions an agent can act on, no edits to generat
 Run `/autologger-contribute:pr-ready`. It runs the checks and the `ops-reviewer` agent and
 drafts the PR description. Fix what it finds before asking a human.
 
+**Track what you don't do.** Anything left out, simplified, or found outside your scope (a bug in
+another op, a skill that misled you, a dev-stack problem) becomes its own GitHub issue — use the
+`file-issue` skill (search first, label `follow-up`). The PR's Follow-ups section lists only those
+issue links; a hook refuses PR bodies with untracked follow-ups.
+
 ## 6. Commit
 
 Message format, matching the history:

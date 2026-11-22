@@ -44,3 +44,7 @@ with the `transcript-cleanup` skill so topic titles and summaries quote it corre
 
 List the level-1 titles with their start times (`HH:MM:SS`), and mention that the changes can be
 undone from the Agents tab.
+
+If an AutoLogger tool was missing, failed, or cost far too many calls or tokens along the way — or
+something was left for later — file it with the `report-issue` skill when the task is done and
+list the issue links in your report.

@@ -48,3 +48,7 @@ jokes) and `session` (one recap per session). Pages link to each other with `[[T
 ## Report back
 
 The pages you created and the pages you changed, one line each.
+
+If an AutoLogger tool was missing, failed, or cost far too many calls or tokens along the way — or
+something was left for later — file it with the `report-issue` skill when the task is done and
+list the issue links in your report.

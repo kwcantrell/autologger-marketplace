@@ -64,3 +64,7 @@ Read the full description of the `dashboards_save` tool. It defines:
 ## Report back
 
 One line per widget saying what it shows, and where to find it: the session's **Dashboards** tab.
+
+If an AutoLogger tool was missing, failed, or cost far too many calls or tokens along the way — or
+something was left for later — file it with the `report-issue` skill when the task is done and
+list the issue links in your report.
