@@ -1,12 +1,13 @@
 # AutoLogger plugin marketplace
 
 Claude Code plugins for [AutoLogger](../autologger-3): one for the people who **use** it, one for the
-people who **build** it.
+people who **build** it, and one for people **getting started** as contributors.
 
 ```bash
 claude plugin marketplace add ~/autologger-marketplace      # or <owner>/<repo> once pushed
 claude plugin install autologger@autologger                 # users
 claude plugin install autologger-dev@autologger             # contributors
+claude plugin install autologger-contribute@autologger      # new contributors
 ```
 
 Inside Claude Code the same works with `/plugin marketplace add …` and `/plugin install …`.
@@ -54,12 +55,25 @@ Prefer a static token (scripts, headless runs)? Skip the plugin's server and add
 | `autologger-local` MCP server | Your dev server's MCP endpoint (`dev_url`, default `http://localhost:5173`), so you can try new tools immediately. Use exactly the server's `PUBLIC_URL` origin — OAuth discovery rejects other hostnames (`127.0.0.1` ≠ `localhost`). If both plugins point at the same URL, Claude Code keeps a single connection. |
 | `scripts/seed.mjs` | Demo team, show, session, events, topics, dashboard and wiki through the RPC API. |
 
+## `autologger-contribute` — how to contribute
+
+| Skill | What it does |
+|---|---|
+| `/autologger-contribute:start-here` | Guided first tour: product, code map, one op end to end, run the stack and tests. |
+| `/autologger-contribute:contribute` | The workflow from idea to PR: scope, branch, which guide to follow, tests, commit format, PR. |
+| `/autologger-contribute:first-tasks` | Curated starter tasks (small / medium / larger) with files and how to verify. |
+| `/autologger-contribute:pr-ready` | Runs the checks, reviews the diff and drafts the PR description. |
+| `/autologger-contribute:improve-plugins` | How to add or change skills, hooks and agents in this marketplace. |
+
+Pairs with `autologger-dev`, which holds the implementation guides it points to.
+
 ## Layout
 
 ```
 .claude-plugin/marketplace.json
 plugins/autologger/       .claude-plugin/plugin.json, .mcp.json, skills/*
 plugins/autologger-dev/   .claude-plugin/plugin.json, .mcp.json, skills/*, agents/, hooks/, scripts/
+plugins/autologger-contribute/   .claude-plugin/plugin.json, skills/*
 ```
 
-Validate before publishing: `claude plugin validate . && claude plugin validate plugins/autologger && claude plugin validate plugins/autologger-dev`.
+Validate before publishing: `claude plugin validate . && claude plugin validate plugins/autologger && claude plugin validate plugins/autologger-dev && claude plugin validate plugins/autologger-contribute`.
