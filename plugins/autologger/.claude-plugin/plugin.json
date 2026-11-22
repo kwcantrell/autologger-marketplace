@@ -1,6 +1,6 @@
 {
   "name": "autologger",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "Connect Claude to AutoLogger over MCP and work with your sessions: YouTube/playlist import, transcript cleanup, topics, logged moments, dashboards, show wiki (including detailed, cited whole-show wikis), search and session briefs. Every change is attributed to you and undoable from the session's Agents tab.",
   "author": {
     "name": "AutoLogger"
