@@ -20,7 +20,8 @@ fact, from the transcript.
    - `toggle` buttons take `value` = the button's `onLabel` or `offLabel`.
 3. `events_list` — skip moments the operator already logged (same category within ~10 s).
    Each event has `atSec` (seconds, same scale as the transcript). `events_createMany` returns the
-   created events with `atSec` too, so no separate check is needed.
+   created events with `atSec` too, so no separate check is needed (pass `compact: true` to get
+   only `{ id, atSec, category }` per event).
 4. Read `transcript_text` (page long sessions with `fromSec`/`toSec`) and pick the moments.
    Be selective: an editor wants the moments that matter, not every chuckle.
 5. Log them in one call with `events_createMany`, each with `atSec` taken from the transcript's

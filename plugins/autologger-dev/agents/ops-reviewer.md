@@ -23,12 +23,17 @@ Check every changed op (`apps/server/src/ops/*.ts`, `defineOp`) and related code
    new entity.
 6. **Agent-facing description** — would an LLM call the tool correctly from the description alone
    (units like `atSec` vs timecode, where ids come from, side effects, undo)? Surfaces correct
-   (`mcp` only when agents should have it; admin/team management stays web-only).
-7. **Runtime constraints** — server TS uses only erasable syntax (no enums, namespaces, parameter
+   (`mcp` only when agents should have it; admin, member/role management and deleting teams,
+   shows or sessions stay web-only — `teams.create` is the one team op on MCP). Bulk write ops
+   should accept `compact` so agents don't get the whole object echoed back.
+7. **User-supplied regexes** — never run them in Node (ReDoS can hang the API or worker): use
+   PostgreSQL (`~*`, `regexp_replace`, …) inside a transaction with
+   `set local statement_timeout`, and map 2201B (invalid) and 57014 (timeout) to `bad_request`.
+8. **Runtime constraints** — server TS uses only erasable syntax (no enums, namespaces, parameter
    properties); relative imports end in `.ts`; no hand-edited migrations.
-8. **Tests** — a focused ops test in `apps/server/src/test` for new behaviour (happy path, a
+9. **Tests** — a focused ops test in `apps/server/src/test` for new behaviour (happy path, a
    permission failure, undo when it writes content).
-9. **Web** — data through `rpc`/query hooks, honest empty/unavailable states, no raw HTML from
+10. **Web** — data through `rpc`/query hooks, honest empty/unavailable states, no raw HTML from
    agent content.
 
 Run `npx tsc -p apps/server`, `npx tsc -p apps/web` and `cd apps/server && npx vitest run` if the

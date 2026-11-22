@@ -35,7 +35,8 @@ with the `transcript-cleanup` skill so topic titles and summaries quote it corre
 - Level 2 (optional): notable sub-moments inside a level-1 topic.
 - `startSec` comes from the `@seconds` values in `transcript_text`. Set `durationSec` so level-1
   topics tile the session without overlapping.
-- Save in ONE call: `topics_replace` with the full list. It replaces everything and each change is
+- Save in ONE call: `topics_replace` with the full list (`compact: true` returns only
+  `{ id, startSec, level, title }` per topic). It replaces everything and each change is
   recorded, so the operator can undo it from the session's **Agents** tab.
 
 ## Report back

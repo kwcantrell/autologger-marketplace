@@ -10,9 +10,10 @@ argument-hint: "[YouTube URL or playlist] [team/show]"
 
 `teams_list` and `shows_list` (filter by `teamId`). Sessions need a show: create one with
 `shows_create` (owner/admin of the team) and set its buttons with `categories_save` (it replaces
-the whole list — keep existing ones by `id`). Teams can only be created in the web app
-(Settings → Team details). For technical talks, set `shows_update` `smartFormat: false` and
-`keyTerms` **before** importing, and `titleSuffix: "episode"` if episodes are numbered.
+the whole list — keep existing ones by `id`). If the user names a team that doesn't exist yet,
+`teams_create` makes it (the user becomes owner). For technical talks, set `shows_update`
+`smartFormat: false`, `keyTerms` and `transcriptRules` (see `transcript-cleanup`) **before**
+importing, and `titleSuffix: "episode"` if episodes are numbered.
 
 ## 2. List the videos
 
@@ -28,8 +29,9 @@ import a video twice.
   show's counter numbers them 1, 2, 3 … and stays correct for the next session.
 - One `media_importYoutube` per session. It queues a background job: the worker downloads the
   audio, stores it and queues transcription automatically.
-- Wait with `jobs_list` per session until both the `youtube_import` and the `transcribe` job are
-  `done`. A `failed` job carries its error: "yt-dlp not found" or a Deepgram key error means the
+- Wait with one `jobs_list({ showId, status: ["queued", "running"] })` call every 15–30 seconds
+  until it returns nothing; then `jobs_list({ showId, status: ["failed"] })` for errors (each job
+  carries `sessionId` and `sessionTitle`). A `failed` job carries its error: "yt-dlp not found" or a Deepgram key error means the
   server is misconfigured (tell the user; don't retry blindly). Without a Deepgram key the audio
   imports but is never transcribed.
 
