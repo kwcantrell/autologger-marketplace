@@ -62,7 +62,9 @@ Errors are usually **systematic**: fix patterns, not single words.
 
 A table of pattern → replacement → lines fixed → time range, the rules saved on the show, the
 speaker renames and splits, and lines you left alone because you weren't sure. Each edit is in the
-change log and can be undone from the session's **Agents** tab.
+change log and can be undone from the session's **Agents** tab; a bulk call (a speaker rename,
+a `transcript_replace`, a batch of `transcript_updateSegments`) is one group there — "Undo all", or
+`changes_revertGroup` with its `groupId` from `changes_list`.
 
 If an AutoLogger tool was missing, failed, or cost far too many calls or tokens along the way — or
 something was left for later — file it with the `report-issue` skill when the task is done and

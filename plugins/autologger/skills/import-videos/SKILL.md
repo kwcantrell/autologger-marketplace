@@ -44,7 +44,9 @@ the whole list — keep existing ones by `id`). If the user names a team that do
 The worker downloads, then transcribes each session as soon as its own download finishes (two jobs
 at a time; an hour of audio takes well under a minute to transcribe). Wait with
 `jobs_list({ showId, status: ["queued","running"], waitSec: 50 })` in a loop: each call returns as
-soon as a job changes, or after `waitSec`, and queued jobs show `queuePosition`. Don't sleep in
+soon as a job changes, or after `waitSec`. Queued jobs show `queuePosition`, and queued or running
+jobs a rough `etaSec` — use it to pick `waitSec`, not as a deadline; `sessions_get` carries
+`transcriptJob` for one session. Don't sleep in
 between. Start annotating a session as soon as its `transcriptStatus` is `done` rather than
 waiting for the whole playlist. Then `jobs_list({ showId, status: ["failed"] })`: "yt-dlp not
 found" or a Deepgram key error means the server is misconfigured (tell the user; don't retry
