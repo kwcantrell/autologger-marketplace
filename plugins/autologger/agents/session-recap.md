@@ -35,6 +35,7 @@ For each session:
    your notes as a candidate page — never a dangling `[[link]]`, never silently dropped.
 4. Each save returns `citationCount` and `badCitations` for the page: fix every bad citation with
    `wiki_patch` before moving on (no need to lint the whole show after each save).
+   `clampedCitations` lists ends that were clamped (stored `endSec` vs `sentEndSec`): a later `wiki_patch` `find` must use the stored end.
 
 Write NOTES FOR SHARED PAGES to `<notes folder>/<sessionId>.md` (create it with your file tools) as
 cited bullets — host facts; the guest's key facts; other existing people mentioned;

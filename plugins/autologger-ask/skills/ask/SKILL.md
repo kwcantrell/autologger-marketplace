@@ -75,7 +75,7 @@ Unless the user said not to, `wiki_upsert` a `question` page (`compact: true`) i
 - Link back: if a person or topic page is central, `wiki_patch` it to add
   `- [[<question title>]]` under a `## Questions` heading (append if missing).
 - The save result lists `badCitations` (`unknown_session`, `bad_range`, `past_end`,
-  `label_mismatch`); fix them with `wiki_patch`. Then run `wiki_lint` for any link it reports.
+  `label_mismatch`); fix them with `wiki_patch`. `clampedCitations` lists ends that were clamped (stored `endSec` vs `sentEndSec`): a later `wiki_patch` `find` must use the stored end. Then run `wiki_lint` for any link it reports.
 
 Mention that the page is in the show's wiki and every save is a revision the user can restore.
 

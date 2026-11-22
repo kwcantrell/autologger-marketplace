@@ -64,7 +64,8 @@ On recaps the short form `[HH:MM:SS](@<startSec>-<endSec>)` (the recap's own ses
 Seconds from the session start (the `@seconds` of `transcript_text`), `t` at the set-up line, `to`
 where the moment ends (+~2 s), never past the session's audio end (up to 5 s over is clamped). A
 timecode label must match `t`. They render as chips that play the range. Every specific claim gets
-one. Every save returns the page's `citationCount` and `badCitations`; agents fix those as they go.
+one. Every save returns the page's `citationCount`, `badCitations` (fix as you go) and
+`clampedCitations` (ends trimmed to the audio; later `wiki_patch` finds must use the stored end).
 For progress, `wiki_list` with `citesSession`, `countOnly: true` and `limit: 1` gives `total`
 (citing pages) and `citationTotal` per session without pulling every range.
 
