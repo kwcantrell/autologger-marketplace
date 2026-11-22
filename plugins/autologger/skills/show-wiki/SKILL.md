@@ -44,7 +44,8 @@ pages), use the `detailed-wiki` skill instead.
    a revision the operator can restore.
 7. Every `wiki_upsert` / `wiki_patch` result has `citationCount` and `badCitations` for that page
    (`unknown_session`, `bad_range`, `past_end`, `label_mismatch`) — fix them with `wiki_patch` right
-   away. Ends up to 5 s past the audio are clamped on save. Then check links: `wiki_lint` for the show lists every `[[link]]` with no matching page
+   away. Ends up to 5 s past the audio are clamped on save and listed in `clampedCitations` (stored
+   `endSec` vs `sentEndSec`) — a later `wiki_patch` `find` must use the stored end. Then check links: `wiki_lint` for the show lists every `[[link]]` with no matching page
    (`unresolved`), pages nothing links to (`orphans`) and broken citations (unknown session, bad
    range). Fix titles, or leave a link dim on
    purpose and say so.
