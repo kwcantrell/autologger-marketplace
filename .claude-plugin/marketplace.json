@@ -10,7 +10,7 @@
       "name": "autologger",
       "source": "./plugins/autologger",
       "description": "For producers and operators: connect Claude to your AutoLogger server over MCP, import YouTube videos and playlists, clean up transcripts, generate topics, log moments, build dashboards, update the show wiki, search sessions and write session briefs.",
-      "version": "1.4.1",
+      "version": "1.5.0",
       "category": "productivity",
       "tags": [
         "autologger",
@@ -18,6 +18,20 @@
         "production",
         "transcripts",
         "logging"
+      ]
+    },
+    {
+      "name": "autologger-ask",
+      "source": "./plugins/autologger-ask",
+      "description": "Ask questions about a show and get timecode ranges per session, saved as cited knowledge-base pages in the show wiki, plus server-built video compilations of YouTube-sourced ranges. Needs the autologger plugin.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "tags": [
+        "autologger",
+        "knowledge-base",
+        "search",
+        "clips",
+        "youtube"
       ]
     },
     {

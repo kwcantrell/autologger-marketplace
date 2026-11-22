@@ -8,6 +8,7 @@ people who **build** it, and one for people **getting started** as contributors.
 ```bash
 claude plugin marketplace add kwcantrell/autologger-marketplace
 claude plugin install autologger@autologger                 # users
+claude plugin install autologger-ask@autologger             # ask questions, cited answers, clip compilations
 claude plugin install autologger-dev@autologger             # contributors
 claude plugin install autologger-contribute@autologger      # new contributors
 ```
@@ -43,6 +44,16 @@ echo '{"server_url":"https://autologger.example.com"}' | claude plugin configure
 Prefer a static token (scripts, headless runs)? Skip the plugin's server and add one yourself:
 `claude mcp add --transport http autologger https://autologger.example.com/mcp --header "Authorization: Bearer alp_…"`
 (create the token in AutoLogger → Settings → Agents).
+
+## `autologger-ask` — ask your show
+
+Needs the `autologger` plugin (it uses that MCP connection).
+
+| Piece | What it does |
+|---|---|
+| `/autologger-ask:ask` | Answers a question about a show with timecode ranges in each session, saves it to the show wiki as a cited `question` page (the knowledge base grows with every question) and offers a compilation for YouTube-sourced sessions. |
+| `/autologger-ask:compile-clips` | Turns ranges (or a wiki question page's citations) into one MP4, built by the AutoLogger server from the YouTube sources; play or download it under **Compilations**. |
+| `session-scan` agent | Reads one session end to end for a question; `ask` runs it on many sessions in parallel when search misses paraphrases. |
 
 ## `autologger-dev` — for contributors
 
