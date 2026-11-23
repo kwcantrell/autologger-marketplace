@@ -22,7 +22,7 @@ If the user gave an id (`ses_…`), use it. Otherwise call `sessions_list` (opti
 2. `transcript_text` with `{format: "compact", stampEverySec: 0}`, read once — paragraphs per
    speaker turn with a `[@seconds]` stamp at every segment start, so no second pass in lines
    format is needed. The result's `totalSegments` / `durationSec` tell you whether to page: for
-   long sessions use ~25-minute `fromSec` / `toSec` windows (pages don't overlap). If the text is "(transcript is empty: no speech detected)" with `transcriptStatus` `done`, that is final: skip the session (don't wait or `media_retranscribe`); "(no transcript yet: …)" → wait with `jobs_list`; "(no transcript: transcription failed …)" → report it.
+   long sessions use ~25-minute `fromSec` / `toSec` windows (pages don't overlap). No segments? The text says why (the `transcript_text` description lists each case and what to do); an empty transcript with status `done` is final: skip the session.
 3. `topics_list` — what already exists. If the operator has hand-edited topics
    (`changes_list` {sessionId, entity: "topic", via: "web"}), say so and ask
    before replacing them.

@@ -24,7 +24,7 @@ fact, from the transcript.
    per created event, so no separate check is needed.
 4. Read `transcript_text` once with `{format: "compact", stampEverySec: 0}` (page long sessions
    with ~25-minute `fromSec`/`toSec` windows) — every segment start has a `[@seconds]` stamp, so
-   no second pass in lines format. If the text is "(transcript is empty: no speech detected)" with `transcriptStatus` `done`, that is final: skip the session (don't wait or `media_retranscribe`); "(no transcript yet: …)" → wait with `jobs_list`; "(no transcript: transcription failed …)" → report it. Pick the moments.
+   no second pass in lines format. No segments? The text says why (the `transcript_text` description lists each case and what to do); an empty transcript with status `done` is final: skip the session. Pick the moments.
    Be selective: an editor wants the moments that matter, not every chuckle.
 5. Log them in one call with `events_createMany`, each with `atSec` taken from the segment's
    `[@seconds]` stamp and a short `message` quoting or describing the moment. To correct events

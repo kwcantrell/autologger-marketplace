@@ -14,9 +14,8 @@ For each session:
 1. Read everything: `sessions_get`, `topics_list` (segment ranges), `events_list` (`compact: true`),
    and the WHOLE transcript, once, with `transcript_text` `{format: "compact", stampEverySec: 0}` in
    ~30-minute pages: every segment carries a `[@seconds]` stamp, so take citation times from those
-   (no second pass in lines format). "(transcript is empty: no speech detected)" with
-   `transcriptStatus` `done` is final: write no recap and report it; "(no transcript yet: …)" or
-   "(no transcript: transcription failed …)": report it. Diarization
+   (no second pass in lines format). If it returns no segments (the text says
+   why), write no recap for that session and report the reason. Diarization
    can merge or swap speakers: attribute lines by content, and run `transcript_find` `suspect: true`
    to see the turns most likely to mix two voices before quoting from them.
 2. Read the existing recap if there is one (`wiki_get` {showId, title} with the title you were given).
@@ -30,16 +29,13 @@ For each session:
    - `## People and things mentioned` — `[[links]]` only to pages that exist, others plain text;
    - `## Sponsors` — cited ad reads, if any;
    - bottom: `← [[previous recap]] · [[next recap]] →`.
-   Citations: use the short form `[HH:MM:SS](@<startSec>-<endSec>)` — it cites the recap's own session
-   (`[@<startSec>-<endSec>]` without a label; another session: `[label](@<sessionId>:<s>-<e>)`) —
-   seconds from session start, never past the audio end (`audioSeconds` from `sessions_get`; up to 5 s
-   over is clamped on save). A timecode label must match `t` (a range label like `1:01:01–1:02:00` must also match `to`). Every specific claim gets one.
+   Citations: follow the Citations section of the `autologger:show-wiki` skill (load it once), with
+   the start time as label: `[HH:MM:SS](@<startSec>-<endSec>)`. Every specific claim gets one.
    Before saving, check each paragraph against the transcript text you read: no facts from memory, no
    names that aren't in the transcript. A person or topic with no page stays plain text and goes in
    your notes as a candidate page — never a dangling `[[link]]`, never silently dropped.
-4. Each save returns `citationCount` and `badCitations` for the page: fix every bad citation with
-   `wiki_patch` before moving on (no need to lint the whole show after each save).
-   `clampedCitations` lists ends that were clamped (stored `endSec` vs `sentEndSec`): a later `wiki_patch` `find` must use the stored end.
+4. Fix every `badCitations` entry with `wiki_patch` before moving on (no need to lint the whole
+   show after each save).
 
 Write NOTES FOR SHARED PAGES to `<notes folder>/<sessionId>.md` (create it with your file tools) as
 cited bullets — host facts; the guest's key facts; other existing people mentioned;

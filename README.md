@@ -97,7 +97,7 @@ Needs the `autologger` plugin (it uses that MCP connection).
 | `visual-review` | Looks over every page at desktop, tablet and phone width for visual bugs and files an issue for each. |
 | `bug-hunt` | Tries to break the local stack (odd input, races, undo, access, API edges) and files an issue per reproducible bug; security findings are reported privately. |
 
-The QA and design agents write only inside the **Smoke Team** team, which `scripts/seed.mjs` creates.
+The QA and design agents share one set of sandbox rules (`references/qa-sandbox.md`: sign-in, writing only inside the **Smoke Team** team that `scripts/seed.mjs` creates, filing issues).
 
 **Tooling**
 
@@ -138,7 +138,7 @@ Pairs with `autologger-dev`, which holds the implementation guides it points to.
 .claude-plugin/marketplace.json     all plugins, versions, dependencies and the pinned external skills
 plugins/autologger/                 .claude-plugin/plugin.json, .mcp.json, skills/*, agents/
 plugins/autologger-ask/             .claude-plugin/plugin.json, skills/*, agents/
-plugins/autologger-dev/             .claude-plugin/plugin.json, .mcp.json, skills/*, agents/, hooks/, scripts/
+plugins/autologger-dev/             .claude-plugin/plugin.json, .mcp.json, skills/*, agents/, references/, hooks/, scripts/
 plugins/autologger-contribute/      .claude-plugin/plugin.json, skills/*, hooks/, scripts/
 ```
 

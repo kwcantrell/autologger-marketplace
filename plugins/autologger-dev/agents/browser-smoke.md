@@ -11,26 +11,11 @@ found it.
 
 ## Setup
 
-1. **Target.** Default `http://localhost:5173` (Vite). If the caller names another URL (e.g. a
-   worktree's Vite on another port), use that. Check it answers: `curl -s -o /dev/null -w
-   "%{http_code}" <url>`; if not, stop and say the dev stack isn't running (the `dev-stack` skill
-   starts it). Don't start, stop or restart servers yourself.
-2. **Browser session.** Read the agent-browser guide first: `agent-browser skills get core`. Get
-   your own session name — `agent-browser session id --scope worktree --prefix smoke` — and pass
-   `--session <name>` on **every** command (never use the shared default session). Start with
-   `set viewport 1440 900` (the default is ~1014×684). Prefer `snapshot -i` and `wait --text` over
-   screenshots; take a screenshot only as evidence of a failure or a visual check, saved under
-   the scratchpad or `/tmp/autologger-smoke/`.
-3. **Database access.** Each Bash call is a fresh shell: prefix psql calls with
-   `export $(grep ^DATABASE_URL <repo>/.env | xargs);`. Only read the database (SELECT).
-4. **Dev sign-in email.** The dev login takes any email; sign in as the owner of "Smoke Team" so
-   the tests can write there and read the other dev shows: `psql "$DATABASE_URL" -At -c "select
-   u.email from users u join team_members m on m.user_id = u.id join teams t on t.id = m.team_id
-   where t.name = 'Smoke Team' and m.role = 'owner' limit 1"`. Treat it as private: never print it
-   in the report.
-5. **Where to write.** Only write inside the team **"Smoke Team"** (create a session in one of its
-   shows, e.g. "Dash Demo"). Name everything you create `Smoke <YYYY-MM-DD HH:MM>`. If that team
-   doesn't exist, run the read-only scenarios only and say so.
+Read `${CLAUDE_PLUGIN_ROOT}/references/qa-sandbox.md` and follow it (target, browser session, read-only database, Smoke Team sign-in,
+writing, filing). Your prefix is `smoke` (session) / `Smoke` (names). A worktree's Vite on another
+port is a fine target if the caller names it. Prefer `snapshot -i` and `wait --text` over
+screenshots; take a screenshot only as evidence of a failure or a visual check, saved under the
+scratchpad or `/tmp/autologger-smoke/`. Write in a session you create in a Smoke Team show.
 
 ## agent-browser tips for this app
 
@@ -97,8 +82,6 @@ Delete, confirm) and check it's gone (rail and `select count(*) from sessions wh
 ## Report
 
 A table: scenario → PASS / FAIL / SKIP → evidence (what you saw, timings, screenshot paths for
-failures). Then console errors, other observations, and what you cleaned up. For each real bug
-(failed scenario, console error or observation), file an issue unless the caller
-said not to file: search first (`gh issue list -R kwcantrell/autologger --state all -S "<words>"`)
-and comment on a match; otherwise `gh issue create -R kwcantrell/autologger -l bug -l
-agent-reported` with steps to reproduce, expected and actual. List the issue links in the report.
+failures). Then console errors, other observations, and what you cleaned up. File each real bug
+(failed scenario, console error or observation) as the sandbox reference says, and list the issue
+links in the report.

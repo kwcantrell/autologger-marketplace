@@ -77,8 +77,9 @@ Unless the user said not to, `wiki_upsert` a `question` page (`compact: true`) i
   (`t`/`to` in seconds), then `[[links]]` to the person/topic/bit pages involved.
 - Link back: if a person or topic page is central, `wiki_patch` it to add
   `- [[<question title>]]` under a `## Questions` heading (append if missing).
-- The save result lists `badCitations` (`unknown_session`, `bad_range`, `past_end`,
-  `label_mismatch`); fix them with `wiki_patch`. `clampedCitations` lists ends that were clamped (stored `endSec` vs `sentEndSec`): a later `wiki_patch` `find` must use the stored end. Then run `wiki_lint` for any link it reports.
+- Citations follow the Citations section of the `autologger:show-wiki` skill: fix every
+  `badCitations` entry from the save result with `wiki_patch`, then run `wiki_lint` for any link it
+  reports.
 
 Mention that the page is in the show's wiki and every save is a revision the user can restore.
 
