@@ -51,11 +51,18 @@ Each clip: `{ sessionId, startSec, endSec, label }` — seconds from the session
    again — retry logs no new events, so prefer it over deleting and re-creating. A `bad_request` from the retry means a clip's session lost its YouTube source: create a
    new compilation without those clips. Users can also press Retry on the Compilations page.
 
-## Private videos and the bot check: build locally
+## Private videos and the bot check
 
 The server can't download audio imported from **private** videos (`media_list` → `sourcePrivate:
 true`), so `compilations_create` rejects those clips ("the video is private (imported with the
-local import helper)…"), and a server build can fail on YouTube's bot check. Then:
+local import helper)…"), and a server build can fail on YouTube's bot check.
+
+**Bot check or "…the cookies have probably expired":** the team's YouTube sign-in is missing or
+stale. Fix it first — `media_youtubeAccess`, then ask the user to sign in and agree to sending the
+cookies, and `media_setYoutubeCookies` (step 2 of the autologger `import-videos` skill) — then
+`compilations_retry {compilationId}`. Build locally only if the user declines that.
+
+**Private videos (or the user declines a server sign-in):**
 
 1. `compilations_create` again with the same clips and `buildLocally: true`. It stays `queued`
    with progress "Waiting for a local build".

@@ -1,6 +1,6 @@
 ---
 name: import-videos
-description: Import one YouTube video or a whole playlist into an AutoLogger show — one session per video, audio download and transcription — and optionally annotate each session afterwards (transcript cleanup, topics, events, dashboard, wiki). Use when the user gives YouTube links or a playlist (public or private) and asks to create sessions, import, transcribe or log them.
+description: Import one YouTube video or a whole playlist into an AutoLogger show — one session per video, audio download (the server downloads it, signed in to YouTube with the team's sign-in) and transcription — and optionally annotate each session afterwards (transcript cleanup, topics, events, dashboard, wiki). Use when the user gives YouTube links or a playlist (public or private) and asks to create sessions, import, transcribe or log them, or asks to set up or refresh the YouTube sign-in for their team.
 argument-hint: "[YouTube URL or playlist] [team/show]"
 ---
 
@@ -23,7 +23,60 @@ the whole list — keep existing ones by `id`). If the user names a team that do
   and episode-specific jargon on the **session** instead (`sessions_create` / `sessions_update`
   `keyTerms`).
 
-## 2. Import
+## 2. Make sure the team is signed in to YouTube
+
+The AutoLogger server downloads the videos itself. YouTube usually blocks downloads from servers
+("Sign in to confirm you're not a bot") unless they are signed in, so each team has one YouTube
+sign-in — the cookies of a browser signed in to YouTube — that every show of the team uses.
+yt-dlp has no password login; cookies are the only way.
+
+Before the first import, call `media_youtubeAccess({ showId })`:
+- `configured: true` and `lastOkAt` newer than `lastFailedAt` (or neither set yet): go on to
+  step 3.
+- `configured: false`, or `lastFailedAt` newer than `lastOkAt` (signed out or expired): set it
+  up as below. Also do this when an import fails with "YouTube is blocking this server's
+  downloads (bot check)", "…the cookies have probably expired" or "YouTube requires a signed-in
+  account" — don't retry the import until the sign-in is fixed.
+
+Setting the sign-in (needs owner or admin of the team; `teams_list` shows the role):
+
+1. **Ask the user to sign in.** Tell them the server needs a YouTube sign-in for the team and ask
+   them to open YouTube in a browser on this computer and sign in — preferably with a spare
+   Google account in a browser profile they use only for this, because the cookies give full
+   access to that account and YouTube invalidates the server's copy when the same profile keeps
+   using YouTube. Ask which browser and profile (`firefox`, `chrome`, `chrome:Profile 2`, …).
+   Wait for them to say they are signed in.
+2. **Ask for consent, explicitly, before reading or sending any cookies.** Say what will happen:
+   "I'll read the YouTube cookies of <browser> on this computer and upload the youtube.com /
+   google.com ones to <AutoLogger URL> as the YouTube sign-in of team <team name>. Anyone who
+   can read the server's database can use them to act as that Google account. OK?" Only go on
+   after a clear yes; if they decline, offer the local import helper (below) instead.
+3. **Export and upload.**
+   - **Claude Code on the user's computer** (needs `yt-dlp`): export to a private temp file,
+     keeping only the YouTube lines, then send them:
+     ```sh
+     d=$(mktemp -d) && yt-dlp --cookies-from-browser <browser> --cookies "$d/c.txt" \
+       --skip-download --quiet --no-warnings 'https://www.youtube.com/watch?v=jNQXAC9IVRw'
+     grep -E '^(#HttpOnly_)?\.youtube\.com' "$d/c.txt"; rm -rf "$d"
+     ```
+     (yt-dlp may print a format error; the cookie file is still written. Chrome may need to be
+     closed, and macOS may show a keychain prompt.) Pass that text as `cookies` to
+     `media_setYoutubeCookies({ showId, cookies })` — or `teamId` — and don't repeat the cookie
+     values in your messages. If the user has `AUTOLOGGER_URL` and `AUTOLOGGER_TOKEN` set, the
+     import helper does the same without the cookies passing through the conversation:
+     `node autologger-import.mjs youtube-login --team <teamId> --cookies-from-browser <browser>`.
+   - **Anywhere else** (cloud, remote agent): you can't read their browser. Ask them to run the
+     `youtube-login` command above themselves, or to paste a cookies.txt export into
+     **Settings › Team details › YouTube access** in AutoLogger.
+4. **Check the result.** `check.ok: true` → go on. `check.ok: false` means YouTube refused them
+   already (signed out, or the browser rotated them since the export): ask the user to reload
+   YouTube signed in, and export again.
+
+Afterwards tell the user the sign-in works for every show of the team, and that signing out of
+YouTube in that browser profile (or using YouTube a lot in it) ends it; you can refresh it the
+same way.
+
+## 3. Import
 
 - **Playlist:** one `media_importPlaylist` call (`showId`, `url` with `list=`, `order:
   "playlist"` or `"reverse"` for newest-first channel playlists, optional `titleTemplate` with
@@ -35,37 +88,34 @@ the whole list — keep existing ones by `id`). If the user names a team that do
   Session dates are set from the YouTube upload date when the audio arrives.
 - **Single video:** `sessions_create` (clear `title`; omit `episode` to use the show counter),
   then `media_importYoutube`.
+- **Audio only, no transcript:** pass `transcribe: false` to either call: the audio is downloaded
+  and its waveform drawn, but nothing is transcribed (transcribe later per session with
+  `media_retranscribe`).
 - **Per-episode key terms:** after the playlist call, `sessions_update` each session with
   `keyTerms` for its guest/subject **before** its transcription starts — or set them later and
   `media_retranscribe` (which replaces manual transcript edits).
 
-### Private playlists, or the server hits YouTube's bot check
+### Fallback: the local import helper
 
-The server can't download private or account-only videos, and from a datacenter IP YouTube may
-block it ("YouTube is blocking this server's downloads (bot check)" or "requires a signed-in
-account" from `media_importPlaylist` / `media_importYoutube` or a failed `youtube_import` job).
-Don't retry server imports then: use the **local import helper**, which downloads on the user's
-own computer with their browser's YouTube login and uploads only the audio. Their cookies never
-leave their machine.
+Only when the user doesn't want to give the server a YouTube sign-in (step 2), or for videos the
+signed-in account can't watch: the **local import helper** downloads on the user's own computer
+with their browser's YouTube login and uploads only the audio; their cookies never leave their
+machine.
 
 1. Get it from the user's AutoLogger server:
-   `curl -fLO <AUTOLOGGER_URL>/api/importer/autologger-import.mjs` (Node 20+; needs `yt-dlp` on
+   `curl -fLO <AUTOLOGGER_URL>/api/importer/autologger-import.mjs` (Node 22+; needs `yt-dlp` on
    `PATH`). It needs `AUTOLOGGER_URL` (the server origin) and `AUTOLOGGER_TOKEN` — a personal
    access token the user creates in **Settings › Agents**. Ask the user to set the token in their
    environment; never ask them to paste it into the chat.
-2. Ask which browser they're signed in to YouTube with (`chrome`, `firefox`, `safari`, `edge`, …).
-3. Preview, then import:
+2. Preview, then import:
    `node autologger-import.mjs playlist '<url>' --show <showId> --cookies-from-browser <browser> --dry-run`,
    then the same without `--dry-run`. One video: `video '<url>' --session <sessionId>` (or
    `--show <showId>`). Options: `--order reverse`, `--title-template`.
-   - **Running in Claude Code on the user's own computer:** you can run these commands yourself
-     with Bash after the user agrees; reading their browser cookies may show a keychain prompt.
-   - **Running anywhere else** (cloud, remote agent): you can't — give the user the commands.
-4. Re-running resumes (stored audio is skipped). Sessions look like server imports
+3. Re-running resumes (stored audio is skipped). Sessions look like server imports
    (`sourceKind: "youtube"`, `sourceUrl`); `media_list` shows `sourcePrivate: true` for audio
-   from private videos. Then wait for transcription as below (`kinds: ["transcribe"]`).
+   from private videos.
 
-## 3. Wait
+## 4. Wait
 
 The worker downloads, then transcribes each session as soon as its own download finishes (two jobs
 at a time; an hour of audio takes well under a minute to transcribe). Wait with
@@ -79,11 +129,11 @@ waiting for the whole playlist. Then `jobs_list({ showId, status: ["failed"] })`
 found" or a Deepgram key error means the server is misconfigured (tell the user; don't retry
 blindly). A failed `youtube_import` job carries the video's `sourceUrl`: to retry a transient
 failure (network, throttling), call `media_importYoutube` with that `sourceUrl` and the job's
-`sessionId`. Without a Deepgram key the audio imports but is never transcribed. The transcribe job's
+`sessionId`. A sign-in error here means the team's YouTube sign-in stopped working: redo step 2, then retry. Without a Deepgram key (or with `transcribe: false`) the audio imports but is never transcribed. The transcribe job's
 `progress` ends with key-term hit counts ("key terms: Tom Segura ×41, …") — a term showing up
 where it shouldn't is a sign of key-term bleed.
 
-## 4. Annotate (if asked)
+## 5. Annotate (if asked)
 
 Per session, in this order: `transcript-cleanup` → `session-topics` → `log-moments` →
 `session-dashboard` → `show-wiki` (recap only). For many sessions:
