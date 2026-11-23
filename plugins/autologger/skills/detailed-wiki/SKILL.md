@@ -1,6 +1,6 @@
 ---
 name: detailed-wiki
-description: Build or rebuild a detailed, cited wiki for a whole AutoLogger show (or a batch of sessions) — an in-depth recap per session where every segment, story and quote cites the session range it comes from, then the show-wide pages (host, recurring people, guests, bits, topics and a hub with an episode guide) updated from those recaps. Use when the user asks for "detailed wikis for each session", to document or fill out a whole show's wiki, to turn the wiki into a knowledge base, or to refresh it after importing many episodes.
+description: Build or rebuild a detailed, cited wiki for a whole AutoLogger show (or a batch of sessions) — an in-depth recap per session where every segment, story and quote cites the session range it comes from, then the show-wide pages (host, recurring people, guests, bits, topics and a hub with an episode guide) updated from those recaps. Use when the user asks for "detailed wikis for each session", to document or fill out a whole show's wiki, or to refresh it after importing many episodes. For the full pipeline including transcript cleanup, topics, events and a searchable knowledge graph, use knowledge-graph.
 argument-hint: "<show> [sessions]"
 ---
 

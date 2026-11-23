@@ -12,7 +12,7 @@
     {
       "name": "autologger",
       "source": "./plugins/autologger",
-      "description": "For producers and operators: connect Claude to your AutoLogger server over MCP, import YouTube videos and playlists, clean up transcripts, generate topics, log moments, build dashboards, keep the show wiki (including detailed whole-show wikis), look up moments, write session briefs and report problems.",
+      "description": "For producers and operators: connect Claude to your AutoLogger server over MCP, import YouTube videos and playlists, clean up transcripts, generate topics, log moments, build dashboards, keep the show wiki (including detailed whole-show wikis), build a show knowledge graph searchable for moments and clips, look up moments, write session briefs and report problems.",
       "version": "1.11.0",
       "category": "productivity",
       "tags": [
@@ -76,7 +76,7 @@
       "name": "autologger-contribute",
       "source": "./plugins/autologger-contribute",
       "description": "How to contribute to AutoLogger: a guided first tour, live starter tasks, the idea-to-PR workflow, a pre-PR check, tracking follow-ups as GitHub issues (enforced by a hook) and how to improve these plugins.",
-      "version": "1.1.6",
+      "version": "1.1.7",
       "category": "development",
       "tags": [
         "autologger",

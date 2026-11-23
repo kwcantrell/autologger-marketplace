@@ -12,12 +12,13 @@ to `autologger-ask:ask` (needs the `autologger-ask` plugin) instead.
 
 ## Steps
 
-0. **About a person, recurring bit or topic with a wiki page?** Use the knowledge graph first:
-   `graph_entity {showId, entity}` (aliases, the sessions it appears in, related pages), then
-   `moments_search {showId, entities: [...]}` — two entities find where they come up together —
-   optionally with `query`. Moments come with `startSec`/`endSec` ranges and a description; add
-   `mergeGapSec` for clip ranges. Fall back to `search` below when the show has no wiki or the
-   entity has no page.
+0. **About a person, recurring bit or topic of a show with a wiki?** If the server has the
+   knowledge-graph tools, start there (resolve `showId` with `shows_list` when the question names
+   no show): `graph_entity {showId, entity}` (aliases, the sessions it appears in, related pages),
+   then `moments_search {showId, entities: [...]}` — two entities find where they come up together
+   — optionally with `query`. Moments come with `startSec`/`endSec` ranges and a description; add
+   `mergeGapSec` for clip ranges. When the tools aren't there, the show has no wiki or the entity
+   has no page, go to step 1.
 1. Start with `search` — full-text over events, transcript lines, topics, wiki pages and sessions
    the user can access. Try 2–3 phrasings (names, key nouns, synonyms); narrow with `showId`,
    `sessionId` or `kinds` when the question is specific. A call that returns exactly `limit` hits
@@ -28,7 +29,7 @@ to `autologger-ask:ask` (needs the `autologger-ask` plugin) instead.
 3. For logged-event questions ("which sessions had an audio issue") `search` with
    `kinds: ["event"]` and the button name (events are indexed by category; hits carry the session
    title and date). Use `events_list` with `categoryIds` only for one session's detail.
-4. Check the show wiki first for answers already written: `wiki_list` with `kind: "question"`,
+4. Also check the show wiki for answers already written: `wiki_list` with `kind: "question"`,
    `include: "summary"`; and `wiki_get` by title for people and recurring bits — it often answers
    "who is…" and "what is…" directly.
 
