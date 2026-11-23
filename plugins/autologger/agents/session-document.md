@@ -29,6 +29,12 @@ Per session, in order:
    with `transcript_updateSegments`, spills across speaker changes with
    `transcript_mergeSegments` / `transcript_splitSegment`. Clear errors only; one `Note` event per
    kind of fix.
+   **Then name every generic voice the transcript identifies** ("Producer 2", "Speaker 3", a
+   booth voice): addressed by name ("Carly, you're what? 19?"), naming themselves, or named a few
+   seconds later ("…Carly. Sorry, Carly.") → `transcript_renameSpeaker` with `fromSec`/`toSec`
+   for that stretch, using the roster's name. Entity search and the wiki credit people by speaker
+   label, so a named crew member left as "Producer 2" loses their moments. List the voices you
+   left generic because the transcript doesn't say who they are.
 3. **Topics** (`topics_replace`): 10–25 per hour, specific titles, a one-line summary naming the
    people and bits involved (summaries are matched against entity names).
 4. **Events** (`events_createMany`) with the conventions' buttons, ~25–60 per hour; names in the

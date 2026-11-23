@@ -35,7 +35,10 @@ Read one representative transcript (compact, `stampEverySec: 0`) and write
 `<notes>/conventions.md`, which every later agent receives:
 
 - **Speaker roster**: names for host(s) and recurring voices, only as the transcript supports
-  them; fixed labels for the rest ("Producer", "Crew", "Clip", "Music", "Guest: <name>").
+  them; fixed labels for the rest ("Producer", "Crew", "Clip", "Music", "Guest: <name>"). For
+  named crew who speak from the booth, say how to recognise them (how the host addresses them,
+  what they handle) so each session agent can rename their stretches instead of leaving
+  "Producer 2".
 - **Canonical names** of recurring segments/bits, people and running jokes, each with the
   misspellings heard — these become shared page titles and aliases in stage 3; fix them now.
   Aliases also tag topics, events and transcript lines that mention them, so only specific names:
@@ -111,7 +114,10 @@ Follow `detailed-wiki` sections 2–3 (planning, disjoint writers, reading befor
    page opens with its cross-episode synthesis.
 5. Overreach: reread each synthesis statement against its citations — a thread is not a cause,
    repeated jokes are not an arc, and a name said a few seconds later settles who was meant.
-6. Leftover misheard names: `search {showId, kinds: ["transcript"]}` per misspelling in the
+6. Generic voices: per session, `transcript_find {patterns: [<crew names from the roster>],
+   context: 2}` — where a name is said next to a "Producer 2"/"Speaker N" line, read it and rename
+   that voice's stretch if the transcript settles who it is.
+7. Leftover misheard names: `search {showId, kinds: ["transcript"]}` per misspelling in the
    conventions file.
 
 ## Report
