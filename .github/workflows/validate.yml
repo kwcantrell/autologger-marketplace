@@ -38,4 +38,26 @@ jobs:
           expect 0 "$repo/.env.example"
           expect 0 "$repo/apps/server/src/db/schema.ts"
           expect 0 "/tmp/elsewhere/.env"
+      - name: Test the agent branch guard
+        run: |
+          guard=plugins/autologger-dev/scripts/guard-edits.mjs
+          repo=$(mktemp -d)
+          mkdir -p "$repo/apps/server/src/db" "$repo/apps/web"
+          touch "$repo/apps/server/src/db/schema.ts"
+          git -C "$repo" init -q -b main
+          f="$repo/apps/web/x.tsx"
+          expect() {
+            code=0
+            payload="{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$f\"}${2:+,\"agent_type\":\"$2\"}}"
+            echo "$payload" | node "$guard" 2>/dev/null || code=$?
+            if [ "$code" != "$1" ]; then echo "expected exit $1 for agent '$2' on $(git -C "$repo" branch --show-current), got $code"; exit 1; fi
+          }
+          expect 2 "autologger-dev:react-expert"
+          expect 2 "autologger-dev:ui-designer"
+          expect 2 "react-expert"
+          expect 0 ""
+          expect 0 "autologger-dev:ops-reviewer"
+          expect 0 "other-plugin:react-expert"
+          git -C "$repo" switch -q -c react/x
+          expect 0 "autologger-dev:react-expert"
           echo "guard hook ok"
