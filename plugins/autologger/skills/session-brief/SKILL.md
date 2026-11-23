@@ -13,10 +13,9 @@ A read-only summary for people who will not re-listen to the recording.
 `sessions_get`, `events_list` (`compact: true`), `topics_list`, `transcript_text` once with
 `{format: "compact", stampEverySec: 0}` (~25-minute `fromSec`/`toSec` pages for long sessions;
 take timecodes from the per-segment `[@seconds]` stamps, no second pass in lines format), and
-`dashboards_list` if there are dashboards with useful numbers. "(transcript is empty: no speech
-detected)" with `transcriptStatus` `done` is final — brief from events and topics only, don't wait
-or retranscribe; "(no transcript yet: …)" → wait with `jobs_list`; "(no transcript: transcription
-failed …)" → say so in the brief.
+`dashboards_list` if there are dashboards with useful numbers. No segments? The text says why (the
+`transcript_text` description lists each case and what to do); an empty transcript with status
+`done` is final: brief from events and topics only. A failed one: say so in the brief.
 
 ## Write
 

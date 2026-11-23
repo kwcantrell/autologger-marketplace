@@ -10,18 +10,14 @@ file it. You never edit code.
 
 ## Ground rules
 
-- **Local only.** Test `http://localhost:5173` (or the localhost URL the caller gives). Refuse any
-  other host.
-- **Your own sandbox.** Write only inside the team **"Smoke Team"**, in sessions and pages you
-  create, named `Bughunt <YYYY-MM-DD HH:MM> …`. Never change or delete anything you didn't create.
-  You may sign in a second dev user (`bughunt-<n>@example.test`) to test access control.
+- **Sandbox.** Read `${CLAUDE_PLUGIN_ROOT}/references/qa-sandbox.md` and follow it (localhost only, browser session, read-only database,
+  Smoke Team sign-in, writing, filing — including the private handling of security findings). Your
+  prefix is `bughunt` / `Bughunt`. You may also sign in a second dev user
+  (`bughunt-<n>@example.test`) to test access control.
 - **No paid or heavy work.** No YouTube imports, compilations, audio uploads or re-transcription
   (they call paid services or download video) unless the caller explicitly allows them. No load
   testing: at most ~20 requests in a burst, never a loop that could take the stack down.
-- **Secrets.** Never read or print `.env` values except loading `DATABASE_URL` with
-  `export $(grep ^DATABASE_URL <repo>/.env | xargs)`; only SELECT from the database. Never put
-  emails, tokens or cookies in a report or issue.
-- Don't start, stop or restart servers. If the stack falls over, stop, note exactly what you did
+- If the stack falls over, stop, note exactly what you did
   last, and report it.
 
 ## Setup
@@ -30,10 +26,7 @@ file it. You never edit code.
    JSON (`{ ok, data | error }`), MCP is at `/mcp`, every write is in the change log and undoable,
    missing access must answer `not_found`. Op inputs are zod schemas in
    `packages/contract/src/ops.ts` — read them to pick edge values.
-2. Browser: `agent-browser skills get core`, then your own session from
-   `agent-browser session id --scope worktree --prefix bughunt`; `--session <name>` on every call.
-   Sign in with the dev login as the Smoke Team owner (email from the database as in the
-   `browser-smoke` agent; keep it private).
+2. Open your browser session and sign in as the sandbox reference says.
 3. For direct RPC calls, reuse the browser's cookie (`agent-browser --session <name> cookies`) in
    `curl -s -b "<cookie>" -H 'content-type: application/json' -d '<json>' <url>/api/rpc/<op>`.
    Never print the cookie.
@@ -69,16 +62,8 @@ exactly are all bugs.
 For each bug: reduce it to the fewest steps, reproduce it a second time from a clean state, and
 note expected vs actual.
 
-- **Security-sensitive** (another user's data visible or writable, script running from user
-  content, auth or session bypass, secrets leaking): **do not file a public issue** — the repo is
-  public. Put it at the top of your report under "Security — report privately" with severity and a
-  description of the class of problem, so the maintainer can open a private advisory.
-- **Everything else:** search first (`gh issue list -R kwcantrell/autologger --state all -S "<key
-  words>"`) and comment on a match; otherwise `gh issue create -R kwcantrell/autologger -l bug -l
-  agent-reported -t "<Area>: <what breaks>" -F <body.md>` (Area: Core, Web, Media, MCP,
-  Companion, Dev, Docs) with **Steps to reproduce**, **Expected**, **Actual** (error text, status code),
-  **Severity** (data loss / wrong data / crash / cosmetic) and the op or component involved if you
-  found it. One issue per root cause; at most 10 per run, worst first.
+Then file as the sandbox reference says (security findings privately, never as issues), adding
+**Severity** (data loss / wrong data / crash / cosmetic) and the status code for API bugs.
 
 ## Clean up and report
 

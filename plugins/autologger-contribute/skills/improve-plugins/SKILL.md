@@ -18,7 +18,7 @@ plugins/autologger-contribute/     # newcomers: onboarding, workflow, follow-up 
   .claude-plugin/plugin.json       # name, version, description, userConfig, dependencies
   skills/<name>/SKILL.md           # frontmatter: name, description, argument-hint
   agents/<name>.md                 # frontmatter: name, description, tools, model, isolation
-  hooks/hooks.json  .mcp.json  scripts/
+  hooks/hooks.json  .mcp.json  scripts/  references/   # references/: shared Markdown agents read
 ```
 
 `marketplace.json` also lists **pinned external skill plugins** (`react-best-practices`,
@@ -49,6 +49,11 @@ inline the rule or say which plugin to install.
   files instead of pasting code that will drift.
 - Keep it short — the always-on cost is the description; the body loads only when used
   (`claude plugin details <plugin>@autologger` shows the token cost).
+- **One copy per rule.** Tool mechanics (formats, limits, error codes) belong in the MCP tool
+  descriptions in the app — point at them rather than restating them. A rule several skills
+  share lives in one skill (e.g. citations in `show-wiki`, shared wiki pages in `detailed-wiki`)
+  and the others name it; agents that share setup read a file in `references/` via
+  `${CLAUDE_PLUGIN_ROOT}` (substituted in skill and agent bodies, not set in Bash).
 - Read-only skills say so. Write skills in `autologger` / `autologger-ask` mention that changes
   are undoable from the session's Agents tab (wiki and event-button changes: the show's Changes
   page).

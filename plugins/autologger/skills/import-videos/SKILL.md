@@ -152,8 +152,8 @@ Per session, in this order: `transcript-cleanup` → `session-topics` → `log-m
   which buttons to use for what, the recap title pattern ("Ep N: <Guest>"), the dashboard layout
   (same widget ids everywhere), and how to write spoken numbers/math in transcripts.
 - Sessions are independent, so they can be split between parallel agents (about 3–4 hours of
-  audio per agent). Shared wiki pages (people, the series hub, recurring bits) are written once
-  at the end by one writer, from facts the session agents collected with episode + timecode.
+  audio per agent). Wiki recaps and the shared pages (people, the hub, recurring bits) follow the
+  `detailed-wiki` skill, which owns the rules for writing them in parallel.
 - Finish with a consistency pass: same speaker names, same dashboard layout, and `wiki_lint` for
   the show returns no unresolved links.
 - Ask every agent to report friction (tool, what it needed, what happened). Merge the reports,

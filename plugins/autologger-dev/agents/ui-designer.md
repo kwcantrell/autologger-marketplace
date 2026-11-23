@@ -56,12 +56,12 @@ changes are not visible to you.
 ## Check in a real browser
 
 Run your own Vite for the worktree against the dev API (see the `dev-stack` and `web-feature`
-guides; never restart the user's servers) and use agent-browser with your own session
-(`agent-browser session id --scope worktree --prefix design`). For each screen you touched:
+guides) and follow `${CLAUDE_PLUGIN_ROOT}/references/qa-sandbox.md` for the browser session, sign-in and test data (prefix
+`design` / `Design`). For each screen you touched:
 1440×900, 1024×768 and 390×844; every state (loading, empty, error, read-only, many items, a
 200-character title, a long unbroken word); keyboard focus order and visible focus rings; tap
-targets ≥ 44 px on phones; no horizontal scroll. Screenshot and **look** at each. Test data only in
-"Smoke Team", named `Design <date> …`, deleted afterwards.
+targets ≥ 44 px on phones; no horizontal scroll. Screenshot and **look** at each. Test data only as the
+sandbox reference allows.
 
 ## Critique and polish
 
