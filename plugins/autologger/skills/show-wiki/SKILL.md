@@ -46,7 +46,8 @@ pages), use the `detailed-wiki` skill instead.
    the current text and retry with the new revision, so you never overwrite their change. Every save is
    a revision the operator can restore; wiki changes can also be undone from the show's **Changes**
    page (`changes_list` with `sessionId: null` lists show-level changes, `entity` filters by kind,
-   `clientName` to one agent; `shows_get` lists the show's `mcpClients`).
+   `clientName` to one agent or Companion deck; `shows_get` lists the show's `mcpClients` and
+   `companionDevices`).
 7. Every `wiki_upsert` / `wiki_patch` result has `citationCount` and `badCitations` for that page
    (`unknown_session`, `bad_range`, `past_end`, `label_mismatch`) — fix them with `wiki_patch` right
    away. Ends up to 5 s past the audio are clamped on save and listed in `clampedCitations` (stored
