@@ -13,7 +13,7 @@
       "name": "autologger",
       "source": "./plugins/autologger",
       "description": "For producers and operators: connect Claude to your AutoLogger server over MCP, import YouTube videos and playlists, clean up transcripts, generate topics, log moments, build dashboards, keep the show wiki (including detailed whole-show wikis), look up moments, write session briefs and report problems.",
-      "version": "1.10.3",
+      "version": "1.10.4",
       "category": "productivity",
       "tags": [
         "autologger",
@@ -27,7 +27,7 @@
       "name": "autologger-ask",
       "source": "./plugins/autologger-ask",
       "description": "Ask questions about a show and get timecode ranges per session, saved as cited knowledge-base pages in the show wiki, plus server-built video compilations of YouTube-sourced ranges. Needs the autologger plugin.",
-      "version": "0.3.6",
+      "version": "0.3.7",
       "category": "productivity",
       "tags": [
         "autologger",
@@ -41,7 +41,7 @@
       "name": "autologger-dev",
       "source": "./plugins/autologger-dev",
       "description": "For AutoLogger contributors: implementation guides for ops, schema changes, web and Companion work, the dev stack and the MCP surface; architecture-reviewer, UI-designer, React-expert, browser-smoke, visual-review and bug-hunt agents; a guard hook; MCP connections to your dev server and shadcn/ui. Brings in the impeccable design skill and four pinned React skills.",
-      "version": "1.4.3",
+      "version": "1.4.4",
       "category": "development",
       "tags": [
         "autologger",

@@ -26,7 +26,9 @@ If the user gave an id (`ses_…`), use it. Otherwise call `sessions_list` (opti
 3. `topics_list` — what already exists. If the operator has hand-edited topics
    (`changes_list` {sessionId, entity: "topic", via: "web"}), say so and ask
    before replacing them.
-4. `events_list` — operator markers (e.g. "Scene", "Ad read") often mark segment boundaries.
+4. `events_list` — operator markers often mark segment boundaries. The show's event buttons are
+   in `sessions_get` (`categories`), so you can tell which ones mean a break (e.g. "Scene",
+   "Ad read") without a `categories_list` call.
 
 If the transcript is machine-made and garbled (technical terms, numbers, math), clean it first
 with the `transcript-cleanup` skill so topic titles and summaries quote it correctly.
@@ -39,7 +41,7 @@ with the `transcript-cleanup` skill so topic titles and summaries quote it corre
 - Level 2 (optional): notable sub-moments inside a level-1 topic.
 - `startSec` comes from the `[@seconds]` stamps in `transcript_text`. Set `durationSec` so level-1
   topics tile the session without overlapping.
-- Save in ONE call: `topics_replace` with the full list (`compact: true` returns only
+- Save in ONE call: `topics_replace` with the full list (it returns only
   `{ id, startSec, level, title }` per topic). It replaces everything and each change is
   recorded, so the operator can undo it from the session's **Agents** tab.
 

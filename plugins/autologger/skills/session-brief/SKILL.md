@@ -10,7 +10,10 @@ A read-only summary for people who will not re-listen to the recording.
 
 ## Gather
 
-`sessions_get`, `events_list` (`compact: true`), `topics_list`, `transcript_text` once with
+`sessions_get`, `events_list` (compact `{ id, atSec, category, message }` rows by default; for
+problem categories, a second `events_list` with their `categoryIds` — ids in `sessions_get`
+`categories` — and `compact: false` adds each event's `value`, e.g. which mic an audio issue was),
+`topics_list`, `transcript_text` once with
 `{format: "compact", stampEverySec: 0}` (~25-minute `fromSec`/`toSec` pages for long sessions;
 take timecodes from the per-segment `[@seconds]` stamps, no second pass in lines format), and
 `dashboards_list` if there are dashboards with useful numbers. No segments? The text says why (the

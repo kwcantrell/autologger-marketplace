@@ -57,9 +57,13 @@ Rules:
   transaction (authorize there too; `run` re-authorizes and gets the result as its third
   argument). Long-polling reads use `watch(input, signal)`, which waits on the bus after commit
   and re-runs the op — see `jobs.list`.
-- Agent-facing bulk or large outputs take `compact` (default false): add the compact shape to
-  `CompactOpOutputs` in `packages/contract/src/ops.ts` (not a union in `OpOutputs`), so
-  `OpResult<N, I>` types callers by their input with no casts.
+- Agent-facing bulk or large outputs take `compact` (the shared `compact` schema in
+  `packages/contract/src/ops.ts`): add the compact shape to `CompactOpOutputs` (not a union in
+  `OpOutputs`), so `OpResult<N, I>` types callers by their input with no casts. `executeOp`
+  makes it the default for MCP callers (bearer RPC included) when they don't pass `compact`; the
+  web and Companion keep `compact: false`. Say so in the description ("agents get … by default;
+  pass `compact: false` for …"), and in tests an `asAgent` call that checks the full shape passes
+  `compact: false`.
 - Rows inserted in one transaction share `now()`; give batches explicit, increasing timestamps when
   order matters (see `enqueueJob`'s `at`).
 - Server code runs on Node type stripping: no enums, namespaces or parameter properties; relative

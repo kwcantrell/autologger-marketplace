@@ -11,7 +11,7 @@ Input: showId; for each session its sessionId, the exact recap title (and aliase
 previous/next recap titles, the page titles you may link, and a notes folder.
 
 For each session:
-1. Read everything: `sessions_get`, `topics_list` (segment ranges), `events_list` (`compact: true`),
+1. Read everything: `sessions_get`, `topics_list` (segment ranges), `events_list`,
    and the WHOLE transcript, once, with `transcript_text` `{format: "compact", stampEverySec: 0}` in
    ~30-minute pages: every segment carries a `[@seconds]` stamp, so take citation times from those
    (no second pass in lines format). If it returns no segments (the text says
@@ -19,7 +19,7 @@ For each session:
    can merge or swap speakers: attribute lines by content, and run `transcript_find` `suspect: true`
    to see the turns most likely to mix two voices before quoting from them.
 2. Read the existing recap if there is one (`wiki_get` {showId, title} with the title you were given).
-3. `wiki_upsert` {showId, kind: "session", sessionId, title, compact: true, bodyMd}:
+3. `wiki_upsert` {showId, kind: "session", sessionId, title, bodyMd} (returns a compact summary):
    - opening paragraph (3–5 sentences): who the guest is (only as said), what's covered, the tone;
    - `## Guest` — background as told, linked `[[Guest]]` if that page exists;
    - `## Rundown` — one `###` per segment in order (follow topics, merge tiny ones), heading with a

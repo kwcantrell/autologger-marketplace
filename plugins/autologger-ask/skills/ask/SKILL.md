@@ -67,7 +67,7 @@ supports.
 
 ## 5. Save to the knowledge base
 
-Unless the user said not to, `wiki_upsert` a `question` page (`compact: true`) in the show:
+Unless the user said not to, `wiki_upsert` a `question` page in the show:
 - `title`: the question, phrased generally ("What does Tom think about free tiers?"); reuse the
   exact title of an existing question page to update it (then pass `baseRevision` = the revision
   you read; on `conflict` re-read it and merge your answer into the current text).
