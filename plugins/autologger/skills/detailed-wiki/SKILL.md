@@ -15,10 +15,9 @@ shared pages in one careful pass. Every save is a wiki revision the user can res
 1. `shows_list` → `showId`; `sessions_list` for the show (or the sessions the user named). Skip
    sessions whose transcript isn't done (`transcriptStatus`) and say which. Transcripts are read
    once with `transcript_text` `{format: "compact", stampEverySec: 0}` and times taken from the
-   per-segment `[@seconds]` stamps (no second pass in lines format). "(transcript is empty: no
-   speech detected)" with status `done` is final: skip that session (don't wait or
-   `media_retranscribe`); "(no transcript yet: …)" → wait with `jobs_list`; "(no transcript:
-   transcription failed …)" → report it.
+   per-segment `[@seconds]` stamps (no second pass in lines format). No segments? The text says why (the
+   `transcript_text` description lists each case); an empty transcript with status `done` is
+   final: skip that session and say so.
 2. `wiki_list` with `include: "summary"` (page through `nextOffset`): note existing recap titles
    (kind `session`, tied to `sessionId`), people, topics, bits and question pages, with exact titles.
 3. Decide the recap title pattern now (reuse the existing one, e.g. `Ep 4: <Guest>`), so recaps can
@@ -65,14 +64,8 @@ linking recurring people, topics, bits and question pages.
 
 ## Citations (all pages)
 
-On recaps the short form `[HH:MM:SS](@<startSec>-<endSec>)` (the recap's own session; bare
-`[@<startSec>-<endSec>]` without a label); on shared pages `[label](@<sessionId>:<startSec>-<endSec>)`.
-Seconds from the session start (the `[@seconds]` stamps of `transcript_text`), `t` at the set-up line, `to`
-where the moment ends (+~2 s), never past the session's audio end (up to 5 s over is clamped). A
-timecode label must match `t` (a range label's end must match `to`). They render as chips that play the range. Every specific claim gets
-one. Every save returns the page's `citationCount`, `badCitations` (fix as you go) and
-`clampedCitations` (ends trimmed to the audio; later `wiki_patch` finds must use the stored end).
-For progress, `wiki_list` with `citesSession`, `countOnly: true` and `limit: 1` gives `total`
+Follow the Citations section of the `show-wiki` skill (load it); recaps label citations with
+the start time, `[HH:MM:SS](@<startSec>-<endSec>)`. For progress, `wiki_list` with `citesSession`, `countOnly: true` and `limit: 1` gives `total`
 (citing pages) and `citationTotal` per session without pulling every range.
 
 ## Accuracy

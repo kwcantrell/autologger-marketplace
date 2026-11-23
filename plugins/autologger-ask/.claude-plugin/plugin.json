@@ -1,6 +1,6 @@
 {
   "name": "autologger-ask",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Ask questions about an AutoLogger show and get the answer as timecode ranges in each session, saved to the show wiki as a cited knowledge-base page — and, for sessions imported from YouTube, a server-built video compilation of those ranges. Needs the autologger plugin (its MCP connection).",
   "author": {
     "name": "AutoLogger"
