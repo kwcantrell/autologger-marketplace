@@ -12,6 +12,12 @@ to `autologger-ask:ask` (needs the `autologger-ask` plugin) instead.
 
 ## Steps
 
+0. **About a person, recurring bit or topic with a wiki page?** Use the knowledge graph first:
+   `graph_entity {showId, entity}` (aliases, the sessions it appears in, related pages), then
+   `moments_search {showId, entities: [...]}` — two entities find where they come up together —
+   optionally with `query`. Moments come with `startSec`/`endSec` ranges and a description; add
+   `mergeGapSec` for clip ranges. Fall back to `search` below when the show has no wiki or the
+   entity has no page.
 1. Start with `search` — full-text over events, transcript lines, topics, wiki pages and sessions
    the user can access. Try 2–3 phrasings (names, key nouns, synonyms); narrow with `showId`,
    `sessionId` or `kinds` when the question is specific. A call that returns exactly `limit` hits
