@@ -77,8 +77,8 @@ Follow `detailed-wiki` sections 2–3 (planning, disjoint writers, reading befor
     changes over the run, relationships to other entities;
   - topic pages: the recurring positions and how they develop, then the items;
   - the hub: format, schedule, sponsors and contact details said on air, how the show evolves,
-    segment debuts, dating clues, then the episode guide **once** (a table with summaries and
-    segments);
+    segment debuts, dating clues, then the episode guide **once** (a table with summaries, segments and
+    one citation per row);
 - **then the detail**: one list item per **story, letter, headline, quote or fact** with its
   **own tight citation** (the stretch where it is said, usually under ~2 minutes; often a setup
   and a punchline range), `[[linking]]` every other person, bit and topic page it mentions, every
@@ -104,9 +104,13 @@ Follow `detailed-wiki` sections 2–3 (planning, disjoint writers, reading befor
 4. Wide citations: in `graph_export {section: "moments"}`, citations on shared pages longer than
    ~3 minutes are segment-wide, not moments — split them into per-item citations. Also check
    that shared-page moments link other entities (their `entities` list more than the page
-   itself), that no page repeats the same items in two sections or another page's items, and
-   that every shared page opens with its cross-episode synthesis.
-5. Leftover misheard names: `search {showId, kinds: ["transcript"]}` per misspelling in the
+   itself), that no page repeats the same items in two sections or another page's items (each
+   quote in **one** section: the full item under By episode or a theme, the synthesis only
+   linking it), that every row of the hub's episode guide has a citation, and that every shared
+   page opens with its cross-episode synthesis.
+5. Overreach: reread each synthesis statement against its citations — a thread is not a cause,
+   repeated jokes are not an arc, and a name said a few seconds later settles who was meant.
+6. Leftover misheard names: `search {showId, kinds: ["transcript"]}` per misspelling in the
    conventions file.
 
 ## Report
