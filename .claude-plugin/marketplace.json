@@ -40,8 +40,8 @@
     {
       "name": "autologger-dev",
       "source": "./plugins/autologger-dev",
-      "description": "For AutoLogger contributors: skills for adding ops, schema changes, web and Companion work, running the dev stack and checking the MCP surface; an architecture reviewer, a UI designer and guard rails. Brings in the impeccable design skill and the shadcn/ui MCP server.",
-      "version": "1.3.0",
+      "description": "For AutoLogger contributors: skills for adding ops, schema changes, web and Companion work, running the dev stack and checking the MCP surface; an architecture reviewer, a UI designer, a React expert and guard rails. Brings in the impeccable design skill, four React skills and the shadcn/ui MCP server.",
+      "version": "1.4.0",
       "category": "development",
       "tags": [
         "autologger",
@@ -49,6 +49,7 @@
         "development",
         "drizzle",
         "mcp",
+        "react",
         "shadcn",
         "typescript"
       ],
@@ -56,6 +57,18 @@
         {
           "name": "impeccable",
           "marketplace": "impeccable"
+        },
+        {
+          "name": "react-best-practices"
+        },
+        {
+          "name": "composition-patterns"
+        },
+        {
+          "name": "react-view-transitions"
+        },
+        {
+          "name": "react-expert"
         }
       ]
     },
@@ -69,6 +82,89 @@
         "autologger",
         "contributing",
         "onboarding"
+      ]
+    },
+    {
+      "name": "react-best-practices",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/vercel-labs/agent-skills.git",
+        "path": "skills/react-best-practices",
+        "sha": "5a37a6329fbad3666c3207392a6a7c0110e92efb"
+      },
+      "description": "Vercel Engineering's React performance rules (waterfalls, bundle size, re-renders, rendering), prioritised by impact. Packages one skill from vercel-labs/agent-skills (MIT), pinned to a commit.",
+      "version": "1.0.0",
+      "category": "development",
+      "tags": [
+        "react",
+        "performance"
+      ],
+      "strict": false,
+      "skills": [
+        "./"
+      ]
+    },
+    {
+      "name": "composition-patterns",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/vercel-labs/agent-skills.git",
+        "path": "skills/composition-patterns",
+        "sha": "5a37a6329fbad3666c3207392a6a7c0110e92efb"
+      },
+      "description": "Vercel Engineering's React composition patterns: compound components, context providers, avoiding boolean-prop sprawl, React 19 APIs. Packages one skill from vercel-labs/agent-skills (MIT), pinned to a commit.",
+      "version": "1.0.0",
+      "category": "development",
+      "tags": [
+        "react",
+        "components",
+        "architecture"
+      ],
+      "strict": false,
+      "skills": [
+        "./"
+      ]
+    },
+    {
+      "name": "react-view-transitions",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/vercel-labs/agent-skills.git",
+        "path": "skills/react-view-transitions",
+        "sha": "5a37a6329fbad3666c3207392a6a7c0110e92efb"
+      },
+      "description": "Vercel Engineering's guide to React's View Transition API: route, shared-element, enter/exit and list animations. Packages one skill from vercel-labs/agent-skills (MIT), pinned to a commit.",
+      "version": "1.0.0",
+      "category": "development",
+      "tags": [
+        "react",
+        "animation",
+        "view-transitions"
+      ],
+      "strict": false,
+      "skills": [
+        "./"
+      ]
+    },
+    {
+      "name": "react-expert",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/jeffallan/claude-skills.git",
+        "path": "skills/react-expert",
+        "sha": "4b94d98605baf742b751bb82832ace5caf942271"
+      },
+      "description": "Jeff Allan's React 18/19 specialist skill: components, hooks, state management, Suspense, forms and performance. Packages one skill from jeffallan/claude-skills (MIT), pinned to a commit.",
+      "version": "1.0.0",
+      "category": "development",
+      "tags": [
+        "react",
+        "hooks",
+        "typescript"
+      ],
+      "strict": false,
+      "skills": [
+        "./"
       ]
     }
   ]
