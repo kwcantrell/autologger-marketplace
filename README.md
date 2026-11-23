@@ -76,7 +76,7 @@ Needs the `autologger` plugin (it uses that MCP connection).
 | `browser-smoke` agent | Clicks through the main flows in a real browser and reports pass/fail. |
 | `visual-review` agent | Looks over every page at desktop, tablet and phone width for visual bugs and files an issue for each. |
 | `bug-hunt` agent | Tries to break the local stack (odd input, races, undo, access, API edges) and files an issue per reproducible bug; security findings are reported privately. |
-| Guard hook | Blocks edits to generated migrations (`apps/server/drizzle/**`) and real `.env` files in AutoLogger checkouts. |
+| Guard hook | Blocks edits to generated migrations (`apps/server/drizzle/**`) and real `.env` files in AutoLogger checkouts, and stops the `react-expert` and `ui-designer` agents from editing while the checkout is on its default branch. |
 | `autologger-local` MCP server | Your dev server's MCP endpoint (`dev_url`, default `http://localhost:5173`), so you can try new tools immediately. Use exactly the server's `PUBLIC_URL` origin — OAuth discovery rejects other hostnames (`127.0.0.1` ≠ `localhost`). If both plugins point at the same URL, Claude Code keeps a single connection. |
 | `scripts/seed.mjs` | Demo team, show, session, events, topics, dashboard and wiki through the RPC API. |
 
