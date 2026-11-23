@@ -24,8 +24,9 @@ Read the full description of the `dashboards_save` tool. It defines:
 
 1. Resolve the session; call `dashboards_list` — update an existing dashboard (pass its
    `dashboardId`) instead of creating a near-duplicate.
-2. Look at the data: `sessions_get`, `events_list`, `topics_list`; `transcript_text` only if the
-   user wants content-level stats.
+2. Look at the data: `sessions_get` (its `categories` are the button names that
+   `category_count` and `events` queries take), `events_list`, `topics_list`; `transcript_text`
+   only if the user wants content-level stats.
 3. Preview each live query with `dashboards_query` so you bind the right field names and know the
    widget won't be empty.
 4. Prefer live queries for anything that keeps changing while the session is logged. Use static
@@ -63,7 +64,8 @@ Read the full description of the `dashboards_save` tool. It defines:
 - Keep everything live: Length = `stat` on `summary_stats` field `audioSec` with
   `format: "duration"`; chapter lengths = horizontal `bar` on `{ "name": "topics", "maxLevel": 1 }`
   with x `label`, y `durationSec`, `format: "minutes"`, `labelMaxChars: 18`.
-- `dashboards_save` with `compact: true` returns only `{ id, revision }`.
+- `dashboards_save` and `dashboards_updateWidgets` return only `{ id, revision }`; pass
+  `compact: false` only if you need the saved spec back.
 - When several dashboards belong to one series, keep the same layout and widget ids so they read
   as a set. When one layout is applied to many sessions, some will lack speech, topics or events:
   give those widgets `emptyText` (e.g. "No speech in this session"), or `hideWhenEmpty: true` where

@@ -50,13 +50,13 @@ Errors are usually **systematic**: fix patterns, not single words.
    each line lists `matches` and `patternIndexes`; `context: 1` adds neighbours; `idsOnly: true`
    returns just `{ id, startSec, speaker }`. `\m`/`\M` treat apostrophes as word boundaries, so
    check `matches`.
-5. **Fix systematic patterns with rules.** `transcript_replace` with `rules`, `dryRun: true` and
-   `compact: true` returns counts per rule plus 5 trimmed samples; review, then run it again
-   without `dryRun` (still `compact: true` — the full before/after of every line can be tens of KB
-   on a long session). Add rules that will recur to the show with `shows_update`
+5. **Fix systematic patterns with rules.** `transcript_replace` with `rules` and `dryRun: true`
+   returns counts per rule plus 5 trimmed samples; review, then run it again without `dryRun`.
+   Don't pass `compact: false` — the full before/after of every line can be tens of KB on a long
+   session. Add rules that will recur to the show with `shows_update`
    (`transcriptRules`, the full ordered list). Guest-specific fixes stay on the session.
 6. **Fix one-off lines** with one `transcript_updateSegments` call (`{ segmentId, text }`,
-   `compact: true`). Get ids from `transcript_find` (`idsOnly`) or `transcript_text` with
+   returns `{ updated, ids }`). Get ids from `transcript_find` (`idsOnly`) or `transcript_text` with
    `ids: true`.
    - Write numbers and math **as spoken** ("x squared", "dy dx"), consistently across a show.
    - Fix only clear errors; don't rephrase. If unsure, leave the line and list it.

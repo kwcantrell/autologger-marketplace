@@ -11,23 +11,24 @@ fact, from the transcript.
 
 ## Steps
 
-1. Resolve the session (`sessions_list` / `sessions_get`). Note `showId`, `frameRate` and
-   `transcriptStatus`; without a transcript, stop and say why.
-2. `categories_list` for the show — these are the event buttons. Prefer an existing button whose
-   name fits what the user wants to log. Pass it as `categoryId`. Only use a free `category` name
-   when nothing fits, and tell the user you did (free labels show in grey).
+1. Resolve the session (`sessions_list` / `sessions_get`). Note `frameRate` and
+   `transcriptStatus`; without a transcript, stop and say why. `sessions_get` also lists the
+   show's event buttons as `categories` — no `categories_list` call needed. Prefer an existing
+   button whose name fits what the user wants to log and pass its name as `category`. Only use a
+   free `category` name when nothing fits, and tell the user you did (free labels show in grey).
    - `dropdown` buttons take a `value` from their `options`.
    - `toggle` buttons take `value` = the button's `onLabel` or `offLabel`.
-3. `events_list` with `compact: true` (`{ id, atSec, category, message }` per event) — skip
-   moments the operator already logged (same category within ~10 s). `atSec` is seconds on the
-   transcript's scale. `events_createMany` with `compact: true` returns `{ id, atSec, category }`
-   per created event, so no separate check is needed.
-4. Read `transcript_text` once with `{format: "compact", stampEverySec: 0}` (page long sessions
+2. `events_list` (`{ id, atSec, category, message }` per event by default) — skip moments the
+   operator already logged (same category within ~10 s). `atSec` is seconds on the transcript's
+   scale.
+3. Read `transcript_text` once with `{format: "compact", stampEverySec: 0}` (page long sessions
    with ~25-minute `fromSec`/`toSec` windows) — every segment start has a `[@seconds]` stamp, so
    no second pass in lines format. No segments? The text says why (the `transcript_text` description lists each case and what to do); an empty transcript with status `done` is final: skip the session. Pick the moments.
    Be selective: an editor wants the moments that matter, not every chuckle.
-5. Log them in one call with `events_createMany`, each with `atSec` taken from the segment's
-   `[@seconds]` stamp and a short `message` quoting or describing the moment. To correct events
+4. Log them in one call with `events_createMany`, each with `atSec` taken from the segment's
+   `[@seconds]` stamp and a short `message` quoting or describing the moment. It returns
+   `{ ids, freeLabels }`: any `freeLabels` entry is a name that matched no button — fix a typo
+   with `events_updateMany`, or mention the free label if it was intended. To correct events
    afterwards (message, time, button), use one `events_updateMany` call instead of many
    `events_update` calls.
 
