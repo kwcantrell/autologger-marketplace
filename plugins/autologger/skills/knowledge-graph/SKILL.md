@@ -38,6 +38,8 @@ Read one representative transcript (compact, `stampEverySec: 0`) and write
   them; fixed labels for the rest ("Producer", "Crew", "Clip", "Music", "Guest: <name>").
 - **Canonical names** of recurring segments/bits, people and running jokes, each with the
   misspellings heard — these become shared page titles and aliases in stage 3; fix them now.
+  Aliases also tag topics, events and transcript lines that mention them, so only specific names:
+  no bare first names ("Tom"), no generic words ("the show", "Producer", "the special").
 - **Show rules**: misheard show/host/site/sponsor names → `shows_update {transcriptRules}`;
   names said every episode → `keyTerms`. Apply the rules to already-transcribed sessions with
   `transcript_replace` without `rules`.
@@ -59,7 +61,7 @@ Follow `detailed-wiki` sections 2–3 (planning, disjoint writers, reading befor
 `baseRevision`, fact checks), with these additions:
 
 - create pages only for people, bits and topics in **two or more** sessions, titled per the
-  conventions file, with every alias from it and the notes;
+  conventions file, with every specific alias from it and the notes (never generic words);
 - a **"By episode"** list on every shared page: one list item per appearance, one claim each,
   cited with the long form and `[[linking]]` every other entity in it — that is what makes the
   page's moments findable;
@@ -70,6 +72,9 @@ Follow `detailed-wiki` sections 2–3 (planning, disjoint writers, reading befor
 1. `wiki_lint` → fix unresolved links, bad citations, orphans.
 2. `graph_entity` for every shared page: `momentCount` > 0; `sessions` match the notes; `related`
    sensible. 0 moments means no cited sentence links that page — fix the pages that mention it.
+   Then count each entity's topic and event tags (`graph_export {section: "moments"}`): one that
+   tags a large share of them (a crew page on every event, the hub on everything) has a generic
+   alias — remove it with `wiki_upsert`.
 3. `moments_search` spot checks: one entity, two entities, a theme query; open three results'
    `startSec` with `transcript_text` to confirm the range. Fix pages, not queries.
 4. Leftover misheard names: `search {showId, kinds: ["transcript"]}` per misspelling in the
