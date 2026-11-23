@@ -68,7 +68,8 @@ supports.
 
 Unless the user said not to, `wiki_upsert` a `question` page (`compact: true`) in the show:
 - `title`: the question, phrased generally ("What does Tom think about free tiers?"); reuse the
-  exact title of an existing question page to update it.
+  exact title of an existing question page to update it (then pass `baseRevision` = the revision
+  you read; on `conflict` re-read it and merge your answer into the current text).
 - `bodyMd`: the synthesis, then `## Where it comes up` with one bullet per range as a citation link
   `[<session title> 00:12:30–00:15:10](@<sessionId>:750-910) — what happens` (short form; the long
   `/sessions/<sessionId>?t=750&to=910` link also works)
