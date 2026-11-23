@@ -9,6 +9,7 @@ people who **build** it, and one for people **getting started** as contributors.
 claude plugin marketplace add kwcantrell/autologger-marketplace
 claude plugin install autologger@autologger                 # users
 claude plugin install autologger-ask@autologger             # ask questions, cited answers, clip compilations
+claude plugin marketplace add pbakaus/impeccable            # needed by autologger-dev
 claude plugin install autologger-dev@autologger             # contributors
 claude plugin install autologger-contribute@autologger      # new contributors
 ```
@@ -66,6 +67,9 @@ Needs the `autologger` plugin (it uses that MCP connection).
 | `/autologger-dev:companion-module` | The `/ws/companion` protocol and the Bitfocus module, kept in sync. |
 | `/autologger-dev:dev-stack` | Start / check / seed / stop the local stack; dev login. |
 | `/autologger-dev:mcp-check` | See and call the MCP tools the way an agent does. |
+| `ui-designer` agent | Designs and refines web app screens within DESIGN.md: plans, builds with the shadcn/Base UI primitives, checks at three widths, critiques and polishes with impeccable. |
+| impeccable (dependency) | Paul Bakaus's design skill (`/impeccable:impeccable <command>`: shape, critique, audit, polish, harden, adapt…), installed with `autologger-dev` from the `impeccable` marketplace. |
+| `shadcn` MCP server | The official shadcn/ui MCP server (`shadcn@4.23.0 mcp --cwd apps/web`): search, view and add registry components for the Base UI setup in `apps/web/components.json`. Needs `npx`. |
 | `ops-reviewer` agent | Reviews a diff against the architecture rules before you commit. |
 | `browser-smoke` agent | Clicks through the main flows in a real browser and reports pass/fail. |
 | `visual-review` agent | Looks over every page at desktop, tablet and phone width for visual bugs and files an issue for each. |

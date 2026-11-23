@@ -1,7 +1,7 @@
 {
   "name": "autologger-dev",
-  "version": "1.2.2",
-  "description": "Build AutoLogger: skills for ops, schema changes, web and Companion work, the dev stack and the MCP surface; an architecture reviewer, browser smoke-test, visual-review and bug-hunt agents; hooks that protect generated migrations and secrets; and an MCP connection to your local dev server.",
+  "version": "1.3.0",
+  "description": "Build AutoLogger: skills for ops, schema changes, web and Companion work, the dev stack and the MCP surface; architecture-reviewer, browser smoke-test, visual-review, bug-hunt and ui-designer agents; hooks that protect generated migrations and secrets; an MCP connection to your local dev server and the shadcn/ui MCP server. Depends on the impeccable design plugin.",
   "author": {
     "name": "AutoLogger"
   },
@@ -23,5 +23,11 @@
       "required": true,
       "default": "http://localhost:5173"
     }
-  }
+  },
+  "dependencies": [
+    {
+      "name": "impeccable",
+      "marketplace": "impeccable"
+    }
+  ]
 }

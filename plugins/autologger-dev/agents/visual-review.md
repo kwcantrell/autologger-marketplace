@@ -51,6 +51,10 @@ at **1440×900, 1024×768 and 390×844**:
    title, an emoji, a long unbroken word, zero items and many items.
 5. `agent-browser console` / `errors` after each page: React warnings about keys or DOM nesting
    often come with a visual bug.
+6. If the `impeccable` skill is available, run `/impeccable:impeccable critique` (UX) and
+   `/impeccable:impeccable audit` (technical quality) on the source of a page that looked off, as
+   a second lens. Keep only findings you can see on screen or point to in the code, and judge
+   them against DESIGN.md — its advice to add colour, glows or motion is taste, not a defect.
 
 **What counts:** overlap, clipping, overflow, misalignment against neighbours, inconsistent
 spacing or type against DESIGN.md, contrast too low to read, wrong colours for the state, broken

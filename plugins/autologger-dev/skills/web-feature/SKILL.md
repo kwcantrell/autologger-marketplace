@@ -17,6 +17,28 @@ Read `apps/web/DESIGN.md` (the visual system) before writing UI.
   (`src/lib/timecode.ts`).
 - If an op you need does not exist, add it server-side first (`add-op` skill) — no bespoke routes.
 
+## Design tools
+
+`autologger-dev` brings two design aids. Both serve `DESIGN.md`, never the other way round.
+
+- **impeccable** (a plugin dependency, installed with `autologger-dev`): one skill with
+  subcommands, `/impeccable:impeccable <command>` (or `/impeccable <command>` if installed with
+  `npx impeccable install`). Useful here: `shape` to plan a screen before code; `critique`
+  (scored UX review) and `audit` (technical quality) on a finished screen; `polish`, `harden`
+  (errors, overflow, edge cases), `adapt` (phone/tablet), `clarify` (copy), `onboard` (empty
+  states and first run), `layout` and `typeset` for targeted fixes. Treat its advice as input:
+  anything that conflicts with `DESIGN.md` (new colours, fonts, glows, gradients, decorative
+  motion) loses. Don't run `init`, `document` or `extract` without asking — they write
+  `PRODUCT.md` / `DESIGN.md` and would overwrite the design contract.
+- **shadcn/ui MCP server** (`shadcn`, bundled with `autologger-dev`, reads
+  `apps/web/components.json`): search, view and get examples of registry components and the
+  `add` command for one (`search_items_in_registries`, `view_items_in_registries`,
+  `get_item_examples_from_registries`, `get_add_command_for_items`, `get_audit_checklist`). The
+  project is shadcn on **Base UI** (`base-nova`): use `render`, not Radix `asChild`; toasts are
+  `sonner` as already used here. Add a new primitive only when `src/shared/components/ui` lacks
+  it, run the add command from `apps/web`, then restyle it to the `--si-*` tokens and DESIGN.md
+  radii/type before use; never overwrite an existing primitive with the registry version.
+
 ## UI
 
 - Use the primitives in `src/shared/components/ui` and `src/shared/ui` (dialogs, sheets, tables,
