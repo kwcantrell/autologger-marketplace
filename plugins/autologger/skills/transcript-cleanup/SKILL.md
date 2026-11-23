@@ -18,8 +18,10 @@ Errors are usually **systematic**: fix patterns, not single words.
 
 ## Steps
 
-1. `sessions_get` — `transcriptStatus` must be `done`. Read the transcript with
-   `transcript_text` and `format: "compact"` (same-speaker lines merged, ~40% smaller). The
+1. `sessions_get` — `transcriptStatus` must be `done`. Read the transcript once with
+   `transcript_text` `{format: "compact", stampEverySec: 0}` (same-speaker lines merged, a
+   `[@seconds]` stamp per segment; with `ids: true` a stamp reads `{seg_…@123.4}`) — no second
+   pass in lines format. "(transcript is empty: no speech detected)" is final: nothing to clean. The
    result's `totalSegments` and `durationSec` tell you how to page: about 25-minute windows
    (`fromSec`/`toSec`) for hour-long sessions; pages don't overlap.
 2. **Speakers.** Rename `Speaker 1`, `Speaker 2`, … with `transcript_renameSpeaker` once the
@@ -28,7 +30,8 @@ Errors are usually **systematic**: fix patterns, not single words.
    `fromSec`/`toSec` (and no `from` to relabel everyone in the range, e.g. "Promo" for 0–47 s). Clips
    or songs played inside the show get "Clip" / "Music"; an unnamed third voice, "Producer".
    A line holding two voices: `transcript_splitSegment` with `atText` (the phrase where the second
-   speaker starts) or `atSec`, then rename the new piece. To find them, run `transcript_find` with
+   speaker starts; prefer it — imported transcripts have interpolated word timings, so `atSec` is
+   approximate there) or `atSec`, then rename the new piece. To find them, run `transcript_find` with
    `suspect: true` (`countOnly: true` first for the numbers): it lists turns where a question is
    followed by 20+ more words (`reasons: ["question"]`, `matches` = the question — split right
    after it, `speaker` = the other person) and turns over 60 s (`"long"`). Many hits are
@@ -61,6 +64,10 @@ Errors are usually **systematic**: fix patterns, not single words.
    - Fix only clear errors; don't rephrase. If unsure, leave the line and list it.
    - Unchanged words keep their timings, so prefer small edits over rewriting lines.
    - Out-of-order or wrongly split lines: `transcript_mergeSegments` / `transcript_splitSegment`.
+   - Don't use `transcript_import` for corrections: `mode: "replace"` overwrites the whole
+     transcript, manual fixes included. It is only for bringing in an external transcript (SRT,
+     VTT, JSON) or restoring one; it returns a `groupId` (`changes_revertGroup` undoes it), and
+     show transcript rules aren't applied on import — run `transcript_replace` afterwards.
 7. **Re-check** with the same `transcript_find` patterns (`countOnly: true`).
 8. **Leave a trace.** One `Note` event per pattern family (what, how many lines, time range,
    "corrected by hand") with `events_createMany`. Fix a wrong note later with `events_updateMany`.

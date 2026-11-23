@@ -23,8 +23,9 @@ pages), use the `detailed-wiki` skill instead.
 ## Steps
 
 1. Resolve the session; `sessions_get` gives `showId`.
-2. Read the source: `transcript_text` (`format: "compact"`, paged for long sessions),
-   `topics_list`, `events_list` (`compact: true`).
+2. Read the source: `transcript_text` once with `{format: "compact", stampEverySec: 0}` (paged
+   for long sessions; cite times from the per-segment `[@seconds]` stamps, no second pass in lines
+   format), `topics_list`, `events_list` (`compact: true`). If the text is "(transcript is empty: no speech detected)" with `transcriptStatus` `done`, that is final: skip the session (don't wait or `media_retranscribe`); "(no transcript yet: …)" → wait with `jobs_list`; "(no transcript: transcription failed …)" → report it.
 3. Read the wiki before writing: `wiki_list` for the show returns `{ pages, total, nextOffset }`
    (50 per page by default, `limit` up to 200; pass `offset: nextOffset` until it is null).
    `include: "summary"` adds each page's first paragraph; `include: "body"` the full text (large —

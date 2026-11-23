@@ -78,22 +78,32 @@ same way.
 
 ## 3. Import
 
-- **Playlist:** one `media_importPlaylist` call (`showId`, `url` with `list=`, `order:
-  "playlist"` or `"reverse"` for newest-first channel playlists, optional `titleTemplate` with
-  `{title}` / `{episode}`). It creates one session per video with episode numbers from the show
-  counter, queues every download and returns `created` (session ids, titles, durations) and
-  `skipped` (already imported, private or deleted). Running it again imports only new videos.
-  Agents can't delete sessions (that's web-only), so for an unfamiliar playlist call it first with
-  `dryRun: true` to see what would be created.
+- **Playlist:** `media_importPlaylist` (`showId`, `url` with `list=`, `order: "playlist"` or
+  `"reverse"` for newest-first channel playlists, optional `titleTemplate` with `{title}` /
+  `{episode}`). It creates one session per video with episode numbers from the show counter and
+  queues every download; videos already imported, private or deleted are `skipped`, so running it
+  again imports only new videos. Agents can't delete sessions (web-only), so always:
+  1. `media_youtubeAccess` (step 2).
+  2. Call it with `dryRun: true` and read `downloadCheck`: `"blocked"` → don't import; fix the
+     sign-in (step 2) or offer the import helper (below). `"ok"` or `"skipped"` (not checked) → go on.
+  3. From the dryRun's `created[].videoId` and titles, build per-episode
+     `keyTerms: { "<videoId>": ["Guest Name", "jargon"] }` (guests, subjects; skip if none).
+  4. Call again with the same arguments plus `keyTerms` (no `dryRun`). Each session gets its terms
+     before its job is queued, so the first transcription uses them.
   Session dates are set from the YouTube upload date when the audio arrives.
-- **Single video:** `sessions_create` (clear `title`; omit `episode` to use the show counter),
-  then `media_importYoutube`.
-- **Audio only, no transcript:** pass `transcribe: false` to either call: the audio is downloaded
-  and its waveform drawn, but nothing is transcribed (transcribe later per session with
-  `media_retranscribe`).
-- **Per-episode key terms:** after the playlist call, `sessions_update` each session with
-  `keyTerms` for its guest/subject **before** its transcription starts — or set them later and
-  `media_retranscribe` (which replaces manual transcript edits).
+- **Single video:** `sessions_create` (clear `title`, session `keyTerms`; omit `episode` to use the
+  show counter), then `media_importYoutube`.
+- **Already-imported videos only:** to change key terms, `sessions_update` `keyTerms`, then
+  `media_retranscribe` (replaces manual transcript edits). Don't `sessions_update` right after a
+  playlist import: it races the transcription.
+- **Audio only, no transcript:** `transcribe: false` on `media_importYoutube`,
+  `media_importPlaylist` or `media_completeUpload` (helper: `--no-transcribe`): the audio is
+  stored and its waveform drawn, nothing is transcribed (later: `media_retranscribe` per session).
+- **Video that already has captions or a transcript:** import with `transcribe: false`, then
+  `transcript_import` (`format` `"srt"`, `"vtt"` or `"json"`, `mode: "replace"`). With
+  `audioSegmentId` (from `media_list`) times are relative to that recording, as in a subtitle file
+  made from the video; omit it for times from the session start. It is refused while a
+  transcription of that session/recording is pending.
 
 ### Fallback: the local import helper
 
@@ -110,7 +120,8 @@ machine.
 2. Preview, then import:
    `node autologger-import.mjs playlist '<url>' --show <showId> --cookies-from-browser <browser> --dry-run`,
    then the same without `--dry-run`. One video: `video '<url>' --session <sessionId>` (or
-   `--show <showId>`). Options: `--order reverse`, `--title-template`.
+   `--show <showId>`). Options: `--order reverse`, `--title-template`, `--no-transcribe` (helper
+   1.1.0+; re-download an older copy from the URL above).
 3. Re-running resumes (stored audio is skipped). Sessions look like server imports
    (`sourceKind: "youtube"`, `sourceUrl`); `media_list` shows `sourcePrivate: true` for audio
    from private videos.

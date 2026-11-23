@@ -42,7 +42,9 @@ Read `apps/web/DESIGN.md` (the visual system) before writing UI.
   The hero mock is in `landing/heroMock.tsx`; the feature mocks in `landing/mocks.tsx` and
   `landing/wikiMocks.tsx` (the only ones that pull in react-markdown) load lazily near the
   viewport, behind placeholders whose heights are set per mock in `LandingPage.tsx` — if you
-  change a mock's size, re-measure it at 390, 800 and 1440 px and update those heights.
+  change a mock's size, re-measure it at 390, 800, 1024 and 1440 px — plus 1116 px, the
+  `min-[69.75rem]` step, for the Logging, Transcript, Topics and Compilations mocks — and update
+  those heights.
   Either way, check the landing page signed out at 1440 and 390 px.
 
 ## Verify

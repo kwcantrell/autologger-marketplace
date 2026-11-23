@@ -17,7 +17,8 @@ Read the full description of the `dashboards_save` tool. It defines:
 - `span` 1–4 on a 4-column grid
 - data either as static `data` rows you computed, or a live `query`:
   `events_by_category`, `events_over_time` (`bucketSec`), `speaker_talk_time`, `topics`,
-  `events` (`categories`, `limit`), `summary_stats` — each with fixed field names.
+  `events` (`categories`, `limit`), `summary_stats`, `category_count` (`categories`) — each with
+  fixed field names.
 
 ## Steps
 
@@ -37,7 +38,12 @@ Read the full description of the `dashboards_save` tool. It defines:
 ## Gotchas
 
 - The `events` query's `label` field is the **button name**, not a time. For a time column use
-  `atSec` (seconds from the start).
+  `atSec` (seconds from the start, rounded to ms as in `events_list`); a `table` without `columns`
+  shows `atSec` as a duration.
+- Live count of one category on a stat: `{ type: "stat", query: { name: "category_count",
+  categories: ["Key insight"] } }` (0 when none) — not an `events_over_time` bucket workaround.
+- Event `atSec` snaps to the session's frame grid when logged, so compare the values the query
+  returns, not the ones you sent.
 - For a chapter timeline use `{ "name": "topics", "maxLevel": 1 }`; without `maxLevel` the query
   returns every level and the timeline gets crowded.
 - Values can be formatted: `format` on a `stat`, a bar/line value axis, a `pie` (legend and
@@ -59,7 +65,9 @@ Read the full description of the `dashboards_save` tool. It defines:
   with x `label`, y `durationSec`, `format: "minutes"`, `labelMaxChars: 18`.
 - `dashboards_save` with `compact: true` returns only `{ id, revision }`.
 - When several dashboards belong to one series, keep the same layout and widget ids so they read
-  as a set.
+  as a set. When one layout is applied to many sessions, some will lack speech, topics or events:
+  give those widgets `emptyText` (e.g. "No speech in this session"), or `hideWhenEmpty: true` where
+  a blank is better gone (`speaker_talk_time` pies, the `summary_stats` `wpm` stat).
 
 ## Report back
 
