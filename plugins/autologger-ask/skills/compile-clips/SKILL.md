@@ -60,12 +60,17 @@ local import helper)…"), and a server build can fail on YouTube's bot check.
 **Bot check or "…the cookies have probably expired":** the team's YouTube sign-in is missing or
 stale. Fix it first — `media_youtubeAccess`, then ask the user to sign in and agree to sending the
 cookies, and `media_setYoutubeCookies` (step 2 of the autologger `import-videos` skill) — then
-`compilations_retry {compilationId}`. Build locally only if the user declines that.
+`compilations_retry {compilationId}`. Build locally only if the user declines that. Don't retry
+on the server before the sign-in is fixed — it fails the same way.
 
 **Private videos (or the user declines a server sign-in):**
 
-1. `compilations_create` again with the same clips and `buildLocally: true`. It stays `queued`
-   with progress "Waiting for a local build".
+1. A compilation that already exists (failed on the bot check, or still queued for the server):
+   `compilations_retry {compilationId, buildLocally: true}` switches it to a local build — same
+   id, title, clips and Compilation events; don't create it again. The user can do the same with
+   **Build on my computer** on the Compilations page. A new one with private clips:
+   `compilations_create` with `buildLocally: true`. Either way it stays `queued` with progress
+   "Waiting for a local build".
 2. Build it on the user's computer with the local import helper (see the autologger
    `import-videos` skill for getting `autologger-import.mjs` and its `AUTOLOGGER_URL` /
    `AUTOLOGGER_TOKEN`): `node autologger-import.mjs compile <compilationId>
