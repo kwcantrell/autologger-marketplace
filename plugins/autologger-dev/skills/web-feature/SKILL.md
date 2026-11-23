@@ -46,6 +46,12 @@ Read `apps/web/DESIGN.md` (the visual system) before writing UI.
   `min-[69.75rem]` step, for the Logging, Transcript, Topics and Compilations mocks — and update
   those heights.
   Either way, check the landing page signed out at 1440 and 390 px.
+- Docs live in the repo's `docs/` folder and are served at `/docs`: `docs/guide/<slug>.md` (users),
+  `docs/agents/<slug>.md` (agents & MCP), `docs/developers/<slug>.md` (developers), each with front matter
+  (`title`, `section` = folder, `order`, `description`); files without front matter aren't published and
+  bad front matter fails the web build. Link pages as `/docs/<section>/<slug>`, anchors keep hyphens.
+  Renamed a label, added a setting or changed a flow? Update the matching `docs/guide/` page in the
+  same PR. The docs pages reuse the landing header/footer (`routes/landing/chrome.tsx`).
 
 ## Verify
 

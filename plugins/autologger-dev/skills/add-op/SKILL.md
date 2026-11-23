@@ -76,3 +76,5 @@ Call it with `rpc('<name>', input)` from `apps/web/src/api/rpc.ts` and add a que
 
 `npx tsc -p apps/server && npx tsc -p apps/web && (cd apps/server && npx vitest run)`.
 For MCP-exposed ops, run the `mcp-check` skill to see the tool as an agent will.
+If the op adds or changes something users or agents rely on, update the matching page under
+`docs/guide/`, `docs/agents/` or `docs/developers/` (served at `/docs`) in the same PR.
