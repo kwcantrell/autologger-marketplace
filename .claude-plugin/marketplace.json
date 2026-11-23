@@ -5,6 +5,9 @@
     "name": "AutoLogger",
     "url": "https://github.com/kwcantrell/autologger-marketplace"
   },
+  "allowCrossMarketplaceDependenciesOn": [
+    "impeccable"
+  ],
   "plugins": [
     {
       "name": "autologger",
@@ -37,22 +40,30 @@
     {
       "name": "autologger-dev",
       "source": "./plugins/autologger-dev",
-      "description": "For AutoLogger contributors: skills for adding ops, schema changes, web and Companion work, running the dev stack and checking the MCP surface, plus an architecture reviewer and guard rails.",
-      "version": "1.2.2",
+      "description": "For AutoLogger contributors: skills for adding ops, schema changes, web and Companion work, running the dev stack and checking the MCP surface; an architecture reviewer, a UI designer and guard rails. Brings in the impeccable design skill and the shadcn/ui MCP server.",
+      "version": "1.3.0",
       "category": "development",
       "tags": [
         "autologger",
+        "design",
         "development",
-        "typescript",
         "drizzle",
-        "mcp"
+        "mcp",
+        "shadcn",
+        "typescript"
+      ],
+      "dependencies": [
+        {
+          "name": "impeccable",
+          "marketplace": "impeccable"
+        }
       ]
     },
     {
       "name": "autologger-contribute",
       "source": "./plugins/autologger-contribute",
       "description": "How to contribute to AutoLogger: a guided first tour, the idea-to-PR workflow, curated starter tasks, a pre-PR check and how to improve these plugins.",
-      "version": "1.1.3",
+      "version": "1.1.4",
       "category": "development",
       "tags": [
         "autologger",

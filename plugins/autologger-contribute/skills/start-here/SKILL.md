@@ -60,4 +60,4 @@ cd apps/server && npx vitest run
 ## 6. Next
 
 Suggest `/autologger-contribute:first-tasks` to pick something, and `/autologger-contribute:contribute`
-for the workflow. Recommend installing `autologger-dev@autologger` for the implementation skills.
+for the workflow. Recommend installing `autologger-dev@autologger` for the implementation skills (first `claude plugin marketplace add pbakaus/impeccable`: it depends on the impeccable design plugin).
