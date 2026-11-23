@@ -40,7 +40,10 @@ pages), use the `detailed-wiki` skill instead.
    matter again; keep facts grounded in the transcript — never invent biography.
 6. Keep each page's existing structure and tone; don't rewrite what you didn't need to change.
    For a one-line fix or an addition use `wiki_patch` (`edits: [{ find, replace }]` — each `find`
-   must match exactly once — and/or `append`) instead of resending the whole body. Every save is
+   must match exactly once — and/or `append`) instead of resending the whole body. When you edit a
+   page you read earlier, pass `baseRevision` (its `revision` from `wiki_get` / `wiki_list`): if
+   someone saved it since, you get `conflict` and nothing is saved — re-read it, redo your edit on
+   the current text and retry with the new revision, so you never overwrite their change. Every save is
    a revision the operator can restore; wiki changes can also be undone from the show's **Changes**
    page (`changes_list` with `sessionId: null` lists show-level changes, `entity` filters by kind,
    `clientName` to one agent; `shows_get` lists the show's `mcpClients`).
