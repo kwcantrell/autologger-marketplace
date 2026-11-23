@@ -43,6 +43,7 @@ access the first time; run `/mcp` to sign in) and adds skills that use it.
 | **Document the show** | |
 | `/autologger:show-wiki` | Writes a session recap and updates people / recurring-bit pages. |
 | `/autologger:detailed-wiki` | Builds a detailed, cited wiki for a whole show: an in-depth recap per session (written in parallel by the `session-recap` agent), then host, guest, bit, topic and hub pages from those recaps. |
+| `/autologger:knowledge-graph` | The full pipeline that makes a show searchable as a knowledge graph: show-wide conventions first, one read per session (cleanup, topics, events and a recap written as findable moments, by the `session-document` agent), shared entity pages, then a check with `graph_entity` and `moments_search`. Needs AutoLogger with the knowledge-graph tools. |
 | **Look things up (read-only)** | |
 | `/autologger:find-moments` | Quick lookup across sessions, answered in chat with timecodes; nothing saved. For answers worth keeping, use `autologger-ask`. |
 | `/autologger:session-brief` | Editor / producer / social brief for one session, in chat. |

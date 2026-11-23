@@ -10,7 +10,7 @@ The marketplace repo (`kwcantrell/autologger-marketplace`) has this shape:
 
 ```
 .claude-plugin/marketplace.json    # every plugin: name, source, version, description, tags, dependencies
-plugins/autologger/                # users: MCP connection + session skills, session-recap agent
+plugins/autologger/                # users: MCP connection + session skills, session-recap and session-document agents
 plugins/autologger-ask/            # users: cited show Q&A + clip compilations, session-scan agent
 plugins/autologger-dev/            # contributors: implementation skills, agents, guard hook, dev MCP servers
 plugins/autologger-contribute/     # newcomers: onboarding, workflow, follow-up hook
