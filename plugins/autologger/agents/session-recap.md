@@ -12,7 +12,11 @@ previous/next recap titles, the page titles you may link, and a notes folder.
 
 For each session:
 1. Read everything: `sessions_get`, `topics_list` (segment ranges), `events_list` (`compact: true`),
-   and the WHOLE transcript with `transcript_text` `format: "compact"` in ~30-minute pages. Diarization
+   and the WHOLE transcript, once, with `transcript_text` `{format: "compact", stampEverySec: 0}` in
+   ~30-minute pages: every segment carries a `[@seconds]` stamp, so take citation times from those
+   (no second pass in lines format). "(transcript is empty: no speech detected)" with
+   `transcriptStatus` `done` is final: write no recap and report it; "(no transcript yet: …)" or
+   "(no transcript: transcription failed …)": report it. Diarization
    can merge or swap speakers: attribute lines by content, and run `transcript_find` `suspect: true`
    to see the turns most likely to mix two voices before quoting from them.
 2. Read the existing recap if there is one (`wiki_list` kind `session` include `body`).

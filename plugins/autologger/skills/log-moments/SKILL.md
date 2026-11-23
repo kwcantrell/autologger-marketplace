@@ -22,11 +22,12 @@ fact, from the transcript.
    moments the operator already logged (same category within ~10 s). `atSec` is seconds on the
    transcript's scale. `events_createMany` with `compact: true` returns `{ id, atSec, category }`
    per created event, so no separate check is needed.
-4. Read `transcript_text` (`format: "compact"`; page long sessions with ~25-minute
-   `fromSec`/`toSec` windows) and pick the moments.
+4. Read `transcript_text` once with `{format: "compact", stampEverySec: 0}` (page long sessions
+   with ~25-minute `fromSec`/`toSec` windows) — every segment start has a `[@seconds]` stamp, so
+   no second pass in lines format. If the text is "(transcript is empty: no speech detected)" with `transcriptStatus` `done`, that is final: skip the session (don't wait or `media_retranscribe`); "(no transcript yet: …)" → wait with `jobs_list`; "(no transcript: transcription failed …)" → report it. Pick the moments.
    Be selective: an editor wants the moments that matter, not every chuckle.
-5. Log them in one call with `events_createMany`, each with `atSec` taken from the transcript's
-   `@seconds` value and a short `message` quoting or describing the moment. To correct events
+5. Log them in one call with `events_createMany`, each with `atSec` taken from the segment's
+   `[@seconds]` stamp and a short `message` quoting or describing the moment. To correct events
    afterwards (message, time, button), use one `events_updateMany` call instead of many
    `events_update` calls.
 

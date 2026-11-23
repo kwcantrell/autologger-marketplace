@@ -70,7 +70,9 @@ cookies, and `media_setYoutubeCookies` (step 2 of the autologger `import-videos`
    `import-videos` skill for getting `autologger-import.mjs` and its `AUTOLOGGER_URL` /
    `AUTOLOGGER_TOKEN`): `node autologger-import.mjs compile <compilationId>
    --cookies-from-browser <browser>` (needs `yt-dlp` and `ffmpeg`). In Claude Code on the user's
-   own machine you may run it with Bash once they agree; elsewhere give them the command.
+   own machine you may run it with Bash once they agree; elsewhere give them the command in
+   exactly this form (`node autologger-import.mjs compile <id>`) — the web Compilations page shows
+   the same command on a buildLocally compilation, so they can copy it from there too.
 3. Wait with `compilations_get` `waitSec: 55` as usual — it turns `ready` with a `url` once the
    helper has uploaded the MP4.
 
