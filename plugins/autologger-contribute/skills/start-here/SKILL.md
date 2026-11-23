@@ -30,6 +30,8 @@ Show the layout and what lives where:
 | `apps/server/src/{media,worker}` | S3, Deepgram, YouTube, background jobs |
 | `apps/web` | React SPA (design system in `apps/web/DESIGN.md`) |
 | `apps/companion` | Bitfocus Companion hardware module |
+| `apps/importer` | Local import helper (`autologger-import.mjs`): uploads YouTube/local media from a user's machine over RPC |
+| `docs/` | User, agent and developer guides, served by the web app at `/docs` |
 
 ## 3. Follow one op end to end
 

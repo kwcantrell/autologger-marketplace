@@ -30,7 +30,7 @@ Read the full description of the `dashboards_save` tool. It defines:
    widget won't be empty.
 4. Prefer live queries for anything that keeps changing while the session is logged. Use static
    `data` only for numbers you derived yourself (e.g. laughs per minute), and say so in the
-   widget `caption` or `description`.
+   widget `description` (or a `stat`'s `caption` — only `stat` has one).
 5. Lead with 2–4 `stat` widgets (span 1), then charts (span 2), then tables/timelines (span 4).
    Keep titles short. `markdown` is Markdown (tables render; no HTML).
 6. Save with `dashboards_save`. If validation fails, read the error path and fix the spec.
@@ -53,11 +53,11 @@ Read the full description of the `dashboards_save` tool. It defines:
   (about 18) truncates with the full label in the tooltip.
 - Unknown widget fields are rejected with their path (e.g. `spec.widgets[4].colour`) — fix the
   field rather than retrying; nothing is silently dropped.
-- Small fixes to a saved dashboard (a label, a format, a caption): `dashboards_updateWidgets`
+- Small fixes to a saved dashboard (a label, a format, a description): `dashboards_updateWidgets`
   with `[{ id, ...changedFields }]` instead of resending the whole spec (`null` removes an
   optional field). Adding, removing or reordering widgets still uses `dashboards_save`.
 - Speaker talk time is only as good as diarization: if the transcript still has lines that mix
-  two voices, say so in the widget `caption`.
+  two voices, say so in the widget `description` (`caption` exists only on `stat`; unknown fields are rejected).
 - Speaking pace: bind a `stat` to `summary_stats` field `wpm` (live; words over first-to-last
   transcript line, `speechSec`). Don't compute it by hand.
 - Keep everything live: Length = `stat` on `summary_stats` field `audioSec` with

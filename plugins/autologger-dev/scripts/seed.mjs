@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Seed an AutoLogger dev server with demo data through the public RPC API.
 // Usage: node seed.mjs [baseUrl=http://localhost:5173] [email=owner@example.com]
-// Needs DEV_LOGIN=1 on the server. Creates a team, show, session with events, topics,
-// a dashboard and wiki pages, then prints the session URL.
+// Needs DEV_LOGIN=1 on the server. Creates the "Smoke Team" team (the sandbox the browser-smoke,
+// visual-review, bug-hunt and ui-designer agents write in), a show, and a session with a short
+// transcript, events, topics, a dashboard and wiki pages, then prints the session URL.
 
 const base = (process.argv[2] ?? process.env.AUTOLOGGER_URL ?? 'http://localhost:5173').replace(/\/$/, '');
 const email = process.argv[3] ?? 'owner@example.com';
@@ -29,7 +30,7 @@ if (me.status !== 'active') {
   process.exit(1);
 }
 
-const team = await rpc('teams.create', { name: 'Demo Studio' });
+const team = await rpc('teams.create', { name: 'Smoke Team' });
 const show = await rpc('shows.create', { teamId: team.id, name: 'Morning Chat', defaultFrameRate: 29.97 });
 const cats = await rpc('categories.save', {
   showId: show.id,
@@ -43,6 +44,26 @@ const cats = await rpc('categories.save', {
 });
 const byName = Object.fromEntries(cats.map((c) => [c.name, c.id]));
 const session = await rpc('sessions.create', { showId: show.id, title: 'Morning Chat — demo episode', startTimecode: '01:00:00:00' });
+
+const vtt = [
+  'WEBVTT',
+  '',
+  '00:00:01.000 --> 00:00:06.000',
+  '<v Dana>Good morning! You will not believe what happened at the airport.',
+  '',
+  '00:00:06.500 --> 00:00:11.000',
+  '<v Sam>Was it the dog again?',
+  '',
+  '00:04:00.000 --> 00:04:06.000',
+  '<v Dana>Okay, news of the week. Three headlines, and yes, one is about the office dog.',
+  '',
+  '00:13:00.000 --> 00:13:07.000',
+  '<v Sam>Our guest today built their first studio in a garage. Welcome to the show.',
+  '',
+  '00:25:00.000 --> 00:25:05.000',
+  '<v Dana>That is the show. Next week, a very special guest.',
+].join('\n');
+await rpc('transcript.import', { sessionId: session.id, format: 'vtt', content: vtt, mode: 'replace' });
 
 const moments = [
   [0, 'Segment', 'Cold open'],
@@ -84,5 +105,5 @@ await rpc('wiki.upsert', { showId: show.id, kind: 'person', title: 'Dana', bodyM
 await rpc('wiki.upsert', { showId: show.id, kind: 'bit', title: 'The office dog', aliases: ['the dog'], bodyMd: 'Running joke started by [[Dana]].' });
 await rpc('wiki.upsert', { showId: show.id, kind: 'session', sessionId: session.id, title: 'Demo episode recap', bodyMd: 'Cold open with [[Dana]], news, a guest interview and a callback to [[The office dog]].' });
 
-console.log(`Seeded team "${team.name}", show "${show.name}", session "${session.title}".`);
+console.log(`Seeded team "${team.name}", show "${show.name}", session "${session.title}" (with a transcript).`);
 console.log(`Open ${base}/sessions/${session.id}`);

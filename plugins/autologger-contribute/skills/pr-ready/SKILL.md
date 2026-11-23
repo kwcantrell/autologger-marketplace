@@ -19,24 +19,26 @@ Run and report each result verbatim when something fails:
 ```bash
 npm run typecheck
 npm run lint                            # the repo is lint-clean; keep it that way
-cd apps/server && npx vitest run        # needs the dev Postgres and autologger_test database
+npm test                                # all workspaces; server tests need the dev Postgres and autologger_test
 ```
 
 `npx biome check --write <files>` fixes formatting and import order. Suppress a rule only for a
 deliberate pattern, with a `biome-ignore` comment that says why. Never "fix" unrelated files in the
-same PR. If `apps/companion` changed: `cd apps/companion && npm run build && npx vitest run`.
-If `apps/web` changed: `cd apps/web && npx vite build`, and (with the `autologger-dev` plugin)
+same PR. If `apps/companion` changed: `cd apps/companion && npm run build`.
+If `apps/web` or `docs/` changed: `cd apps/web && npx vite build` (bad docs front matter fails it);
+for web changes also (with the `autologger-dev` plugin)
 run its `browser-smoke` agent against the dev stack.
 
 ## 3. Review
 
-If the `autologger-dev` plugin is installed, delegate to its `ops-reviewer` agent. Otherwise check
+If the `autologger-dev` plugin is installed, delegate to its `ops-reviewer` agent and tell it the
+checks above already ran. Otherwise check
 the diff yourself against `CLAUDE.md`: one op per capability, authorization first, change log for
 content writes, realtime publish, contract types, agent-quality descriptions, erasable TypeScript,
 no hand-edited migrations, a focused test.
 
 Also check: secrets or `.env` files staged? Unrelated changes mixed in? Schema change without a
-generated migration?
+generated migration? A user-, agent- or developer-visible change without its `docs/` page updated?
 
 ## 4. PR description
 
@@ -53,7 +55,7 @@ Draft it from the diff:
 <key decisions; ops added or changed (name, surfaces); schema changes>
 
 ## Verification
-- [ ] typecheck  - [ ] lint  - [ ] server tests  - [ ] web build / browser check
+- [ ] typecheck  - [ ] lint  - [ ] tests  - [ ] docs  - [ ] web build / browser check
 <what you checked by hand, with steps>
 
 ## Follow-ups

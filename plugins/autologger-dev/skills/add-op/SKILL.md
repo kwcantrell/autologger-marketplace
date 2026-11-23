@@ -44,7 +44,11 @@ Rules:
   categories) with before/after `snapshot(...)` so the Agents tab can undo it. New entity kinds
   need an entry in `ops/changes.ts` `TABLES`.
 - **Publish** realtime messages with `ctx.publish` (sent after commit); use `invalidate` when many
-  rows change.
+  rows change. Session content goes on `session:<id>`; show-level entities (jobs, sessions,
+  compilations, changes, devices) on `show:<id>` (channels in `core/bus.ts`, messages in the
+  contract's `ws.ts`).
+- Side effects that must only happen if the transaction commits (deleting S3 objects, waking the
+  worker) go in `ctx.afterCommit(task)`.
 - Throw `AppError` helpers from `core/errors.ts` (`badRequest`, `conflict`, `unavailable`, …).
 - Map rows to entities in `ops/map.ts`; never return raw rows.
 - A new domain file must be imported in `ops/index.ts`.
@@ -65,16 +69,28 @@ Rules:
 
 Add a focused test using the harness (`studio()`, `makeUser()`, `asAgent()`, `call()`,
 `failsWith()`): one happy path, one permission failure, one undo if it writes content.
-Run: `cd apps/server && npx vitest run`.
+Run: `npm test -w @autologger/server`.
 
 ## 4. Web (if user-facing)
 
 Call it with `rpc('<name>', input)` from `apps/web/src/api/rpc.ts` and add a query/mutation hook in
-`apps/web/src/api/queries.ts`. Live updates arrive through `apps/web/src/api/live.ts`.
+`apps/web/src/api/queries.ts`. Live updates arrive through `apps/web/src/api/live.ts` (session
+socket) and `apps/web/src/api/liveShow.ts` (show socket). UI work follows the `web-feature` skill.
 
-## 5. Verify
+## 5. Other callers
 
-`npx tsc -p apps/server && npx tsc -p apps/web && (cd apps/server && npx vitest run)`.
+- **MCP:** `SERVER_INSTRUCTIONS` in `apps/server/src/mcp/server.ts` and `mcp/prompts.ts` name
+  tools — update them when a workflow tool is added or renamed. `destructiveHint` comes from the
+  `DESTRUCTIVE` verb regex there; name destructive ops with a matching verb.
+- **Importer:** `apps/importer/autologger-import.mjs` is an untyped RPC client (`media.*`,
+  `compilations.*` uploads, playlist import). If you change those ops' inputs or outputs, update
+  it and run `npm test -w @autologger/importer`.
+- **Companion:** ops with the `companion` surface → `companion-module` skill.
+
+## 6. Verify
+
+`npm run typecheck && npm test && npm run lint` (all workspaces; bad front matter in `docs/`
+fails the web build).
 For MCP-exposed ops, run the `mcp-check` skill to see the tool as an agent will.
 If the op adds or changes something users or agents rely on, update the matching page under
 `docs/guide/`, `docs/agents/` or `docs/developers/` (served at `/docs`) in the same PR.

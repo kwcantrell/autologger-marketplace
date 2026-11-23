@@ -16,13 +16,15 @@ If the user gave an id (`ses_…`), use it. Otherwise call `sessions_list` (opti
 
 ## Read before writing
 
-1. `sessions_get` — check `transcriptStatus`. If it is `none` or `pending`, stop and tell the user
-   the transcript is not ready (they can record/import audio, or wait for transcription).
+1. `sessions_get` — check `transcriptStatus`. If it is not `done`: `none` → stop and tell the user
+   there is no audio yet; `pending` → wait for `transcriptJob` (`jobs_list` with `waitSec`);
+   `partial` (some recordings not transcribed yet) → wait, or say the topics will cover only part; `failed` → report it.
 2. `transcript_text` with `{format: "compact", stampEverySec: 0}`, read once — paragraphs per
    speaker turn with a `[@seconds]` stamp at every segment start, so no second pass in lines
    format is needed. The result's `totalSegments` / `durationSec` tell you whether to page: for
    long sessions use ~25-minute `fromSec` / `toSec` windows (pages don't overlap). If the text is "(transcript is empty: no speech detected)" with `transcriptStatus` `done`, that is final: skip the session (don't wait or `media_retranscribe`); "(no transcript yet: …)" → wait with `jobs_list`; "(no transcript: transcription failed …)" → report it.
-3. `topics_list` — what already exists. If the operator has hand-edited topics, say so and ask
+3. `topics_list` — what already exists. If the operator has hand-edited topics
+   (`changes_list` {sessionId, entity: "topic", via: "web"}), say so and ask
    before replacing them.
 4. `events_list` — operator markers (e.g. "Scene", "Ad read") often mark segment boundaries.
 

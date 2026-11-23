@@ -11,7 +11,7 @@ design system without asking.
 ## Before you design
 
 1. Read the contract: `apps/web/DESIGN.md` (colours, type, radii, spacing, do's and don'ts — it
-   wins every argument), `docs/ui-inventory.md` (routes and building blocks), and the
+   wins every argument), the routes in `apps/web/src/app/App.tsx` and `app/AppShell.tsx`, and the
    `autologger-dev` `web-feature` guide (data hooks, live updates, shared primitives, the design
    tools). Look at two or three existing screens that do something similar and match them.
 2. Understand the job: who uses this screen (operator mid-show on a phone? editor at a desk? an

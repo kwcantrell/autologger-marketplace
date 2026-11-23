@@ -61,3 +61,24 @@ jobs:
           git -C "$repo" switch -q -c react/x
           expect 0 "autologger-dev:react-expert"
           echo "guard hook ok"
+      - name: Test the autologger-contribute follow-ups hook
+        run: |
+          hook=plugins/autologger-contribute/scripts/check-follow-ups.mjs
+          repo=$(mktemp -d)
+          git -C "$repo" init -q
+          git -C "$repo" remote add origin https://github.com/kwcantrell/autologger.git
+          other=$(mktemp -d)
+          git -C "$other" init -q
+          git -C "$other" remote add origin https://github.com/example/other.git
+          expect() {
+            code=0
+            printf '%s' "$3" > "$2/body.md"
+            echo "{\"cwd\":\"$2\",\"tool_input\":{\"command\":\"gh pr create -t x -F body.md\"}}" | node "$hook" 2>/dev/null || code=$?
+            if [ "$code" != "$1" ]; then echo "expected exit $1 for body: $3, got $code"; exit 1; fi
+          }
+          expect 2 "$repo" $'## What\nx\n\n## Follow-ups\n- tidy the dialog later\n'
+          expect 0 "$repo" $'## Follow-ups\n- #12 tidy the dialog\n'
+          expect 0 "$repo" $'## Follow-ups\nNone\n'
+          expect 0 "$repo" $'## What\nno follow-ups section\n'
+          expect 0 "$other" $'## Follow-ups\n- untracked but not an AutoLogger repo\n'
+          echo "follow-ups hook ok"

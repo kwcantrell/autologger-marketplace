@@ -6,47 +6,26 @@ description: Starter tasks for new AutoLogger contributors — tracked as GitHub
 # Good first tasks
 
 Every starter task is a GitHub issue in `kwcantrell/autologger`; the issue is the spec (problem,
-files, "done when") and the place to say you're taking it. The list below is a snapshot — get the
-live one first:
+files, "done when") and the place to say you're taking it. There is no fixed list here — the
+labels are the list:
 
 ```bash
-gh issue list -R kwcantrell/autologger -l "good first issue" --state open
-gh issue list -R kwcantrell/autologger -l "help wanted" --state open
+gh issue list -R kwcantrell/autologger -l "good first issue" --state open   # small / medium
+gh issue list -R kwcantrell/autologger -l "help wanted" --state open        # larger: design note first
 ```
 
 Skip issues that are assigned or have an open PR linked (`gh issue view <n>`). Ask about the
-contributor's interests (backend, UI, hardware, docs) and offer 2–3 that fit, with links. Before
-starting, comment on the issue (or self-assign) so two people don't pick the same one, then follow
-the `contribute` workflow; the PR says `Closes #<n>`.
+contributor's interests (backend, UI, hardware, docs) and offer 2–3 that fit, with links and a
+size estimate from the issue (small = an afternoon, medium = a few days, larger = write a short
+design note on the issue first). Before starting, comment on the issue (or self-assign) so two
+people don't pick the same one, then follow the `contribute` workflow; the PR says `Closes #<n>`.
 
-## Small (an afternoon)
-
-- [#103](https://github.com/kwcantrell/autologger/issues/103) **Shrink the main web chunk**
-  (~790 kB) — find what's in it with a bundle visualizer, lazy-load what the first screen doesn't
-  need or split vendor code. Web.
-- [#97](https://github.com/kwcantrell/autologger/issues/97) **Link from the sign-in page back to
-  the landing page.** Web.
-
-## Medium (a few days)
-
-- [#104](https://github.com/kwcantrell/autologger/issues/104) **Sweep abandoned uploads** —
-  worker job that removes `uploading` segments (and objects) older than a day. Server / worker.
-- [#105](https://github.com/kwcantrell/autologger/issues/105) **Companion presence across
-  instances** — publish connect/disconnect on the bus. Server / hardware.
-- [#106](https://github.com/kwcantrell/autologger/issues/106) **Show-level change log with undo**
-  — show wiki pages and event-button changes, reusing the Agents tab. Web.
-
-## Larger (write a short design note on the issue first)
-
-- [#107](https://github.com/kwcantrell/autologger/issues/107) **Waveform peaks on the timeline.**
-  Worker + web.
-- [#108](https://github.com/kwcantrell/autologger/issues/108) **Playwright end-to-end smoke
-  tests.** Dev tooling.
-- [#109](https://github.com/kwcantrell/autologger/issues/109) **Opt-in real Deepgram integration
-  test.** Media.
+If the lists are empty or nothing fits, look for a starter-sized open issue
+(`gh issue list -R kwcantrell/autologger --state open -l enhancement`) or a `follow-up` issue, and
+offer it — saying it isn't labelled as a starter task yet.
 
 ## Keeping the list honest
 
-When a task here is closed, or you notice a good new starter task, update the issue labels
-(`good first issue` for small/medium, `help wanted` for larger) and this list in the same
-marketplace PR (`improve-plugins`). New tasks are filed with the `file-issue` skill.
+When you notice a good new starter task, file it with the `file-issue` skill and label it
+(`good first issue` for small/medium, `help wanted` for larger). Nothing in this skill needs
+updating when tasks open or close.

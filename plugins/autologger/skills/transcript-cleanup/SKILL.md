@@ -35,9 +35,7 @@ Errors are usually **systematic**: fix patterns, not single words.
    `suspect: true` (`countOnly: true` first for the numbers): it lists turns where a question is
    followed by 20+ more words (`reasons: ["question"]`, `matches` = the question — split right
    after it, `speaker` = the other person) and turns over 60 s (`"long"`). Many hits are
-   rhetorical questions — read each one before splitting. If the call fails with `suspect: expected
-   boolean, received string`, the client's AutoLogger tool list predates the option: ask the user
-   to reconnect the server (`/mcp`) or restart, and carry on without it. Sessions transcribed since the speaker
+   rhetorical questions — read each one before splitting. Sessions transcribed since the speaker
    fix split most of these automatically; for older ones with many mixed lines,
    `media_retranscribe` is cheaper than splitting by hand (it replaces manual edits — do it first).
 3. **List the error patterns** before editing, each with an example and a count

@@ -7,7 +7,8 @@ argument-hint: "[what to track]"
 # File follow-ups and problems as issues
 
 A follow-up that lives only in a PR description is lost once the PR merges. Every deferred item
-gets its own issue, and the PR links to it.
+gets its own issue, and the PR links to it. (Problems met while *using* AutoLogger through its MCP
+tools — not while changing its code — go through the `autologger` plugin's `report-issue` skill.)
 
 ## When
 
@@ -26,8 +27,8 @@ gets its own issue, and the PR links to it.
 
 1. Search first: `gh issue list -R <repo> --state all -S "<key words>" --limit 10`. If an issue
    already covers it, comment with the new context instead of opening another.
-2. One issue per item. Title `<Area>: <problem or change>` (Areas as in commit messages: Core, Web,
-   Media, MCP, Companion, Dev, Docs; Plugins/Skills for the marketplace). Body in a file:
+2. One issue per item. Title `<Area>: <problem or change>` (Areas as in commit messages — app: Core, Web,
+   Media, MCP, Companion, Dev, Docs; marketplace: Skills, Plugins). Body in a file:
 
    ```markdown
    ## Problem

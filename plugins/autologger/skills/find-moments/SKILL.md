@@ -1,24 +1,29 @@
 ---
 name: find-moments
-description: Answer questions across AutoLogger sessions — "when did we talk about X", "every time Dana mentioned the dog", "which episodes had an audio issue" — with session titles and timecodes. Read-only. Use for any search or lookup over logged sessions, transcripts, topics or the wiki.
+description: Quick read-only lookup across AutoLogger sessions — "when did we talk about X", "which episode had the airport story", "which episodes had an audio issue" — answered in chat with session titles and timecodes; nothing is saved. Use for finding a moment, a logged event or a fact fast. For a cited answer kept in the show wiki (or a video of the clips), use the autologger-ask plugin's `ask` skill instead.
 argument-hint: "<question>"
 ---
 
 # Find moments across sessions
 
-Read-only: never create or change anything with this skill.
+Read-only: never create or change anything with this skill. If the user wants the answer kept
+(a knowledge-base page), every relevant range across a show, or a video of the moments, hand off
+to `autologger-ask:ask` (needs the `autologger-ask` plugin) instead.
 
 ## Steps
 
 1. Start with `search` — full-text over events, transcript lines, topics, wiki pages and sessions
    the user can access. Try 2–3 phrasings (names, key nouns, synonyms); narrow with `showId`,
-   `sessionId` or `kinds` when the question is specific.
+   `sessionId` or `kinds` when the question is specific. A call that returns exactly `limit` hits
+   (30 by default) may have more: page with `offset`.
 2. Hits carry `sessionId`, `atSec` and `endSec` (where a transcript line ends, or a topic's start
    plus its length; null for events and wiki pages). For promising hits, read context with `transcript_text`
    using `fromSec = atSec - 60`, `toSec = atSec + 120`.
-3. For structural questions ("which sessions had an audio issue") use `sessions_list` +
-   `events_list` with category filters instead of text search.
-4. Check the show wiki (`wiki_get` by title) for people and recurring bits — it often answers
+3. For logged-event questions ("which sessions had an audio issue") `search` with
+   `kinds: ["event"]` and the button name (events are indexed by category; hits carry the session
+   title and date). Use `events_list` with `categoryIds` only for one session's detail.
+4. Check the show wiki first for answers already written: `wiki_list` with `kind: "question"`,
+   `include: "summary"`; and `wiki_get` by title for people and recurring bits — it often answers
    "who is…" and "what is…" directly.
 
 ## Answer

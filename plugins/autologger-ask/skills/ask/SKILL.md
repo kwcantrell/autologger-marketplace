@@ -1,6 +1,6 @@
 ---
 name: ask
-description: Answer a question about an AutoLogger show from its sessions — "what has Tom said about pricing", "every time they talked about the dog", "how did the guest get started" — with timecode ranges in each session that relate to it, save the answer to the show wiki as a cited knowledge-base page, and offer a video compilation of the ranges when the sessions came from YouTube. Use for any question about what was said or happened across a show's episodes.
+description: Answer a question about an AutoLogger show from its sessions — "what has Tom said about pricing", "every time they talked about the dog", "how did the guest get started" — with timecode ranges in each session that relate to it; writes the answer to the show wiki as a cited knowledge-base page and offers a video compilation of the ranges when the sessions came from YouTube. Use for questions whose answer should be kept or compiled; for a quick read-only lookup use autologger:find-moments.
 argument-hint: "<question> [in <show>]"
 ---
 
@@ -33,11 +33,12 @@ ask which one. Note `showId`.
 
 1. `search` with `showId` and 3–5 phrasings (names, key nouns, synonyms, how a speaker would
    actually say it). Hits carry `sessionId`, `atSec` and `endSec`
-   (transcript line end or topic end; null for events) — a first guess at the range.
+   (transcript line end or topic end; null for events) — a first guess at the range. A call that
+   returns exactly `limit` hits may have more: page with `offset`.
 2. `topics_list` for sessions with hits — a topic's `startSec`/`durationSec` often bounds the whole
    discussion; topic summaries also catch paraphrases text search misses.
 3. For each promising hit read context with `transcript_text` (`fromSec = atSec - 90`,
-   `toSec = atSec + 180`, `format: "compact"`), and set the range precisely:
+   `toSec = atSec + 180`, `format: "compact"`, `stampEverySec: 0` for a stamp at every segment), and set the range precisely:
    - start at the first line of the relevant exchange (the question or set-up), end where the
      conversation moves on; add ~2 s padding at both ends;
    - merge ranges in the same session less than ~30 s apart;

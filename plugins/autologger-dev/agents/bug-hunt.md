@@ -75,8 +75,8 @@ note expected vs actual.
   description of the class of problem, so the maintainer can open a private advisory.
 - **Everything else:** search first (`gh issue list -R kwcantrell/autologger --state all -S "<key
   words>"`) and comment on a match; otherwise `gh issue create -R kwcantrell/autologger -l bug -l
-  agent-reported -t "<Area>: <what breaks>" -F <body.md>` (Area: Web, Core, MCP, Media,
-  Companion) with **Steps to reproduce**, **Expected**, **Actual** (error text, status code),
+  agent-reported -t "<Area>: <what breaks>" -F <body.md>` (Area: Core, Web, Media, MCP,
+  Companion, Dev, Docs) with **Steps to reproduce**, **Expected**, **Actual** (error text, status code),
   **Severity** (data loss / wrong data / crash / cosmetic) and the op or component involved if you
   found it. One issue per root cause; at most 10 per run, worst first.
 
