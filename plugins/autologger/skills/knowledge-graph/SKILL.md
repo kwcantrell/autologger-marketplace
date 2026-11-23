@@ -61,27 +61,35 @@ Follow `detailed-wiki` sections 2–3 (planning, disjoint writers, reading befor
 `baseRevision`, fact checks), with these additions:
 
 - create pages only for people, bits and topics in **two or more** sessions, titled per the
-  conventions file;
-- **aliases: specific names only** — other spellings people actually use and nicknames. No
-  generic words ("the show", "Producer"), no bare first names, no URLs or handles, and no
-  transcription misspellings (the transcripts are cleaned; misspellings belong in show rules);
-- **depth like a reference page**: one list item per **story, letter, headline, quote or fact** —
-  not one per episode — each a single claim with its **own tight citation** (the stretch where
-  that item is said, usually under ~2 minutes; never a whole segment), `[[linking]]` every other
-  entity in it — **every person, bit and topic page it mentions, every time** (that is what lets
-  entity search find the item) — and **naming its subject** ("Joe DeRosa says…", never "He…").
-  Organise each fact **once**: segment pages by episode; person and topic pages by theme (e.g. a
-  person's age, places lived, career, habits, friends, opinions) with a short "Appearances" list
-  of episode links — never the same items again under "By episode";
-- a short synthesis at the top of segment pages (**Format**: what happens, who reads, how it
-  ends) and, where it helps, a **Notable lines** section; the hub states the format, schedule,
-  sponsors and contact details said on air, and the episode guide **once** (a table with a prose
-  list only if the table holds more than titles);
+  conventions file; a topic page holds what its segment pages don't (e.g. *Air Travel* gathers
+  airline talk outside *Flight Log* and links there for the segment's stories) — never two pages
+  with the same items;
+- **aliases: specific names only** — nicknames and real alternate spellings, including ones the
+  transcript itself uses ("Skank Fest"). No generic words ("the show", "Producer"), no bare first
+  names, no URLs or handles, no mishearings (those belong in show rules);
+- **cross-episode synthesis first** — every shared page opens with what a reader can't get from
+  any single episode, each statement cited to the episodes it rests on:
+  - segment pages: **Format** (what happens, who reads, how it ends, how it changed),
+    **Running threads** (stories, predictions and callbacks that span episodes — e.g. "Frontier
+    is next", proved right later), **Episodes without** it (listed), **Notable lines**;
+  - person pages: themes as synthesis ("Joe DeRosa says he is 48 (VAH_0005, VAH_0009, VAH_0012)"
+    — one item with several citations, not one item per mention), how the person's role
+    changes over the run, relationships to other entities;
+  - topic pages: the recurring positions and how they develop, then the items;
+  - the hub: format, schedule, sponsors and contact details said on air, how the show evolves,
+    segment debuts, dating clues, then the episode guide **once** (a table with summaries and
+    segments);
+- **then the detail**: one list item per **story, letter, headline, quote or fact** with its
+  **own tight citation** (the stretch where it is said, usually under ~2 minutes; often a setup
+  and a punchline range), `[[linking]]` every other person, bit and topic page it mentions, every
+  time, and **naming its subject** ("Joe DeRosa says…", never "He…"). Each fact **once**: segment
+  pages by episode; person and topic pages by theme with a short "Appearances" list of episode
+  links. A fact said in several episodes is one item with several citations; no citation twice in
+  one item;
 - framing only as the transcript supports it (a crew member who chimes in is not a "co-host");
 - writers work from the recaps and notes but **open `transcript_text` around every range they
   cite** to tighten it to the item and to check names and numbers — the notes' ranges are often
-  segment-wide;
-- the hub's episode guide also as a prose list (tables chunk badly for retrieval).
+  segment-wide.
 
 ## 4. Verify
 
@@ -96,7 +104,8 @@ Follow `detailed-wiki` sections 2–3 (planning, disjoint writers, reading befor
 4. Wide citations: in `graph_export {section: "moments"}`, citations on shared pages longer than
    ~3 minutes are segment-wide, not moments — split them into per-item citations. Also check
    that shared-page moments link other entities (their `entities` list more than the page
-   itself) and that no page repeats the same items in two sections.
+   itself), that no page repeats the same items in two sections or another page's items, and
+   that every shared page opens with its cross-episode synthesis.
 5. Leftover misheard names: `search {showId, kinds: ["transcript"]}` per misspelling in the
    conventions file.
 
