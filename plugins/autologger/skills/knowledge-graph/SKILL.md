@@ -78,7 +78,8 @@ Follow `detailed-wiki` sections 2–3 (planning, disjoint writers, reading befor
   - topic pages: the recurring positions and how they develop, then the items;
   - the hub: format, schedule, sponsors and contact details said on air, how the show evolves,
     segment debuts, dating clues, then the episode guide **once** (a table with summaries, segments and
-    one citation per row);
+    one citation per row, placed right after
+    the item it supports);
 - **then the detail**: one list item per **story, letter, headline, quote or fact** with its
   **own tight citation** (the stretch where it is said, usually under ~2 minutes; often a setup
   and a punchline range), `[[linking]]` every other person, bit and topic page it mentions, every
