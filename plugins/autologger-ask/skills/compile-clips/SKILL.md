@@ -14,7 +14,7 @@ each session's YouTube video and joins them. Only sessions imported from YouTube
 From, in order of preference:
 - ranges you just produced (the `ask` skill), or ranges the user gave;
 - a wiki `question` page: `wiki_get` it and take each citation — `/sessions/<sessionId>?t=<start>&to=<end>`,
-  `(@<sessionId>:<start>-<end>)`, or on a recap `(@<start>-<end>)` / `[@<start>-<end>]` for the
+  `(@<sessionId>:<start>-<end>)` or unlabelled `[@<sessionId>:<start>-<end>]`, or on a recap `(@<start>-<end>)` / `[@<start>-<end>]` for the
   recap's own session (or use the page's **Make video** button in the web app);
 - otherwise run the `ask` skill first to find them.
 

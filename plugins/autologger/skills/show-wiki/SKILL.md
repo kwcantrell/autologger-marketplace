@@ -33,8 +33,12 @@ pages), use the `detailed-wiki` skill instead.
    pages you will change. Update existing pages — `wiki_upsert` without
    `pageId` matches by title or alias, so reuse the exact existing title.
 4. Recap page: `wiki_upsert` with `kind: "session"`, `sessionId` and `compact: true` (returns
-   `{ id, revision, unresolvedLinks }` instead of echoing the page). Include a 2–4 sentence
-   summary, key moments as citation links, and `[[links]]` to people and bits. `bodyMd` is
+   `{ id, title, kind, revision, unresolvedLinks, citationCount, badCitations, clampedCitations }`
+   instead of echoing the page). Include a 2–4 sentence
+   summary, key moments as citation links, and `[[links]]` to people and bits. If the session
+   already has a recap (often a detailed one from `detailed-wiki`, with Rundown / Best moments
+   sections), don't replace it with a short one: add to it with `wiki_patch` and `baseRevision`,
+   keeping its structure. `bodyMd` is
    raw Markdown stored as sent — don't JSON-escape quotes or newlines inside it.
 5. People and bits: add what this session revealed (new facts, callbacks, quotes) under a dated
    heading, each with a citation, and link back to the recap. Create a page only for someone or something that will
@@ -53,8 +57,7 @@ pages), use the `detailed-wiki` skill instead.
    (`unknown_session`, `bad_range`, `past_end`, `label_mismatch`) — fix them with `wiki_patch` right
    away. Ends up to 5 s past the audio are clamped on save and listed in `clampedCitations` (stored
    `endSec` vs `sentEndSec`) — a later `wiki_patch` `find` must use the stored end. Then check links: `wiki_lint` for the show lists every `[[link]]` with no matching page
-   (`unresolved`), pages nothing links to (`orphans`) and broken citations (unknown session, bad
-   range). Fix titles, or leave a link dim on
+   (`unresolved`), pages nothing links to (`orphans`) and broken citations (`unknown_session`, `bad_range`, `past_end`, `label_mismatch`). Fix titles, or leave a link dim on
    purpose and say so.
 
 ## Formatting and links

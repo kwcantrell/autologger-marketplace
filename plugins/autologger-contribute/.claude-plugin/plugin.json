@@ -1,7 +1,7 @@
 {
   "name": "autologger-contribute",
-  "version": "1.1.4",
-  "description": "How to contribute to AutoLogger: a guided first tour of the codebase, the contribution workflow from idea to pull request, curated starter tasks, a pre-PR check, tracking follow-ups and problems as GitHub issues, and how to improve these plugins.",
+  "version": "1.1.5",
+  "description": "How to contribute to AutoLogger: a guided first tour of the codebase, live starter tasks, the contribution workflow from idea to pull request, a pre-PR check, tracking follow-ups and problems as GitHub issues (with a hook that blocks PRs listing untracked follow-ups), and how to improve these plugins.",
   "author": {
     "name": "AutoLogger"
   },

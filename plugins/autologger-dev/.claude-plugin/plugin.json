@@ -1,7 +1,7 @@
 {
   "name": "autologger-dev",
-  "version": "1.4.1",
-  "description": "Build AutoLogger: skills for ops, schema changes, web and Companion work, the dev stack and the MCP surface; architecture-reviewer, browser smoke-test, visual-review, bug-hunt, ui-designer and react-expert agents; hooks that protect generated migrations and secrets; an MCP connection to your local dev server and the shadcn/ui MCP server. Depends on the impeccable design plugin and the react-best-practices, composition-patterns, react-view-transitions and react-expert skill plugins.",
+  "version": "1.4.2",
+  "description": "Build AutoLogger: skills for ops, schema changes, web and Companion work, the dev stack and the MCP surface; architecture-reviewer, browser smoke-test, visual-review, bug-hunt, ui-designer and react-expert agents; hooks that protect generated migrations and secrets; an MCP connection to your local dev server (dev_url) and the shadcn/ui MCP server. Depends on the impeccable design plugin and the react-best-practices, composition-patterns, react-view-transitions and react-expert skill plugins.",
   "author": {
     "name": "AutoLogger"
   },

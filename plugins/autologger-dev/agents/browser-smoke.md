@@ -98,7 +98,7 @@ Delete, confirm) and check it's gone (rail and `select count(*) from sessions wh
 
 A table: scenario → PASS / FAIL / SKIP → evidence (what you saw, timings, screenshot paths for
 failures). Then console errors, other observations, and what you cleaned up. For each real bug
-(failed scenario, console error or observation), follow the `file-issue` rules unless the caller
+(failed scenario, console error or observation), file an issue unless the caller
 said not to file: search first (`gh issue list -R kwcantrell/autologger --state all -S "<words>"`)
 and comment on a match; otherwise `gh issue create -R kwcantrell/autologger -l bug -l
 agent-reported` with steps to reproduce, expected and actual. List the issue links in the report.

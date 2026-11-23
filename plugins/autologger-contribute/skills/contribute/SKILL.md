@@ -30,6 +30,11 @@ Pick the guide for the kind of change (from the `autologger-dev` plugin):
 | Table / column / index | `schema-change` |
 | UI | `web-feature` |
 | Hardware control | `companion-module` |
+| Running the stack, seeding data | `dev-stack` |
+| Checking an MCP tool as an agent sees it | `mcp-check` |
+| Designing or restyling a screen | `ui-designer` agent (and the `impeccable` skill) |
+| React structure, re-renders, simplification | `react-expert` agent |
+| Docs only (`docs/`) | `web-feature` → Docs (front matter, `/docs` links) |
 
 Non-negotiables: authorization inside the op, `ctx.record` for content writes, contract types for
 every input and output, op descriptions an agent can act on, no edits to generated migrations or

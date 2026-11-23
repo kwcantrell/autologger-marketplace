@@ -19,8 +19,9 @@ Check every changed op (`apps/server/src/ops/*.ts`, `defineOp`) and related code
    joins, search or list ops (`readableShowCondition`).
 4. **Change log** — every content write calls `ctx.record` with `snapshot()` before/after; new
    content tables are registered in `ops/changes.ts` `TABLES` so undo works.
-5. **Realtime** — `ctx.publish` for affected session/show topics; web `src/api/live.ts` handles any
-   new entity.
+5. **Realtime** — `ctx.publish` for affected session/show topics; web `src/api/live.ts` (session)
+   or `src/api/liveShow.ts` (show) handles any new entity. Side effects that must wait for commit
+   use `ctx.afterCommit`.
 6. **Agent-facing description** — would an LLM call the tool correctly from the description alone
    (units like `atSec` vs timecode, where ids come from, side effects, undo)? Surfaces correct
    (`mcp` only when agents should have it; admin, member/role management and deleting teams,
@@ -37,14 +38,18 @@ Check every changed op (`apps/server/src/ops/*.ts`, `defineOp`) and related code
    properties); relative imports end in `.ts`; no hand-edited migrations.
 9. **Tests** — a focused ops test in `apps/server/src/test` for new behaviour (happy path, a
    permission failure, undo when it writes content).
-10. **Web** — data through `rpc`/query hooks, honest empty/unavailable states, no raw HTML from
-   agent content.
-11. **Tracked follow-ups** — when reviewing a PR (`gh pr view`), every item under "Follow-ups" must
+10. **Web** — data through `rpc`/query hooks, shared primitives (no hand-built controls or native
+   `title` tooltips), honest empty/unavailable states, no raw HTML from agent content.
+11. **Other callers and docs** — changed inputs of ops used by `apps/importer` (media uploads,
+   playlist import, compilations) are mirrored there; new or renamed workflow tools are reflected
+   in `SERVER_INSTRUCTIONS` / `mcp/prompts.ts`; user- or agent-visible changes update the matching
+   `docs/guide`, `docs/agents` or `docs/developers` page.
+12. **Tracked follow-ups** — when reviewing a PR (`gh pr view`), every item under "Follow-ups" must
    link an issue (`#123`); flag untracked deferrals. List your own findings that the author may
    defer as "should become an issue" so they get filed rather than lost.
 
-Run `npx tsc -p apps/server`, `npx tsc -p apps/web` and `cd apps/server && npx vitest run` if the
-dev database is available, and report failures verbatim.
+Run `npm run typecheck` and `npm test` (all workspaces; server tests need the dev database) unless
+the caller says they already ran them, and report failures verbatim.
 
 Report findings ordered by severity, each with `file:line`, what is wrong, and the concrete fix.
 Say explicitly when a category has no issues. Do not edit files.

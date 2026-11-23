@@ -34,9 +34,17 @@ obvious? Do errors come back with a readable `code: message`?
 
 ## Full flow
 
-`apps/server/scripts/mcp-smoke.ts` runs PAT + OAuth (register → authorize → consent → token →
-refresh → revoke) against a running server; `scripts/mcp-sdk-client.ts` connects with the official
-SDK client. Run with `node --env-file=../../.env scripts/<file>.ts` from `apps/server`.
+From `apps/server` (both default to `:18081`, so pass the URL):
 
-To try it in Claude Code itself: `claude mcp add --transport http autologger-dev $B/mcp --header "Authorization: Bearer $T"`.
+```bash
+node scripts/mcp-smoke.ts $B           # PAT + full OAuth: register → authorize → consent → token → refresh → revoke
+node scripts/mcp-sdk-client.ts $B $T   # official SDK client: tools and prompts
+```
+
+## In Claude Code
+
+`autologger-dev` already connects the `autologger-local` MCP server to `dev_url` (sign in with
+`/mcp`). The tool list is cached per connection: after adding or changing an op, reconnect it in
+`/mcp` (or restart) before testing. For a PAT instead:
+`claude mcp add --transport http autologger-pat $B/mcp --header "Authorization: Bearer $T"`.
 Revoke the PAT afterwards (`tokens.revoke`).

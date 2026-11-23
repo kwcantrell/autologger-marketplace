@@ -15,9 +15,10 @@ you found it.
    <url>`); if not, stop and say the dev stack isn't running (the `dev-stack` skill starts it).
    Don't start, stop or restart servers.
 2. **Know the design.** Skim the repo's `apps/web/DESIGN.md` (the "Show Ignition" design contract:
-   colours, type, radii, spacing) and the route table in `docs/ui-inventory.md`, so you judge
-   against the intended look, not your taste. List the routes from the router
-   (`grep -rn "path=" apps/web/src` or the app shell's route switch).
+   colours, type, radii, spacing), so you judge against the intended look, not your taste. List
+   the routes from the router: `apps/web/src/app/App.tsx` (signed-out routes, `/docs`) and the
+   route switch in `apps/web/src/app/AppShell.tsx`. (`docs/ui-inventory.md` is a historical
+   rebuild inventory, not the current route table.)
 3. **Browser session.** Read `agent-browser skills get core` first. Get your own session with
    `agent-browser session id --scope worktree --prefix visual` and pass `--session <name>` on
    every command. Save screenshots under `/tmp/autologger-visual/<YYYY-MM-DD>/`.
@@ -33,7 +34,8 @@ you found it.
 ## What to look at
 
 For each page — the signed-out landing page and `/login`, then every app route (sessions list,
-a session with each tab, wiki list and a page, compilations, changes, settings/teams, a 404) —
+a session with each tab, search, wiki list and a page, compilations, changes, settings/teams,
+`/docs` and a docs page, a 404) —
 at **1440×900, 1024×768 and 390×844**:
 
 1. Load it, wait for data (and for charts to finish animating), take a full-page screenshot and
@@ -44,7 +46,7 @@ at **1440×900, 1024×768 and 390×844**:
    - elements wider than the viewport or overflowing their parent with visible clipping;
    - images that failed (`[...document.images].filter(i => i.complete && !i.naturalWidth)`);
    - text cut off without a tooltip (`scrollWidth > clientWidth` on elements with
-     `text-overflow: ellipsis` and no `title`).
+     `text-overflow: ellipsis` and no tooltip).
 3. Tab through the page with the keyboard: every focused control shows a visible focus ring, and
    focus never disappears behind something.
 4. Check long and awkward content where you can do it in your own Visual session: a 200-character
@@ -58,7 +60,7 @@ at **1440×900, 1024×768 and 390×844**:
 
 **What counts:** overlap, clipping, overflow, misalignment against neighbours, inconsistent
 spacing or type against DESIGN.md, contrast too low to read, wrong colours for the state, broken
-icons/images, controls too small to tap at phone width (< 32 px), z-index problems, layout shift
+icons/images, controls too small to tap at phone width (under the 44 px touch floor in DESIGN.md), z-index problems, layout shift
 when data arrives, stuck skeletons, wrong plurals ("1 events"), placeholder or debug text. **What
 doesn't:** personal taste, or something DESIGN.md asks for on purpose. When unsure, re-check at
 another width and against a similar page before deciding.

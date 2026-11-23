@@ -12,9 +12,12 @@ Read `apps/web/DESIGN.md` (the visual system) before writing UI.
 - Every call goes through `rpc('<op>', input)` (`src/api/rpc.ts`), typed from the contract. Add
   TanStack Query hooks and keys in `src/api/queries.ts`; don't call `fetch` directly.
 - Live data: `src/api/live.ts` applies session socket messages (`change`, `invalidate`,
-  `transport`) to the query cache. New entities need a case there.
+  `transport`) to the query cache; `src/api/liveShow.ts` does the same for the show socket (jobs,
+  sessions, compilations, changes, devices). New entities need a case there.
 - Never keep a client-side clock: timecode is computed from server transport state
-  (`src/lib/timecode.ts`).
+  (`src/lib/timecode.ts`). The clock and playhead are external stores (`useTransportClockStore`):
+  subscribe in the small leaf that shows them, never high in the tree — reading them in a page
+  component re-renders the whole session every frame.
 - If an op you need does not exist, add it server-side first (`add-op` skill) — no bespoke routes.
 
 ## Design tools
@@ -41,8 +44,15 @@ Read `apps/web/DESIGN.md` (the visual system) before writing UI.
 
 ## UI
 
-- Use the primitives in `src/shared/components/ui` and `src/shared/ui` (dialogs, sheets, tables,
-  tooltips) and theme tokens from `src/shared/theme`. No new colour values or fonts.
+- Use the primitives in `src/shared/components/ui` and `src/shared/ui` and theme tokens from
+  `src/shared/theme`. No new colour values or fonts, and no hand-built controls:
+  - tooltips: `shared/ui/Tooltip` (`shared` for list rows, `titleWhenDisabled` for disabled
+    controls) — never a native `title` on a control;
+  - links that are actions: `Button variant="link" size="inline"`, icon/row buttons through
+    `Button` variants — no raw `<button>`/`<a>` styling;
+  - tables from the `table` parts; selects `NativeSelect` (or `Select`); inputs with addons
+    `InputGroup`; disclosure `Collapsible`; progress `Progress`; key hints `Kbd`;
+  - load errors `LoadErrorAlert`, route-level loading/missing/denied `components/RouteState`.
 - The transport tint is driven by the `data-transport` attribute (stopped / rolling / recording /
   playback). Don't restyle the top bar, rail or transport card per page.
 - Absence is information: loading, empty, unavailable (`capabilities` false) and access-denied
@@ -73,10 +83,10 @@ Read `apps/web/DESIGN.md` (the visual system) before writing UI.
   (`title`, `section` = folder, `order`, `description`); files without front matter aren't published and
   bad front matter fails the web build. Link pages as `/docs/<section>/<slug>`, anchors keep hyphens.
   Renamed a label, added a setting or changed a flow? Update the matching `docs/guide/` page in the
-  same PR. The docs pages reuse the landing header/footer (`routes/landing/chrome.tsx`).
+  same PR. Renaming a page's slug also means updating `DOC_PAGES` in `src/lib/docsLinks.ts`. The docs pages reuse the landing header/footer (`routes/landing/chrome.tsx`).
 
 ## Verify
 
-`npx tsc -p apps/web && (cd apps/web && npx vite build)`, then load the page against the dev stack
+`npm run typecheck -w @autologger/web && npm test -w @autologger/web && (cd apps/web && npx vite build)`, then load the page against the dev stack
 (`dev-stack` skill) and check it in a browser, including a second tab for live updates.
 Then run the `browser-smoke` agent (this plugin) for a regression pass over the main flows.

@@ -12,8 +12,8 @@
     {
       "name": "autologger",
       "source": "./plugins/autologger",
-      "description": "For producers and operators: connect Claude to your AutoLogger server over MCP, import YouTube videos and playlists, clean up transcripts, generate topics, log moments, build dashboards, update the show wiki, search sessions and write session briefs.",
-      "version": "1.10.1",
+      "description": "For producers and operators: connect Claude to your AutoLogger server over MCP, import YouTube videos and playlists, clean up transcripts, generate topics, log moments, build dashboards, keep the show wiki (including detailed whole-show wikis), look up moments, write session briefs and report problems.",
+      "version": "1.10.2",
       "category": "productivity",
       "tags": [
         "autologger",
@@ -27,7 +27,7 @@
       "name": "autologger-ask",
       "source": "./plugins/autologger-ask",
       "description": "Ask questions about a show and get timecode ranges per session, saved as cited knowledge-base pages in the show wiki, plus server-built video compilations of YouTube-sourced ranges. Needs the autologger plugin.",
-      "version": "0.3.4",
+      "version": "0.3.5",
       "category": "productivity",
       "tags": [
         "autologger",
@@ -40,8 +40,8 @@
     {
       "name": "autologger-dev",
       "source": "./plugins/autologger-dev",
-      "description": "For AutoLogger contributors: skills for adding ops, schema changes, web and Companion work, running the dev stack and checking the MCP surface; an architecture reviewer, a UI designer, a React expert and guard rails. Brings in the impeccable design skill, four React skills and the shadcn/ui MCP server.",
-      "version": "1.4.1",
+      "description": "For AutoLogger contributors: implementation guides for ops, schema changes, web and Companion work, the dev stack and the MCP surface; architecture-reviewer, UI-designer, React-expert, browser-smoke, visual-review and bug-hunt agents; a guard hook; MCP connections to your dev server and shadcn/ui. Brings in the impeccable design skill and four pinned React skills.",
+      "version": "1.4.2",
       "category": "development",
       "tags": [
         "autologger",
@@ -75,8 +75,8 @@
     {
       "name": "autologger-contribute",
       "source": "./plugins/autologger-contribute",
-      "description": "How to contribute to AutoLogger: a guided first tour, the idea-to-PR workflow, curated starter tasks, a pre-PR check and how to improve these plugins.",
-      "version": "1.1.4",
+      "description": "How to contribute to AutoLogger: a guided first tour, live starter tasks, the idea-to-PR workflow, a pre-PR check, tracking follow-ups as GitHub issues (enforced by a hook) and how to improve these plugins.",
+      "version": "1.1.5",
       "category": "development",
       "tags": [
         "autologger",

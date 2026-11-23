@@ -19,7 +19,7 @@ For each session:
    "(no transcript: transcription failed …)": report it. Diarization
    can merge or swap speakers: attribute lines by content, and run `transcript_find` `suspect: true`
    to see the turns most likely to mix two voices before quoting from them.
-2. Read the existing recap if there is one (`wiki_list` kind `session` include `body`).
+2. Read the existing recap if there is one (`wiki_get` {showId, title} with the title you were given).
 3. `wiki_upsert` {showId, kind: "session", sessionId, title, compact: true, bodyMd}:
    - opening paragraph (3–5 sentences): who the guest is (only as said), what's covered, the tone;
    - `## Guest` — background as told, linked `[[Guest]]` if that page exists;
@@ -33,7 +33,7 @@ For each session:
    Citations: use the short form `[HH:MM:SS](@<startSec>-<endSec>)` — it cites the recap's own session
    (`[@<startSec>-<endSec>]` without a label; another session: `[label](@<sessionId>:<s>-<e>)`) —
    seconds from session start, never past the audio end (`audioSeconds` from `sessions_get`; up to 5 s
-   over is clamped on save). A timecode label must match `t`. Every specific claim gets one.
+   over is clamped on save). A timecode label must match `t` (a range label like `1:01:01–1:02:00` must also match `to`). Every specific claim gets one.
    Before saving, check each paragraph against the transcript text you read: no facts from memory, no
    names that aren't in the transcript. A person or topic with no page stays plain text and goes in
    your notes as a candidate page — never a dangling `[[link]]`, never silently dropped.

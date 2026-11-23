@@ -9,7 +9,8 @@ argument-hint: "[what went wrong or what was left for later]"
 Problems found while using AutoLogger should end up as issues someone can track, not as prose in a
 chat or a PR description. Don't interrupt the user's task for this: **note each problem as it
 happens** (tool, what you needed, what happened, exact error, what you did instead) and file them
-together when the task is done.
+together when the task is done. (Contributors tracking follow-ups from a code change use the
+`autologger-contribute` plugin's `file-issue` skill instead.)
 
 ## What is worth an issue
 
@@ -38,8 +39,8 @@ questions the docs already answer.
    `gh issue list -R <repo> --state all -S "<tool name or key words>" --limit 10`.
    If one already covers it, add your evidence as a comment (`gh issue comment <n> -R <repo> -F
    body.md`) instead of filing a duplicate. Reopen nothing; mention closed matches in your comment.
-3. **One issue per distinct problem.** Title: `<Area>: <the problem, plainly>` (Areas: Core, Web,
-   Media, MCP, Wiki, Dashboards, Jobs, Transcript, Plugins, Skills, Docs). Body (write it to a file
+3. **One issue per distinct problem.** Title: `<Area>: <the problem, plainly>` (Areas as in commit messages — app: Core,
+   Web, Media, MCP, Companion, Dev, Docs; marketplace: Skills, Plugins). Body (write it to a file
    and pass `-F`):
 
    ```markdown

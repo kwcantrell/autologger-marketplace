@@ -130,7 +130,7 @@ machine.
 
 The worker downloads, then transcribes each session as soon as its own download finishes (two jobs
 at a time; an hour of audio takes well under a minute to transcribe). Wait with
-`jobs_list({ showId, status: ["queued","running"], waitSec: 50 })` in a loop: each call returns as
+`jobs_list({ showId, status: ["queued","running"], kinds: ["youtube_import","transcribe"], waitSec: 50 })` in a loop (without `kinds`, cosmetic waveform jobs keep the loop going): each call returns as
 soon as a job changes, or after `waitSec`. Queued jobs show `queuePosition`, and queued or running
 jobs a rough `etaSec` — use it to pick `waitSec`, not as a deadline; `sessions_get` carries
 `transcriptJob` for one session (its `etaSec` covers download and transcription, for single
@@ -142,7 +142,7 @@ blindly). A failed `youtube_import` job carries the video's `sourceUrl`: to retr
 failure (network, throttling), call `media_importYoutube` with that `sourceUrl` and the job's
 `sessionId`. A sign-in error here means the team's YouTube sign-in stopped working: redo step 2, then retry. Without a Deepgram key (or with `transcribe: false`) the audio imports but is never transcribed. The transcribe job's
 `progress` ends with key-term hit counts ("key terms: Tom Segura ×41, …") — a term showing up
-where it shouldn't is a sign of key-term bleed.
+where it shouldn't is a sign of key-term bleed. A failed `transcribe` job for one recording: `media_retranscribe` with its `segmentId` (without it every recording is redone and manual edits are lost). Failures that can't be fixed (private or deleted videos): `jobs_dismiss` them, and pass `hideDismissed: true` to later `jobs_list` calls.
 
 ## 5. Annotate (if asked)
 

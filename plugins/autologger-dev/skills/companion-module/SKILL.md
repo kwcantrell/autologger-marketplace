@@ -27,9 +27,17 @@ Two halves that must stay in sync:
 ## Verify
 
 ```bash
-cd apps/companion && npm run build && npx vitest run
-node scripts/smoke.mjs   # end-to-end against a running server; needs a device token
+cd apps/companion && npm run build && npm test
+node scripts/smoke.mjs http://localhost:5173             # raw /ws/companion protocol, end to end
+node scripts/connection-check.mjs http://localhost:5173  # the built module's connection: roll, log, stop, revoke
 ```
 
-Create a device token in the web app (Settings → Companion devices) or via RPC
-`companion.create {showId, name}`.
+Both scripts sign in with the dev login (`DEV_LOGIN=1`) and create their own device; pass the dev
+URL explicitly (their built-in default port is stale).
+
+## Release
+
+- `npm run package` in `apps/companion` builds the installable `.tgz`.
+- Keep `version` in `apps/companion/package.json` and `apps/companion/companion/manifest.json` in step.
+- Update `docs/developers/companion-protocol.md` for protocol changes and `docs/guide/companion.md`
+  for anything operators see.
