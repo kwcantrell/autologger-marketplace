@@ -66,7 +66,9 @@ Errors are usually **systematic**: fix patterns, not single words.
    - Out-of-order or wrongly split lines: `transcript_mergeSegments` / `transcript_splitSegment`.
    - Don't use `transcript_import` for corrections: `mode: "replace"` overwrites the whole
      transcript, manual fixes included. It is only for bringing in an external transcript (SRT,
-     VTT, JSON) or restoring one; it returns a `groupId` (`changes_revertGroup` undoes it), and
+     VTT, JSON) or restoring one; it returns a `groupId` (`changes_revertGroup` undoes it, including
+     a recording's transcribed status), operators can also import a file themselves with
+     **Import transcript…** in the Transcript tab, and
      show transcript rules aren't applied on import — run `transcript_replace` afterwards.
 7. **Re-check** with the same `transcript_find` patterns (`countOnly: true`).
 8. **Leave a trace.** One `Note` event per pattern family (what, how many lines, time range,
