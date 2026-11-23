@@ -61,10 +61,26 @@ Follow `detailed-wiki` sections 2–3 (planning, disjoint writers, reading befor
 `baseRevision`, fact checks), with these additions:
 
 - create pages only for people, bits and topics in **two or more** sessions, titled per the
-  conventions file, with every specific alias from it and the notes (never generic words);
-- a **"By episode"** list on every shared page: one list item per appearance, one claim each,
-  cited with the long form and `[[linking]]` every other entity in it — that is what makes the
-  page's moments findable;
+  conventions file;
+- **aliases: specific names only** — other spellings people actually use and nicknames. No
+  generic words ("the show", "Producer"), no bare first names, no URLs or handles, and no
+  transcription misspellings (the transcripts are cleaned; misspellings belong in show rules);
+- **depth like a reference page**: one list item per **story, letter, headline, quote or fact** —
+  not one per episode — each a single claim with its **own tight citation** (the stretch where
+  that item is said, usually under ~2 minutes; never a whole segment), `[[linking]]` every other
+  entity in it — **every person, bit and topic page it mentions, every time** (that is what lets
+  entity search find the item) — and **naming its subject** ("Joe DeRosa says…", never "He…").
+  Organise each fact **once**: segment pages by episode; person and topic pages by theme (e.g. a
+  person's age, places lived, career, habits, friends, opinions) with a short "Appearances" list
+  of episode links — never the same items again under "By episode";
+- a short synthesis at the top of segment pages (**Format**: what happens, who reads, how it
+  ends) and, where it helps, a **Notable lines** section; the hub states the format, schedule,
+  sponsors and contact details said on air, and the episode guide **once** (a table with a prose
+  list only if the table holds more than titles);
+- framing only as the transcript supports it (a crew member who chimes in is not a "co-host");
+- writers work from the recaps and notes but **open `transcript_text` around every range they
+  cite** to tighten it to the item and to check names and numbers — the notes' ranges are often
+  segment-wide;
 - the hub's episode guide also as a prose list (tables chunk badly for retrieval).
 
 ## 4. Verify
@@ -77,7 +93,11 @@ Follow `detailed-wiki` sections 2–3 (planning, disjoint writers, reading befor
    alias — remove it with `wiki_upsert`.
 3. `moments_search` spot checks: one entity, two entities, a theme query; open three results'
    `startSec` with `transcript_text` to confirm the range. Fix pages, not queries.
-4. Leftover misheard names: `search {showId, kinds: ["transcript"]}` per misspelling in the
+4. Wide citations: in `graph_export {section: "moments"}`, citations on shared pages longer than
+   ~3 minutes are segment-wide, not moments — split them into per-item citations. Also check
+   that shared-page moments link other entities (their `entities` list more than the page
+   itself) and that no page repeats the same items in two sections.
+5. Leftover misheard names: `search {showId, kinds: ["transcript"]}` per misspelling in the
    conventions file.
 
 ## Report

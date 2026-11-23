@@ -37,8 +37,11 @@ Per session, in order:
    `wiki_upsert {kind: "session", sessionId, title, aliases}`:
    - a context line (`**Show:** … · **Episode:** … · **Host:** …`), then an opening paragraph that
      stands alone;
-   - `## Rundown` following your topics, then `## Best moments`, `## Running bits`,
-     `## People and things mentioned`, `## Plugs` / `## Sponsors` when present;
+   - `## Rundown` following your topics — **every story, letter, headline and segment item**, with
+     names, numbers and places — then `## Best moments` (as many quotable lines as the episode
+     has, usually 8–15), `## Running bits`, `## People and things mentioned`, `## Plugs` /
+     `## Sponsors` when present; depth matters as much as structure;
+   - check what a played clip vs. a live line is before calling something a flub or mistake;
    - **one claim per list item or sentence, each with its own range citation**
      `[HH:MM:SS](@<start>-<end>)`, and `[[links]]` to every allowed page the claim is about, in
      that same sentence; plain text for names without a page;
@@ -46,8 +49,9 @@ Per session, in order:
    - bottom nav `← [[prev]] · [[next]] →`;
    - fix every `badCitations` entry with `wiki_patch`.
 6. **Notes** → `<notes>/<sessionId>.md`: cited bullets (long form
-   `[EP HH:MM:SS](/sessions/<id>?t=<start>&to=<end>)`) about recurring people, bits, running jokes,
-   plugs, candidate shared pages with why, and names heard that should be aliases.
+   `[EP HH:MM:SS](/sessions/<id>?t=<start>&to=<end>)`, each range tight to the item) about
+   recurring people, bits (one bullet per story/letter/headline), running jokes, plugs, and
+   candidate shared pages with why.
 
 Accuracy: nothing from memory; names only as in the transcript; attribute by content.
 
