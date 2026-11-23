@@ -69,6 +69,8 @@ Needs the `autologger` plugin (it uses that MCP connection).
 | `/autologger-dev:mcp-check` | See and call the MCP tools the way an agent does. |
 | `ui-designer` agent | Designs and refines web app screens within DESIGN.md: plans, builds with the shadcn/Base UI primitives, checks at three widths, critiques and polishes with impeccable. |
 | impeccable (dependency) | Paul Bakaus's design skill (`/impeccable:impeccable <command>`: shape, critique, audit, polish, harden, adapt…), installed with `autologger-dev` from the `impeccable` marketplace. |
+| `react-expert` agent | Senior React reviewer and architect for `apps/web`: **critique** a diff or feature, **simplify** components without changing behaviour, **optimize** measured re-render / waterfall / bundle costs, or **architect** a feature's component tree, state ownership and data flow. Critique and architect are read-only. |
+| React skills (dependencies) | Installed with `autologger-dev` from this marketplace, each pinned to an upstream commit (MIT): `react-best-practices`, `composition-patterns` and `react-view-transitions` from [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills), and `react-expert` from [jeffallan/claude-skills](https://github.com/jeffallan/claude-skills). Bump a pin by updating its `sha` in `marketplace.json`. |
 | `shadcn` MCP server | The official shadcn/ui MCP server (`shadcn@4.23.0 mcp --cwd apps/web`): search, view and add registry components for the Base UI setup in `apps/web/components.json`. Needs `npx`. |
 | `ops-reviewer` agent | Reviews a diff against the architecture rules before you commit. |
 | `browser-smoke` agent | Clicks through the main flows in a real browser and reports pass/fail. |
