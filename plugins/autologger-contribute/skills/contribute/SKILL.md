@@ -42,6 +42,9 @@ every input and output, op descriptions an agent can act on, no edits to generat
 - UI → check it in the browser against the dev stack, including a second tab for live updates and
   a 390 px wide window.
 - MCP-exposed ops → look at the tool as an agent sees it (`mcp-check`).
+- Docs → a change users, agents or operators would notice updates the matching page under
+  `docs/guide/`, `docs/agents/` or `docs/developers/` (served at `/docs`) in the same PR: new options,
+  renamed UI labels, changed limits or steps. Check it renders at `/docs/<section>/<slug>`.
 
 ## 5. Review it
 
