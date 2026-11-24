@@ -20,7 +20,7 @@ Errors are usually **systematic**: fix patterns, not single words.
 
 1. `sessions_get` — `transcriptStatus` must be `done`. Read the transcript once with
    `transcript_text` `{format: "compact", stampEverySec: 0}` (same-speaker lines merged, a
-   `[@seconds]` stamp per segment; with `ids: true` a stamp reads `{seg_…@123.4}`) — no second
+   `[@seconds]` stamp per segment, which is also that segment's ref for the edit tools) — no second
    pass in lines format. "(transcript is empty: no speech detected)" is final: nothing to clean. The
    result's `totalSegments` and `durationSec` tell you how to page: about 25-minute windows
    (`fromSec`/`toSec`) for hour-long sessions; pages don't overlap.
@@ -56,8 +56,10 @@ Errors are usually **systematic**: fix patterns, not single words.
    session. Add rules that will recur to the show with `shows_update`
    (`transcriptRules`, the full ordered list). Guest-specific fixes stay on the session.
 6. **Fix one-off lines** with one `transcript_updateSegments` call (`{ segmentId, text }`,
-   returns `{ updated, ids }`). Get ids from `transcript_find` (`idsOnly`) or `transcript_text` with
-   `ids: true`.
+   returns `{ updated, ids }`). segmentId is a segment's `@seconds` start from your
+   `transcript_text` read (`"@183.4"`; the edit tools take it with `sessionId`) or an id from
+   `transcript_find` (`idsOnly`). Prefer the refs over `transcript_text` `ids: true`, which
+   multiplies the output.
    - Write numbers and math **as spoken** ("x squared", "dy dx"), consistently across a show.
    - Fix only clear errors; don't rephrase. If unsure, leave the line and list it.
    - Unchanged words keep their timings, so prefer small edits over rewriting lines.

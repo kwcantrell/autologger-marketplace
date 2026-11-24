@@ -20,13 +20,15 @@ conventions file overrides their defaults.
 Per session, in order:
 
 1. **Read once**: `sessions_get`, then the whole transcript with `transcript_text`
-   `{format: "compact", stampEverySec: 0, ids: true}` in ~30-minute pages. Times: `@<sec>` at each
-   paragraph start and `{seg_…@<sec>}` before each segment; segment ids from the same stamps.
+   `{format: "compact", stampEverySec: 0}` in ~30-minute pages (no `ids`). Times: `@<sec>` at each
+   paragraph start and `[@<sec>]` before each segment. Each of those starts is also the segment's
+   ref: the transcript edit tools take `segmentId: "@183.4"` with the `sessionId`, so no ids are
+   needed (a ref two segments share fails listing both ids — use one of them).
    Don't read it again — later steps work from this read (`transcript_find` for targeted checks).
    No segments? The text says why; write nothing for that session and report the reason.
 2. **Clean** per `transcript-cleanup`: speakers per the roster (`transcript_renameSpeaker`, ranges
    for Crew/Clip), systematic errors with `transcript_replace` (dry run, then apply), one-off lines
-   with `transcript_updateSegments`, spills across speaker changes with
+   with `transcript_updateSegments` (`@<sec>` refs as segmentId), spills across speaker changes with
    `transcript_mergeSegments` / `transcript_splitSegment`. Clear errors only; one `Note` event per
    kind of fix.
    **Then name every generic voice the transcript identifies** ("Producer 2", "Speaker 3", a
@@ -53,6 +55,10 @@ Per session, in order:
      that same sentence; plain text for names without a page;
    - full names at the start of each block; absolute dates; uncertainty stated in the sentence;
    - bottom nav `← [[prev]] · [[next]] →`;
+   - drafted in a local file? Don't paste it into the call: `wiki_createUpload {showId}`, PUT the
+     file to `uploadUrl` with exactly `headers` (`curl -sf -X PUT -H "Content-Type: text/markdown"
+     --data-binary @recap.md "<uploadUrl>"`), then `wiki_upsert` with `bodyUploadId` instead of
+     `bodyMd`;
    - fix every `badCitations` entry with `wiki_patch`.
 6. **Notes** → `<notes>/<sessionId>.md`: cited bullets (long form
    `[EP HH:MM:SS](/sessions/<id>?t=<start>&to=<end>)`, each range tight to the item) about

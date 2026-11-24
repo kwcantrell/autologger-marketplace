@@ -19,7 +19,9 @@ For each session:
    can merge or swap speakers: attribute lines by content, and run `transcript_find` `suspect: true`
    to see the turns most likely to mix two voices before quoting from them.
 2. Read the existing recap if there is one (`wiki_get` {showId, title} with the title you were given).
-3. `wiki_upsert` {showId, kind: "session", sessionId, title, bodyMd} (returns a compact summary):
+3. `wiki_upsert` {showId, kind: "session", sessionId, title, bodyMd} (returns a compact summary;
+   a body drafted in a local file goes up with `wiki_createUpload` + PUT and `bodyUploadId`
+   instead of `bodyMd`):
    - opening paragraph (3–5 sentences): who the guest is (only as said), what's covered, the tone;
    - `## Guest` — background as told, linked `[[Guest]]` if that page exists;
    - `## Rundown` — one `###` per segment in order (follow topics, merge tiny ones), heading with a
