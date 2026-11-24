@@ -19,14 +19,17 @@ shared pages in one careful pass. Every save is a wiki revision the user can res
    `transcript_text` description lists each case); an empty transcript with status `done` is
    final: skip that session and say so.
 2. `wiki_list` with `include: "summary"` (page through `nextOffset`): note existing recap titles
-   (kind `session`, tied to `sessionId`), people, topics, bits and question pages, with exact titles.
+   (kind `session`, tied to `sessionId`), people, topics, bits and question pages, with exact titles
+   — for the show and for its team wiki (`wiki_list {teamId}`; teamId from `teams_list`), whose
+   pages show pages link by title as if they were the show's.
 3. Decide the recap title pattern now (reuse the existing one, e.g. `Ep 4: <Guest>`), so recaps can
    link previous/next and the hub can list them.
 4. Tell the user the plan and the cost before starting: N sessions, ~K agents, and roughly 60–70k
    agent tokens per hour of audio for recaps plus ~250k per shared-pages agent (19 one-hour
    episodes ≈ 1.3M + 0.5M). For a large show offer a lighter level: shorter recaps (rundown and best
    moments only) or only the sessions they name.
-5. Create a notes folder for this run (e.g. `<scratchpad>/wiki-notes/`); recap agents write their
+5. Create a notes folder for this run (e.g. `<scratchpad>/wiki-notes/`) and give every agent its
+   own work folder in it for drafts and scripts (`<notes>/w-<agent name>/`); recap agents write their
    notes there, one file per session.
 
 ## 1. Recaps — in parallel
@@ -43,7 +46,10 @@ pages yet.
 From the notes, decide:
 - updates to existing pages: the host(s), recurring people, guests, bits, topics, the hub;
 - **new pages** only for people, topics and bits that come up in **two or more** sessions; fix their
-  exact titles and kinds now (e.g. "Tom's weight" topic, "Joe Rogan" person, "Be funny!" bit).
+  exact titles and kinds now (e.g. "Tom's weight" topic, "Joe Rogan" person, "Be funny!" bit);
+- which of them belong in the **team wiki** (they also appear in other shows of the team, or a
+  team page exists): update those there (`wiki_upsert {teamId}`), add this show's items under a
+  heading for the show, and promote show pages that span shows with `wiki_move {pageId, teamId}`.
 
 ## 3. Shared pages — disjoint agents
 
