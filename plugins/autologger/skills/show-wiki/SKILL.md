@@ -9,7 +9,11 @@ argument-hint: "[session]"
 Each show has a wiki of Markdown pages: `person`, `topic`, `bit` (recurring segments and running
 jokes), `session` (one recap per session) and `question` (an answered question — the show's
 knowledge base, written by the `autologger-ask` plugin). Pages link to each other with `[[Title]]`
-or `[[Title|label]]`; aliases also match.
+or `[[Title|label]]`; aliases also match. The show's team also has a shared **team wiki**
+(`wiki_list {teamId}`; teamId from `teams_list`) for people, bits and topics that span its shows:
+a `[[Title]]` on a show page reaches a team page when the show has no page of that name, so link
+team pages like any other and edit them with `wiki_upsert {teamId}` / `wiki_patch` — never create
+a show page with a team page's title (that save fails with conflict).
 
 The wiki is a knowledge base: back facts with **citations** (see Citations below).
 
@@ -25,7 +29,8 @@ pages), use the `detailed-wiki` skill instead.
 3. Read the wiki before writing: `wiki_list` for the show returns `{ pages, total, nextOffset }`
    (50 per page by default, `limit` up to 200; pass `offset: nextOffset` until it is null).
    `include: "summary"` adds each page's first paragraph; `include: "body"` the full text (large —
-   filter by `kind` and page it) — one call instead of a `wiki_get` per page. Then `wiki_get` the
+   filter by `kind` and page it) — one call instead of a `wiki_get` per page. Do the same for
+   the team wiki (`wiki_list {teamId, include: "summary"}`) so you reuse its titles. Then `wiki_get` the
    pages you will change. Update existing pages — `wiki_upsert` without
    `pageId` matches by title or alias, so reuse the exact existing title.
 4. Recap page: `wiki_upsert` with `kind: "session"` and `sessionId` (returns
@@ -68,7 +73,9 @@ tool description — read it rather than guessing.
   other page name the session, `[label](@<sessionId>:<startSec>-<endSec>)`.
 - Start at the set-up line, end where the moment ends plus ~2 s; never past the session's audio
   end (`audioSeconds` in `sessions_get`).
-- A timecode label must match the range (`t`, and `to` for a range label like `1:01:01–1:02:00`).
+- A timecode label should match the range (`t`, and `to` for a range label like
+  `1:01:01–1:02:00`); when it doesn't, the save rewrites that timecode to the range and lists it
+  in `relabeledCitations` — a later `find` must use the stored label.
 - Every specific claim gets one, checked against the transcript text you read — no facts from
   memory.
 - Fix every `badCitations` entry from the save result with `wiki_patch` straight away; after a
@@ -77,8 +84,9 @@ tool description — read it rather than guessing.
 ## Formatting and links
 
 - Tables render (GFM). Inside a table cell, escape the pipe of an aliased link: `[[Title\|label]]`.
-- A `[[link]]` resolves only against an exact page title or alias in the same show; anything else
-  renders dim as "No page named …". Before linking, `wiki_list` and reuse the exact titles.
+- A `[[link]]` resolves against a page title or alias in the same show, then in the team wiki (on
+  a team page: the team wiki, then a show page whose name only one show of the team uses); anything
+  else renders dim as "No page named …". Before linking, `wiki_list` and reuse the exact titles.
 - For a series of sessions, decide the recap titles up front (e.g. "Chapter 3: <video title>") so
   recaps can link previous/next and a hub `topic` page can list them all — or use `detailed-wiki`,
   which owns the rules for writing shared pages after many recaps.

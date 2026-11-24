@@ -39,7 +39,8 @@ For each session:
 4. Fix every `badCitations` entry with `wiki_patch` before moving on (no need to lint the whole
    show after each save).
 
-Write NOTES FOR SHARED PAGES to `<notes folder>/<sessionId>.md` (create it with your file tools) as
+Drafts and helper scripts go only in your own work folder, `<notes folder>/w-<sessionId>/` —
+other recap agents share the notes folder. Write NOTES FOR SHARED PAGES to `<notes folder>/<sessionId>.md` (create it with your file tools) as
 cited bullets — host facts; the guest's key facts; other existing people mentioned;
 appearances of recurring bits; recurring themes (named); candidate new pages (people/topics that
 likely recur, and why). Then return only a short summary per session: title, revision, approximate
