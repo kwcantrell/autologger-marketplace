@@ -55,7 +55,9 @@ Writers of shared pages must never edit the same page. Split them, for example:
 Give both the notes folder, the fixed list of new page titles (both may link them) and these rules:
 read before writing; keep titles, aliases and voice; organise by theme with a short "By episode"
 list where useful; convert bare timecodes to citations; never invent facts;
-`wiki_patch` for small edits (its result lists `unresolvedLinks`, like `wiki_upsert`'s); `baseRevision` (the revision you read) on every edit of an
+`wiki_patch` for small edits (its result lists `unresolvedLinks`, like `wiki_upsert`'s; an edit
+with `all: true` replaces every occurrence, e.g. to link each mention of a name at once); long
+bodies drafted in local files go up with `wiki_createUpload` + PUT and `bodyUploadId`; `baseRevision` (the revision you read) on every edit of an
 existing page, and on `conflict` re-read and redo rather than overwrite; check every fact against the recap or `transcript_text` before saving
 — drop what can't be confirmed rather than keep it.
 
